@@ -1,0 +1,46 @@
+# Personal Claude Code settings (each collaborator keeps their own)
+.claude/settings.local.json
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# --- FPGA / HDL tool outputs (for when RTL work starts) ---
+
+# Vivado
+*.jou
+*.log
+*.str
+*.xpr
+.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.gen/
+vivado*.backup*
+
+# Quartus
+db/
+incremental_db/
+output_files/
+*.qws
+*.rpt.bak
+
+# Simulation
+*.vcd
+*.fst
+*.wlf
+*.ghw
+work/
+transcript
+sim_build/
+results.xml
+__pycache__/
