@@ -279,6 +279,13 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 | DSP | 0 | 90 | nothing multiplies here |
 | MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
 
+**Scarce resource: MMCM**, not LUTs. By percentage of what the device has, MMCM is the
+tightest line in this table (1 of 5 = 20%), ahead of LUTs (~10% even at the budget
+ceiling), BRAM36 (8%), and FFs (~7%). It isn't a real constraint at v1 — 4 MMCMs stay
+free — but it is the first thing a v2 that adds another PHY, a DDR3 controller, or a
+second independent clock domain (B.7 item 3) would have to budget against, since MMCMs
+don't subdivide the way LUTs/FFs do: one instance is used or it isn't.
+
 A MAC blowing past 10% of a 35T means something structural is wrong.
 
 ### Quality gates
@@ -432,7 +439,15 @@ deferred to RTL time):**
 derivation is the 1000BASE-T standard's ±100 ppm ceiling, **not yet confirmed against
 the actual crystal/oscillator part on the AX7035B BOM** — revisit once the schematic is
 in hand; the no-stall user contract (R18) pushes drop responsibility onto user logic —
-fine here, but a real NIC would buffer; and the RGMII timing numbers throughout this
+fine here, but a real NIC would buffer; the RGMII timing numbers throughout this
 document (B.1b, R14, R20) come from the KSZ9031RNX datasheet read online, not yet
 cross-checked against the physical board — first thing to verify at Stage 2 bring-up
-step 1 (A.2's correction note).
+step 1 (A.2's correction note); and the LUT/FF/BRAM line items in B.2's Resources table
+are **estimates whose derivation predates this revision and isn't traceable** — unlike
+the FIFO depth, GTX_CLK phase, and R21 latency numbers, which were derived bottom-up and
+checked by `spec/budget.py`, the resource counts are inherited, plausible-looking
+per-block guesses (they do line up with B.1a's module list and land comfortably under
+10% device utilization even at the budget ceiling, so the order of magnitude is very
+likely right) but have not been checked against a real synthesis of a comparable module.
+That check is Stage 4 step 6's job, not Stage 1's, and is deliberately deferred rather
+than done now.
