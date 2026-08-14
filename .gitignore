@@ -26,6 +26,17 @@ Desktop.ini
 *.sim/
 *.gen/
 vivado*.backup*
+*.dcp
+*.bit
+*.bin
+*.mcs
+*.rpt
+*.ltx
+clockInfo.txt
+build/
+
+# Third-party vendor docs (downloaded reference material, not ours to redistribute)
+Manuals/
 
 # Quartus
 db/
