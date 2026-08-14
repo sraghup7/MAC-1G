@@ -1,0 +1,438 @@
+# 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
+
+Document status: v0.2 — Stage 1 complete, to be reviewed and versioned alongside the RTL.
+
+**Changelog v0.1 → v0.2:** corrected the AX7035B's Ethernet PHY identity (it is a Micrel/
+Microchip **KSZ9031RNX**, not a Realtek RTL8211 — see the note in A.2); resolved all four
+B.7 open items with datasheet-grounded derivations instead of leaving them open; added
+B.1a (architecture/block diagram), B.1b (clocking & reset), and B.3a (parameter derivation
+table); moved into `spec/` per the B.6 repo layout; re-centered the `GTX_CLK` MMCM phase
+target from 2.0 ns (the PHY window's edge, zero margin) to 1.6 ns (the window's center,
+±0.4 ns margin both sides); added a bottom-up pipeline sum for R21's latency budget
+instead of asserting the 32-cycle ceiling as "generous" without checking it.
+
+---
+
+# Part A — Board selection
+
+## A.1 The requirement that filters everything
+
+This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric I/O**
+(RGMII or GMII). That single requirement eliminates most popular budget boards:
+
+- **Digilent Arty A7 / Nexys A7 / Basys 3** — the Arty family's PHY is **10/100 only**
+  (MII). No 1G possible. This is the classic trap purchase for this exact project.
+- **Zynq boards (PYNQ-Z2, Arty Z7, Zybo)** — they *have* gigabit PHYs, but wired to the
+  **processor subsystem's hard MAC (GEM) via MIO pins**, not to fabric. You'd be
+  configuring someone else's MAC, not building one.
+- **Your Kria KV260** — same story: its PHY hangs off the PS GEM. Great DSP board, wrong
+  board for a fabric MAC.
+
+## A.2 Recommendation
+
+**Primary: ALINX AX7035B — ~$150 direct from Alinx**
+
+| Item | Value |
+|---|---|
+| FPGA | AMD Artix-7 **XC7A35T**-2FGG484I (industrial, -2 speed) |
+| Vivado support | Free tier (Artix-7 has always been in WebPACK/Standard; still free after the 2026.1 licensing restructure) |
+| Ethernet | 1× 10/100/1000 port, **Micrel/Microchip KSZ9031RNX PHY, RGMII, wired to fabric I/O** |
+| Memory | 256 MB DDR3 (not needed for this project — nice for later ones) |
+| Other | HDMI in/out, USB-UART, MicroSD, 2× 40-pin expansion, JTAG programmer support |
+| Collateral | Schematic, pin assignments, and **Verilog demo projects including Ethernet** — a reference XDC for the RGMII pins is worth real hours |
+
+> **Correction (v0.2):** earlier drafts of this spec assumed a Realtek RTL8211-family PHY.
+> The ALINX AX7035 user manual states the actual chip is a **Micrel/Microchip KSZ9031RNX**
+> (RGMII interface) — confirmed from the manual text and cross-checked against the
+> KSZ9031RNX datasheet (Microchip, Rev 2.2, May 2015). Every RGMII timing number in this
+> document (R14, R20, B.1b, B.7) is now KSZ9031RNX-specific. **Re-confirm the chip marking
+> against the physical board** the moment it arrives (Stage 2 bring-up step 1) — board
+> revisions occasionally swap PHY vendors without renaming the SKU.
+
+Why it wins: cheapest board with fabric-attached gigabit, ships with schematics and Ethernet
+demo RTL, and the 35T is comfortably large for a MAC (budget in Part B shows <10%
+utilization). Buy direct from `en.alinx.com` or Amazon (Amazon runs slightly higher).
+
+**Alternatives:**
+
+- **Numato Mimas A7 (~$230, XC7A50T, RTL8211E RGMII, DDR3)** — US vendor with English docs
+  and a published Vivado gigabit-Ethernet tutorial; DigiKey stocks it. Pick this if you
+  prefer a US seller / better documentation over the $80 difference.
+- **Digilent Nexys Video (~$580, XC7A200T, RGMII)** — the "no-questions" academic board.
+  Overkill and over budget here; listed so you know the ladder.
+
+One licensing note in your favor: because you are **writing the MAC yourself**, you never
+touch AMD's Tri-Mode Ethernet MAC IP — which is a *paid* license. The vendor demo projects
+use it; your design won't. Everything you need (IDDR/ODDR/IODELAY primitives, MMCM, BRAM
+FIFOs) is free fabric.
+
+---
+
+# Part B — Initial Specification: `gem_mac`, a 1000BASE-T Ethernet MAC
+
+## B.1 Problem statement
+
+Modern electronic trading systems receive market data and send orders as Ethernet frames,
+and the FPGA sits directly on the wire: the first piece of logic a market-data packet meets,
+and the last piece an order leaves, is the **Media Access Controller (MAC)** — the layer-2
+block that turns the PHY's raw nibble stream into validated frames and turns outgoing
+frames into a correctly framed, correctly timed wire signal. Every HFT FPGA design —
+feed handler, order gateway, tick-to-trade pipeline — is built on top of one.
+
+**You will design, verify, and bring up on real hardware a full-duplex 1 Gbps Ethernet MAC**
+in synthesizable Verilog-2001 on the AX7035B, talking RGMII to the board's KSZ9031RNX PHY on
+one side and presenting a clean streaming interface to user logic on the other. "Done"
+means: the board, connected by CAT5e to your PC's NIC, exchanges real frames with software
+on the PC, survives sustained full-rate traffic and deliberately corrupted input, and
+reports what it saw through readable counters — verified by Wireshark on the PC and an ILA
+on the chip.
+
+The MAC's job, precisely:
+
+- **Transmit path:** accept a payload stream from user logic; prepend preamble and SFD;
+  insert destination/source addresses and EtherType; pad short payloads to the legal
+  minimum; compute and append the CRC-32 frame check sequence; drive it out the RGMII pins
+  at 1 Gbps with legal inter-frame gaps.
+- **Receive path:** recover the byte stream from RGMII; hunt for SFD; strip preamble;
+  check frame length legality and verify the FCS; deliver good frames to user logic with a
+  per-frame good/bad verdict; count and discard bad ones without corrupting subsequent
+  frames.
+- **Management:** an MDIO controller to read/configure the PHY (link status, speed,
+  negotiated mode) — because a MAC that can't confirm the link is up is undebuggable.
+
+What makes this non-trivial is not the framing logic — it's that the design has **three
+clock domains** (the PHY hands you a receive clock you don't control), a datapath that runs
+at **exactly one byte per cycle with zero slack** during a frame, and I/O timing at
+double-data-rate 125 MHz where a wrongly-constrained pin produces a design that passes
+every simulation and fails on the bench.
+
+## B.1a Top-level architecture
+
+`gem_mac` is nine modules across three clock domains. Dataflow diagram: [`spec/block_diagram.md`](block_diagram.md).
+
+**Transmit path (tx_clk domain):**
+1. **AXI-S ingress register** — registers `tdata/tvalid/tready/tlast` plus the `tuser`
+   sideband (DA/SA/EtherType, presented at SOF per R15); no combinational path to `tready`.
+2. **Frame assembler / padder** — prepends preamble+SFD, inserts DA/SA/EtherType, pads
+   payloads < 46 B with zeros (R3), rejects payload > 1500 B (R6).
+3. **Parallel CRC-32 generator** — byte-parallel update running alongside the payload
+   stream (resolved in B.7 item 2); appends FCS at frame end.
+4. **TX arbiter / IFG counter** — tracks a local `transmitting` flag and enforces the
+   96-bit (12-byte) inter-frame gap (R5); full-duplex, so no CSMA/CD, deference, or
+   collision logic (IEEE 802.3-2022 §4.2.3.2.6).
+5. **RGMII output stage** — ODDR primitives drive `TXD[3:0]`/`TX_CTL`; a second,
+   phase-shifted MMCM output drives the `GTX_CLK` pin (mechanism in B.1b).
+
+**Receive path (rx_clk domain, crossing to sys_clk at the FIFO):**
+6. **RGMII input stage** — IDDR primitives capture `RXD[3:0]`/`RX_CTL` on `rx_clk`.
+7. **SFD hunter / deframer** — scans for the SFD (R8/R11), strips preamble, extracts
+   DA/SA/EtherType, streams payload onward byte-by-byte.
+8. **Parallel CRC-32 checker + frame classifier** — running CRC check in parallel with
+   the stream (R9's cut-through contract, detailed in `Documents/Bad bitstream handle.md`);
+   classifies runt/oversize/bad-FCS/RX_ER (R10) with one counter per class (R17).
+9. **RX async FIFO** (rx_clk → sys_clk, depth derivation in B.3a) **→ AXI-S egress
+   register**, verdict on `tuser` at the `tlast` beat (R9).
+
+**Shared:**
+- **MDIO master** — register-level request interface, ≤ 2.5 MHz MDC (R16).
+- **Register/status block** (sys_clk domain) — frame counters, link state, sticky error
+  flags, all clearable, readable over UART/VIO (R17).
+- **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b).
+
+## B.1b Clocking and reset
+
+**Clocks (R19):**
+
+| Clock | Freq | Source | Drives |
+|---|---|---|---|
+| `tx_clk` | 125 MHz | MMCM, locked to the board's 50 MHz oscillator | TX datapath, register block, `sys_clk` (= `tx_clk`, B.7 item 3) |
+| `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted ≈ −72° (1.6 ns) from `tx_clk` | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
+| `rx_clk` | 125 MHz nominal | Recovered by the KSZ9031RNX's CDR from the link partner's transmit clock, driven in on `RX_CLK` | RGMII input capture, SFD hunt, deframe, CRC check, classify — **asynchronous to `tx_clk`** (independent oscillator sources) |
+
+**RGMII skew mechanism (R14) — resolved from the KSZ9031RNX datasheet (Microchip, Rev
+2.2), "RGMII Timing" section and Table 19:**
+
+- **RX:** the PHY adds **1.2 ns typical** delay to `RX_CLK` relative to `RXD`/`RX_DV`
+  **by default, out of reset — no MDIO write required.** This sits inside the RGMII v2.0
+  `TsetupR`/`TholdR` window (1.0–2.0 ns). Consequence: the FPGA RX side needs **no IDELAY**
+  for v1 — an IDDR clocked directly by `RX_CLK` is sufficient. Fallback if bring-up shows
+  insufficient margin (real PCB trace lengths vary): the PHY's `RX_CLK` pad-skew register
+  (MMD address `2h`, register `8h`, bits `[4:0]`, 0.06 ns/step) can add up to 2.58 ns.
+- **TX:** the datasheet is explicit that the PHY does **not** add delay on its `GTX_CLK`/
+  `TX_EN`/`TXD` inputs — *"the KSZ9031RNX does not add any delay locally... and expects
+  the GTX_CLK delay to be provided on-chip by the MAC."* Required window at the PHY pins:
+  `TsetupT`/`TholdT` = 1.2–2.0 ns. Mechanism: the MMCM's second output (`gtx_clk_shifted`
+  above), phase-shifted ≈ **1.6 ns (−72° of the 8 ns period)** from `tx_clk`, feeds the
+  ODDR driving `GTX_CLK`. 1.6 ns is the **numeric center** of the 1.2–2.0 ns window, not
+  its edge — a naive 90°/2.0 ns shift lands exactly on `TsetupT`/`TholdT`'s max and would
+  leave **zero margin**; centering gives ±0.4 ns of margin against both the min and max
+  before anything is even placed and routed. Fallback: the PHY's `GTX_CLK` pad-skew
+  register (MMD `2h`, reg `8h`, bits `[9:5]`) can add up to +1.38 ns if the MMCM phase
+  alone proves insufficient once measured on the bench (ILA or scope on `GTX_CLK`/`TXD0`).
+
+**R21 latency budget — bottom-up check** (previously asserted as "generous," now summed):
+
+| RX pipeline stage | Cycles (`rx_clk`/`sys_clk`) |
+|---|---|
+| IDDR capture + nibble combine (DDR → 1 byte/cycle) | 1 |
+| SFD hunt / deframer FSM | 2 |
+| CRC-32 verdict generation at EOF (parallel accumulator, registered compare) | 1 |
+| Async FIFO CDC, `rx_clk` → `sys_clk` — same structural cost as the sync-latency term in B.3a | 4 |
+| Registered AXI-S egress stage (R15: no combinational paths through the handshake) | 1 |
+| **Total** | **9 cycles = 72 ns** |
+
+9 cycles against R21's 32-cycle (256 ns) ceiling is **3.6× margin** (`spec/budget.py`,
+`rx_latency_budget()`) — the number holds up under an actual pipeline sum, not just an
+assertion, and the async FIFO crossing is confirmed as the single largest contributor
+(4 of the 9 cycles), which is expected: it's the only genuine CDC boundary on the RX
+path. 3.6× leaves real room for cycles this Stage-1 estimate hasn't modeled yet (an extra
+pipeline register added during Stage 6/7 timing closure, for instance) without threatening
+the ceiling.
+
+**Reset strategy:**
+
+- Per-domain: asynchronous assert, synchronous deassert (2-flop synchronizer) on that
+  domain's own clock — no domain's reset release depends on another domain's clock running.
+- `tx_clk`-domain reset release is additionally gated on MMCM lock (never leave reset on
+  an unlocked MMCM).
+- PHY reset (`RST_N`, active-low, board-level): datasheet specifies **tSR ≥ 10 ms** from
+  stable supply voltage to reset de-assertion. Hold `RST_N` low ≥ 10 ms after power-up and
+  treat MDIO as invalid until it's released — this is bring-up checklist step 2/3 (B.5).
+
+## B.2 Requirements
+
+Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = stretch.
+
+### Functional — transmit
+
+- **R1 [M]** Encapsulate user payloads into Ethernet II frames: 7-byte preamble (0x55),
+  1-byte SFD (0xD5), 6-byte DA, 6-byte SA, 2-byte EtherType, payload, 4-byte FCS.
+- **R2 [M]** DA, SA, EtherType are per-frame inputs alongside the payload stream (not
+  compile-time constants).
+- **R3 [M]** Pad payloads shorter than 46 bytes with zeros so the frame (DA→FCS) is ≥ 64
+  bytes.
+- **R4 [M]** Compute FCS as IEEE 802.3 CRC-32: polynomial 0x04C11DB7, bit-reflected
+  in/out, init 0xFFFFFFFF, final complement, transmitted least-significant-byte-first.
+- **R5 [M]** Enforce inter-frame gap ≥ 96 bit-times (12 byte-times) between frames.
+- **R6 [M]** Reject (and flag via a status pulse + counter) requests with payload > 1500
+  bytes; never emit an oversize frame.
+- **R7 [M]** Sustain back-to-back frames at full line rate indefinitely (no growing gap,
+  no stall) when user logic supplies data every cycle.
+
+### Functional — receive
+
+- **R8 [M]** Detect SFD anywhere in the incoming stream; tolerate shortened/absent
+  preamble down to SFD-only.
+- **R9 [M]** Verify FCS on every frame; deliver the frame with an end-of-frame
+  good/bad flag. (Store-and-forward frame buffering is **not** required — cut-through
+  delivery with a trailing verdict is the HFT-idiomatic choice; user logic drops on bad.)
+- **R10 [M]** Discard as invalid, count separately, and recover cleanly from: runt
+  (< 64 B), oversize (> 1518 B), bad FCS, RGMII RX_ER during frame. "Recover cleanly" =
+  the next good frame is received intact.
+- **R11 [M]** Ignore inter-frame garbage (anything before a valid SFD) silently.
+- **R12 [S]** Optional DA filter: promiscuous mode vs. match-my-MAC + broadcast.
+
+### Interfaces
+
+- **R13 [M]** RGMII v2.0 to the PHY: 4-bit DDR data + control at 125 MHz each direction,
+  1000 Mbps mode only. (10/100 fallback explicitly out of scope — see B.7.)
+- **R14 [M]** The clock-to-data skew required by RGMII is provided by a deliberate,
+  documented mechanism, resolved in B.1b: **RX** relies on the KSZ9031RNX's default
+  1.2 ns PHY-side delay (no MDIO write needed); **TX** is generated FPGA-side via a
+  second MMCM output phase-shifted ~1.6 ns (centered in the PHY's window, ±0.4 ns
+  margin) relative to `tx_clk`, driving `GTX_CLK` through an ODDR — constrained in
+  XDC, and never left to luck.
+- **R15 [M]** User side: 8-bit AXI-Stream-style handshake per direction —
+  `tdata[7:0], tvalid, tready, tlast` plus `tuser` (TX: DA/SA/EtherType sideband at SOF;
+  RX: good/bad at EOF). Registered, no combinational paths through the handshake.
+- **R16 [M]** MDIO/MDC master (≤ 2.5 MHz MDC) with a register-level request interface;
+  bring-up software (or a hardware sequencer) uses it to read PHY ID, link status, and
+  resolved speed/duplex.
+- **R17 [M]** Status/debug register block readable over UART (or VIO): frame counters
+  (TX ok, RX ok, RX bad-FCS, RX runt, RX oversize, RX_ER), link state, sticky error
+  flags, all clearable.
+
+### Performance & clocking
+
+- **R18 [M]** Line rate 1.000 Gbps each direction simultaneously (full duplex); zero
+  dropped frames on the RX path at line rate with minimum IFG.
+- **R19 [M]** Three clock domains handled explicitly: `tx_clk` (125 MHz, MMCM from the
+  50 MHz board oscillator), `rx_clk` (125 MHz, from PHY RXC pin — asynchronous to
+  tx_clk), `sys_clk` (user/management domain; may equal tx_clk domain in v1). All
+  domain crossings via async FIFOs or documented synchronizers; **zero undeclared CDC
+  paths** (checked by `report_cdc`).
+- **R20 [M]** Timing closed with WNS ≥ 0 at 125 MHz on all declared clocks, and RGMII I/O
+  constrained with real input/output delay values derived from the KSZ9031RNX datasheet
+  (Table 19, "RGMII Timing") — not left unconstrained.
+- **R21 [M]** MAC-added latency (last bit of a field in → corresponding byte out of the
+  user interface) ≤ 32 rx_clk cycles (256 ns) on RX. Measured in sim; a spec number to
+  design against — confirmed generous by the bottom-up pipeline sum in B.1b (9 cycles,
+  3.6× margin), not just asserted.
+
+### Resources (targets, to be checked per-module at Stage 4 step 6)
+
+| Resource | Budget | XC7A35T has | Headroom rationale |
+|---|---|---|---|
+| LUTs | ≤ 2,000 | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
+| FFs | ≤ 3,000 | 41,600 | pipeline + CDC + counters |
+| BRAM36 | ≤ 4 | 50 | 2 async FIFOs + ILA capture |
+| DSP | 0 | 90 | nothing multiplies here |
+| MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
+
+A MAC blowing past 10% of a 35T means something structural is wrong.
+
+### Quality gates
+
+- **R22 [M]** Verilator lint clean, zero warnings (suppressions require a justifying
+  comment).
+- **R23 [M]** Zero inferred latches; build script fails the build on any.
+- **R24 [M]** Bit-exact agreement with the golden model on the full regression suite
+  (below); build refused on negative slack.
+
+## B.3 Rate and cycle budget (the Stage-1 arithmetic)
+
+```
+Line rate:            1 Gbps  =  125 MB/s
+Datapath:             8 bits wide @ 125 MHz  =  1 byte/cycle  =  exactly 1 Gbps
+Cycles per byte:      125 MHz ÷ 125 MB/s  =  1.0
+```
+
+**Cycles-per-item is exactly 1.** Consequences you must design around, not discover:
+
+- During a frame there is **no spare cycle**. Any state machine that needs "one extra
+  cycle to think" between payload bytes drops data. Everything on the through-path is
+  single-cycle-per-byte, decisions precomputed or pipelined.
+- The breathing room is **between** frames only: preamble(8) + IFG(12) = 20 byte-times per
+  frame. For minimum frames that's 20 cycles of slack every 64 payload-path cycles; for
+  1518-byte frames, 20 every 1518. Anything that takes longer than 20 cycles (e.g. a CRC
+  "finalize" step) must be pipelined into the stream, not appended after it.
+- Worst-case frame rate: `1 Gbps ÷ ((64+20)×8 bits)` = **1.488 Mframes/s** — the rate
+  every per-frame mechanism (counters, verdict delivery, FIFO pointer updates) must
+  sustain.
+- **Buffer sizing is derived, not chosen:** the RX async FIFO exists only to cross
+  rx_clk→user domain, not to absorb rate mismatch (both sides run ≥ line rate), so its
+  depth is set by clock ppm skew + handshake latency across the deepest user-side stall
+  you permit. With a no-stall user contract (R18), 64 entries — one BRAM18 — is already
+  ≈ 15× worst-case occupancy; full derivation in B.3a.
+- **Where this architecture stops working:** at 10G (10 GbE = 64-bit datapath @ 156.25
+  MHz, XGMII) the one-byte-per-cycle structure breaks, and the byte-wide (8-bit/cycle)
+  parallel CRC-32 (B.7 item 2) would need re-widening to 64 bits/cycle — the scaling
+  envelope ends at 1G/RGMII, and that boundary is worth stating in your README because
+  "how would you scale this to 10G?" is the obvious interview follow-up.
+
+## B.3a Parameter derivation table
+
+Every number in this spec traces to a formula, per the flow doc's "derive, don't choose"
+rule. Re-derivable by running [`spec/budget.py`](budget.py).
+
+| Parameter | Value | Derivation |
+|---|---|---|
+| Line rate | 1 Gbps = 125 MB/s | 1000BASE-T definition |
+| Datapath width | 8 bits @ 125 MHz | `125 MB/s × 8 bits ÷ 125 MHz = 8 bits/cycle` — matches RGMII's 4-bit DDR ⇒ 8 bits/cycle |
+| Cycles per byte | 1.0 | `125 MHz ÷ 125 MB/s` |
+| Min inter-frame gap | 96 bit-times = 12 byte-times | IEEE 802.3-2022 Table 4-2, all speeds |
+| Slack per min-size frame | 20 cycles / 64 payload-path cycles | preamble(8) + IFG(12) |
+| Worst-case frame rate | 1.488 Mframes/s | `1 Gbps ÷ ((64+20)×8 bits)` — every per-frame mechanism (counters, verdict, FIFO pointers) must sustain this |
+| MAC-added latency budget | ≤ 32 rx_clk cycles (256 ns) | R21 ceiling; bottom-up pipeline sum (IDDR 1 + SFD/deframer 2 + CRC verdict 1 + FIFO CDC 4 + egress reg 1, B.1b) = 9 cycles, 3.6× margin — confirmed, not asserted |
+| RGMII clock tolerance (each side) | ±100 ppm | IEEE 802.3-2022 Clause 40 (1000BASE-T transmit clock tolerance) — board-oscillator ppm not yet confirmed against the actual AX7035B BOM part (stated weakness, B.7) |
+| RX FIFO drift term | `2 × 100 ppm × 1518 B ≈ 0.3 B` | worst-case relative skew (`tx_clk` vs. recovered `rx_clk`) accumulated over one max-length frame (12.14 µs) — negligible, because the FIFO drains every IFG rather than absorbing sustained rate mismatch |
+| RX FIFO sync-latency term | ~4 bytes | dual-flop gray-code pointer synchronizer, 2 destination-clock cycles of pointer visibility delay, rounded up with margin |
+| **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.py`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
+| TX `GTX_CLK` phase shift | ≈ 1.6 ns (−72° of an 8 ns period) | center of the KSZ9031RNX's `TsetupT`/`TholdT` window (1.2–2.0 ns, datasheet Table 19), giving ±0.4 ns margin both edges — not the window's 2.0 ns edge (zero margin) — see B.1b |
+| RX capture delay | 1.2 ns (PHY default, no FPGA action) | KSZ9031RNX default RX_CLK-to-RXD delay, inside `TsetupR`/`TholdR` (1.0–2.0 ns) — see B.1b |
+| PHY reset hold time | ≥ 10 ms | KSZ9031RNX datasheet `tSR`: stable supply → reset de-assertion |
+| MDC max frequency | 2.5 MHz | IEEE 802.3-2022 Clause 22 MII management interface ceiling (R16) |
+
+## B.4 Verification strategy (decided now, per flow-doc Stage 3)
+
+- **Golden model** (MATLAB, see companion guide): frame builder + CRC-32, integer-exact,
+  validated against the standard CRC check value and a Wireshark capture before use.
+- **Parametric stimulus generator**: seeded; knobs for payload length (sweep 1→1500 +
+  boundary set {45,46,47,63,64,65,1499,1500,1501}), corruption type (bad FCS, bad SFD,
+  truncation, oversize, RX_ER injection, inter-frame garbage), gap length (min IFG,
+  bursts, long idles), and reset-mid-frame. Failures self-describe: seed, frame index,
+  corruption, offset.
+- **Self-checking testbenches**, per module then integrated: TX out → golden compare;
+  golden frames → RX in → payload+verdict compare. The integrated loop: TX output wired
+  to RX input through an RGMII bus-functional model that inserts the DDR timing.
+- **Assertions** (separate bound files): valid/ready protocol legality, IFG never
+  violated, FIFO never overflows, state machines never enter illegal states.
+- **Coverage criterion for "done"**: every requirement R1–R21 has ≥ 1 named test; every
+  corruption type crossed with {min, typical, max} length; regression green from one
+  `make regress` command.
+- **Traceability table** (test ↔ requirement ↔ status) lives in `verification_plan.md`.
+
+## B.5 Bring-up order (written before hardware is touched)
+
+1. Board alive: power, JTAG enumerates, blinky bitstream from the Stage-2 skeleton.
+2. Clocks proven: MMCM lock + 125 MHz on a debug pin / ILA.
+3. MDIO reads PHY ID registers correctly (proves MDIO + PHY alive) → read link-up and
+   confirm 1000 Mbps negotiated against your PC NIC.
+4. RX first, promiscuous, counters only: PC blasts frames with Scapy; RX-good counter
+   advances at the sent count, bad counters stay zero. (RX before TX: Wireshark gives you
+   a trusted generator; you have no trusted sink yet.)
+5. TX: send fixed frames; verify byte-exact in Wireshark, FCS "correct" per capture.
+6. Echo mode: RX payload looped to TX; Scapy round-trips randomized frames, compares.
+7. Corruption on the wire: Scapy sends bad-FCS/runt frames; bad counters advance, good
+   traffic continues (R10 on real hardware).
+8. Soak: ≥ 4 hours full-rate bidirectional randomized traffic; zero counter divergence,
+   FIFO high-water marks stable.
+
+Step 8 passing = the acceptance test for "fully functional."
+
+## B.6 Deliverables & repo layout
+
+`spec/` (this doc, versioned) · `model/` (MATLAB golden + generator) · `rtl/` ·
+`tb/` · `constrs/` (clocks / pins / exceptions split) · `scripts/build.tcl` ·
+`sw/host/` (Scapy test harness) · `Makefile` · `verification_plan.md` ·
+`bringup_checklist.md` · `README.md` with the block diagram and the B.3 arithmetic.
+
+## B.7 Non-goals, architecture decisions, and weaknesses
+
+**Explicit non-goals (v1):** 10/100 fallback (R13) · jumbo frames · flow control
+(802.3x pause) · VLAN tag awareness · any layer-3+ (ARP/IP/UDP — natural v2, out of
+scope now) · half duplex/CSMA-CD · store-and-forward buffering.
+
+**Architecture decisions (the four items formerly left open — all resolved now, not
+deferred to RTL time):**
+
+1. **RGMII skew mechanism (R14).** Resolved in B.1b from the KSZ9031RNX datasheet:
+   PHY-side default delay on RX (1.2 ns, no MDIO write), FPGA-side MMCM phase shift on
+   TX (≈1.6 ns, centered in the datasheet's window with margin — not the window's edge —
+   since the PHY does not delay its GTX_CLK input by default). This replaced an earlier
+   assumption that the board used a Realtek RTL8211 — corrected after pulling the actual
+   ALINX AX7035 manual and Microchip KSZ9031RNX datasheet; see the note in A.2.
+2. **Serial vs. byte-parallel CRC-32.** Resolved: **byte-parallel** (8-bit LUT/XOR-tree
+   update, one step per cycle). B.3 already proves this is the only option that fits —
+   cycles-per-byte is exactly 1.0, so a bit-serial CRC (8 cycles to process one byte)
+   cannot keep up with R7's back-to-back line-rate requirement; it isn't a style choice,
+   the arithmetic forces it.
+3. **sys_clk domain: shared with tx_clk, or standalone?** Resolved: **sys_clk = tx_clk**
+   for v1. R17's register block is debug/status, not datapath — no throughput reason to
+   isolate it — and sharing collapses the CDC surface to just rx_clk↔user (already
+   mandatory), instead of adding a second independent-clock boundary. Cost, stated
+   plainly: management/register access is coupled to whatever tx_clk's frequency is; a
+   v2 control plane (e.g. AXI-Lite or PCIe-backed register access at a different
+   frequency) would reopen this and add back a CDC boundary here.
+4. **RX FIFO depth.** Resolved: **64 entries**, derived in B.3a from clock-skew drift
+   over one max-length frame (~0.3 B, negligible) plus CDC pointer-sync latency
+   (~4 B) — roughly an order of magnitude below the chosen depth, which costs nothing
+   extra since a single BRAM18 natively holds far more than 64 entries at 8-bit width.
+
+**Alternatives considered, restated for traceability:**
+- **Store-and-forward vs. cut-through (RX delivery):** cut-through with a trailing
+  verdict, per R9 — HFT-idiomatic (first byte out as soon as it arrives, not after the
+  whole frame), at the cost of pushing bad-frame rollback onto user logic (see
+  `Documents/Bad bitstream handle.md` for the full reasoning).
+- Items 2 and 3 above are also, in effect, "alternatives considered" — each rejects a
+  simpler-looking option (bit-serial CRC, a standalone sys_clk) for a stated, derivable
+  reason rather than by default.
+
+**Weaknesses stated up front:** the board-oscillator ppm rating used in B.3a's FIFO
+derivation is the 1000BASE-T standard's ±100 ppm ceiling, **not yet confirmed against
+the actual crystal/oscillator part on the AX7035B BOM** — revisit once the schematic is
+in hand; the no-stall user contract (R18) pushes drop responsibility onto user logic —
+fine here, but a real NIC would buffer; and the RGMII timing numbers throughout this
+document (B.1b, R14, R20) come from the KSZ9031RNX datasheet read online, not yet
+cross-checked against the physical board — first thing to verify at Stage 2 bring-up
+step 1 (A.2's correction note).
