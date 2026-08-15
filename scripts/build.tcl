@@ -60,7 +60,33 @@ if {[llength $latches] > 0} {
     puts "Build refused: inferred latches present."
     exit 1
 }
-puts "==> Latch check: PASS (0 inferred latches)"
+
+# Gate 1b: the synthesiser SAID it inferred a latch, even if optimisation then
+# removed the cell so gate 1 could not see it.
+#
+# This is not hypothetical. An incomplete always @(*) whose output happens to be
+# dead -- unused, or overridden by another driver -- is reported as
+# "[Synth 8-327] inferring latch for variable ..." and then quietly deleted, so
+# the netlist is clean and gate 1 passes. The RTL is still wrong: the same
+# incomplete assignment becomes a real latch the moment that signal starts being
+# used, and the change that makes it load-bearing will be somewhere else
+# entirely. The flow doc's rule is "any inferred latch is a bug, no exceptions",
+# and that means the inference, not merely the surviving cell.
+if {[catch {set latch_msgs [get_msg_config -id "Synth 8-327" -count]} err]} {
+    puts "FATAL: cannot query latch-inference messages: $err"
+    puts "Build refused: gate 1b could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+if {$latch_msgs > 0} {
+    puts "FATAL: synthesis inferred $latch_msgs latch(es) (Synth 8-327)."
+    puts "They may have been optimised away -- that does not make the RTL"
+    puts "correct. Search the log above for 'inferring latch for variable'."
+    puts "Build refused: latch inferred during synthesis."
+    exit 1
+}
+
+puts "==> Latch check: PASS (0 inferred latches, 0 inference warnings)"
 
 # Resource inference counts. (Stage 2: "print resource inference counts, so
 # unexpected changes surface at synthesis." Trivial today - a counter and

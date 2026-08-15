@@ -219,7 +219,12 @@ def main() -> int:
         if not todo:
             sys.exit(f"error: no scenario named '{args.scenario}' in the catalogue")
     if args.tb:
-        todo = [s for s in todo if TB_FOR_DIRECTION[s[1]] == args.tb]
+        known_tbs = set(TB_FOR_DIRECTION.values()) | {LOOPBACK_TB} \
+                    | {tb for tb, _, _ in SELFTESTS}
+        if args.tb not in known_tbs:
+            sys.exit(f"error: unknown testbench '{args.tb}'. "
+                     f"Known: {', '.join(sorted(known_tbs))}")
+        todo = [s for s in todo if TB_FOR_DIRECTION.get(s[1]) == args.tb]
 
     # The BFM self-test and the loopback are extra runs layered on top of the
     # scenario list, not scenarios themselves.
@@ -265,6 +270,15 @@ def main() -> int:
             passed, detail = run_scenario(xsim, LOOPBACK_TB, name, label=label)
             results.append((label, passed))
             print(f"  {'PASS' if passed else 'FAIL'}  {label:<22} {detail}")
+
+    # A run that executed nothing must not report success. `--tb tb_rgmii_bfm`
+    # used to select zero scenarios, skip the self-tests and the loopback, print
+    # "0 of 0 scenario(s) passed" and exit 0 -- a gate reporting green for work
+    # it never did, which is the one thing a gate must never do.
+    if not results:
+        print("\nerror: that selection ran nothing. Nothing passed, because "
+              "nothing was executed.")
+        return 1
 
     failed = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(failed)} of {len(results)} scenario(s) passed.")

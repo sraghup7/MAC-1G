@@ -3,14 +3,17 @@
 # (Stage 3) so each flow is one command, not a sequence someone has to
 # remember.
 #
-# Tool paths can be overridden if they aren't on PATH, e.g.:
-#   make bitstream VIVADO="D:/Vivado/2024.2/bin/vivado.bat"
-#   make regress   VIVADO_BIN="D:/Vivado/2024.2/bin"
+# Every target that needs Vivado, Verilator or MATLAB goes through a script in
+# scripts/ that locates the tool itself, so none of them has to be on PATH.
+# Override a search with an environment variable if needed:
+#   VIVADO_BIN="D:/Vivado/2024.2/bin"    (run_sim.py, build.py)
+#   python scripts/lint.py --verilator <path>
+#
+# MATLAB is invoked directly because -batch is the whole interface and it is on
+# PATH here; if that stops being true it gets the same treatment.
 
-VIVADO    ?= vivado
 MATLAB    ?= matlab
 PYTHON    ?= python
-VERILATOR ?= verilator
 BUILD_DIR := build
 SIM_DIR   := sim
 
@@ -71,13 +74,10 @@ vectors-frozen:
 vectors-check:
 	$(PYTHON) scripts/check_vectors.py
 
-# R22: zero warnings, suppressions require a justifying comment. Verilator is
-# not installed here yet; the target says so plainly rather than reporting
-# success for a check that did not run -- "silently passed because the tool was
-# missing" is the worst outcome a quality gate can have.
-# R22. Driven from Python rather than inline so the gate behaves the same from
-# Windows -- where Verilator lives inside WSL -- as it does on a Linux box, and
-# so "verilator is missing" stays an error rather than becoming a silent skip.
+# R22: zero warnings, and suppressions require a justifying comment in the
+# source. Driven from Python so the gate behaves the same from Windows -- where
+# Verilator lives inside WSL -- as on a Linux box, and so "verilator is missing"
+# stays an error rather than becoming a silent skip.
 lint:
 	$(PYTHON) scripts/lint.py
 
@@ -98,19 +98,27 @@ regress-all:
 # design against a reference nobody has checked.
 check: model vectors-check lint regress
 
+# The order in `check` is the point, so never let -j shuffle it. Each gate's
+# output is also meant to be read in sequence when one fails.
+.NOTPARALLEL:
+
 # ---- Stage 2: build -------------------------------------------------------
 
+# Through Python for the same reason lint and clean are: `vivado` is not on
+# PATH here, so a bare invocation died with "cannot find the file specified"
+# and these four targets had never been runnable. scripts/build.py reuses
+# run_sim.py's locator rather than carrying a second copy of it.
 synth:
-	$(VIVADO) -mode batch -source scripts/build.tcl -tclargs synth
+	$(PYTHON) scripts/build.py synth
 
 impl:
-	$(VIVADO) -mode batch -source scripts/build.tcl -tclargs impl
+	$(PYTHON) scripts/build.py impl
 
 bitstream:
-	$(VIVADO) -mode batch -source scripts/build.tcl -tclargs bitstream
+	$(PYTHON) scripts/build.py bitstream
 
 program: bitstream
-	$(VIVADO) -mode batch -source scripts/program.tcl -tclargs $(BUILD_DIR)/skeleton_top.bit
+	$(PYTHON) scripts/build.py program $(BUILD_DIR)/skeleton_top.bit
 
 # Via Python rather than `rm -rf`, which is not portable to the shell make
 # actually gets here. See the note in scripts/clean.py: these targets only ever

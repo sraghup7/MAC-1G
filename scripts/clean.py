@@ -51,11 +51,18 @@ TARGETS = {
 
 
 def inside_repo(path: Path) -> bool:
+    """True only for paths strictly below the repo root.
+
+    The repo root itself is excluded deliberately. Nothing in TARGETS can
+    resolve to it today, but a future empty or mistyped pattern could, and the
+    difference between "removed build/" and "removed the repository" should not
+    rest on the pattern list staying correct.
+    """
     try:
-        path.resolve().relative_to(REPO)
-        return True
+        rel = path.resolve().relative_to(REPO)
     except ValueError:
         return False
+    return rel != Path(".")
 
 
 def remove(path: Path) -> str | None:
@@ -66,11 +73,26 @@ def remove(path: Path) -> str | None:
     if not path.exists():
         return None
 
-    if path.is_dir():
-        shutil.rmtree(path, ignore_errors=True)
-        return f"{path.relative_to(REPO)}/"
-    path.unlink(missing_ok=True)
-    return str(path.relative_to(REPO))
+    label = f"{path.relative_to(REPO)}/" if path.is_dir() else str(path.relative_to(REPO))
+
+    # Errors are NOT ignored. shutil.rmtree(ignore_errors=True) would let this
+    # print "Removed build/" while build/ was still there -- a file held open by
+    # Vivado is the ordinary way that happens -- and a clean that reports work
+    # it did not do sends the next person debugging a stale artifact they were
+    # told had been deleted.
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError as exc:
+        print(f"    could not remove {label}: {exc}")
+        return None
+
+    if path.exists():
+        print(f"    {label} still present after removal")
+        return None
+    return label
 
 
 def main() -> int:
@@ -81,22 +103,32 @@ def main() -> int:
     groups = ["build", "sim"] if which == "all" else [which]
 
     removed = []
+    attempted = 0
     for group in groups:
         for pattern in TARGETS[group]:
             if any(c in pattern for c in "*?["):
                 for match in REPO.glob(pattern):
+                    attempted += 1
                     got = remove(match)
                     if got:
                         removed.append(got)
             else:
-                got = remove(REPO / pattern)
+                target = REPO / pattern
+                if target.exists():
+                    attempted += 1
+                got = remove(target)
                 if got:
                     removed.append(got)
 
     if removed:
         print(f"Removed {len(removed)}: {', '.join(sorted(removed))}")
-    else:
+    elif attempted == 0:
         print("Nothing to remove.")
+
+    if len(removed) != attempted:
+        print(f"\n{attempted - len(removed)} item(s) could not be removed "
+              f"(see above). Something is probably still holding them open.")
+        return 1
     return 0
 
 
