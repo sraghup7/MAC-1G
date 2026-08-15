@@ -51,7 +51,12 @@ debug loops:
    check when something downstream looks impossible. Both exist because the
    harness had real bugs that presented as design bugs.
 5. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
-   of every scenario, including ones nobody designed.
+   of every scenario, including ones nobody designed. `gem_axis_sva` (bound
+   twice, to both ports) and `gem_rgmii_sva` are live; `gem_internal_sva` is
+   written but deliberately not yet bound — see the Stage 4 obligation list in
+   its header. An SVA failure fails the scenario even when every data
+   comparison passed, which `scripts/run_sim.py` enforces because a bound
+   assertion's `$error` does not route through the testbench's failure count.
 6. **Scenario regression** (`scripts/run_sim.py`) — the design against the
    model, bit for bit.
 7. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
@@ -132,15 +137,17 @@ second list that would drift.
 | `random_rx_sweep` | rx | R8–R11 R17 | 600 frames, every corruption × the length set |
 | `random_tx_sweep` | tx | R1 R3 R5 R7 | 600 frames across the full length range |
 
-The first fourteen are frozen: their vectors are committed, so they are readable
+The first fifteen are frozen: their vectors are committed, so they are readable
 in review and runnable without MATLAB. The two `random_*` sweeps regenerate
-bit-identically from the seed in their manifest and are git-ignored.
+bit-identically from the seed in their manifest and are git-ignored. `--all`
+has been run end to end: 304,236 RX cycles and 460,992 TX cycles load and are
+compared, so the large-scale path is exercised rather than merely available.
 
 ### Coverage criterion for "done"
 
 From B.4, checked mechanically rather than by reading the table and hoping:
 
-- every requirement R1–R21 has ≥ 1 named test — the tables above;
+- every requirement R1–R24 has ≥ 1 named test — the tables above;
 - every error class appears in at least one frozen scenario —
   `tGenerator/everyErrorClassIsExercisedSomewhere` fails if one does not;
 - every corruption type crossed with {min, typical, max} length —
@@ -197,6 +204,7 @@ that would otherwise have surfaced mid-debug:
 | **V-7** | R12 (DA filter) has no test | Stretch requirement, not implemented. | Promote out of B.7's non-goals or leave explicitly unimplemented at release. |
 | **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
 | **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
+| **V-10** | The Makefile has never been executed | `make` is on neither Windows nor WSL on this machine, so every target in it is unverified — `check`, `lint`, `vectors-check`, `regress` and the Stage 2 build targets have only ever been exercised as the underlying commands. A typo in a target would not have been noticed. | One `sudo apt install make` inside WSL, then run `make check` once end to end. Until then the Makefile is documentation, not a tested entry point. |
 
 ---
 

@@ -171,12 +171,31 @@ def run_scenario(xsim: str, snapshot: str, name: str,
 
     (SIM / f"{tag}.out").write_text(output, encoding="utf-8")
 
-    if "[gem_tb] PASS " in output:
+    # Bound SVA failures do NOT route through gem_tb_pkg's fail_count -- an
+    # assert's $error goes straight to the simulator log. So a scenario whose
+    # data comparison passed while an assertion fired would print
+    # "[gem_tb] PASS" and, without this, be reported as passing. That would
+    # make the whole assertion layer decorative exactly when it starts
+    # mattering: today every scenario fails anyway, so the hole is invisible,
+    # and it would have debuted in Stage 4 on the first scenario that went
+    # green.
+    sva = [l for l in output.splitlines() if l.startswith("Error:")]
+
+    if "[gem_tb] PASS " in output and not sva:
         checks = re.search(r"(\d+) checks, (\d+) failures", output)
         return True, f"{checks.group(1)} checks" if checks else "passed"
 
+    if sva and "[gem_tb] PASS " in output:
+        return False, (f"data comparison passed but {len(sva)} assertion failure(s) fired -- "
+                       f"first: {sva[0][7:].strip()[:100]}")
+
     fails = [l for l in output.splitlines() if l.startswith("FAIL ")]
-    summary = fails[0][:150] if fails else "no PASS line -- see the log"
+    if fails:
+        summary = fails[0][:150]
+    elif sva:
+        summary = f"{len(sva)} assertion failure(s) -- first: {sva[0][7:].strip()[:100]}"
+    else:
+        summary = "no PASS line -- see the log"
     return False, summary
 
 
