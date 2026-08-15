@@ -426,7 +426,7 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 - **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
 
 **Stage 3 status (complete):** all of the above is built and running. The golden model is
-MATLAB (`model/+gem/`), validated by 65 tests — the published CRC-32 check value, agreement
+MATLAB (`model/+gem/`), validated by 68 tests — the published CRC-32 check value, agreement
 with Python's `zlib` over 2000 random vectors, the residue property, a full
 build→RGMII→deframe→parse round trip across the length sweep, and B.4b's abort contract.
 Seventeen scenarios generate vector files, each cross-checked by reading its own wire back

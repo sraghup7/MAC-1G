@@ -164,32 +164,54 @@ function report = crossCheck(records, found, name)
 %   expectation it just wrote out is wrong, and the testbench would spend the
 %   afternoon blaming the RTL.
 
-predictable = ~cellfun(@isempty, {records.expectedClass});
-nPredictable = nnz(predictable);
-
-report = struct('checked', nPredictable, 'skipped', nnz(~predictable), ...
-                'ok', true);
-
-if any(~predictable)
-    % 'badsfd' can add or remove a frame, so positional alignment is gone.
-    % Say so rather than silently checking the wrong pairs.
-    report.ok = true;
-    report.note = sprintf(['%d frame(s) use badsfd, whose outcome is ' ...
-        'legitimately unpredictable; positional cross-check skipped for ' ...
-        'this scenario.'], nnz(~predictable));
-    return
-end
-
-real = found([found.sfdFound]);
-if numel(real) ~= numel(records)
+% Alignment is positional and stays that way even when badsfd is present.
+% GEM.DEFRAME returns one entry per DV burst -- including bursts in which no
+% SFD was ever found (.sfdFound false) -- and every item this generator emits
+% is exactly one burst, because gapBefore is never zero and garbage in the gap
+% carries DV low. So found(k) corresponds to records(k), always.
+%
+% The previous version filtered `found` by .sfdFound before comparing, which is
+% what actually destroyed the alignment: a badsfd frame that produced no burst
+% entry in the filtered list shifted every later frame by one. The response was
+% to abandon the cross-check for the whole scenario the moment one badsfd
+% appeared -- which switched off the generator's strongest self-check on
+% rx_bad_sfd and on random_rx_sweep's 600 frames, the two scenarios doing the
+% most work. Worse, `checked` was reported as the predictable-frame count while
+% nothing had been checked at all, so the report claimed coverage it did not
+% have.
+%
+% Now: skip precisely the frames whose class is genuinely unpredictable, and
+% check every other one.
+if numel(found) ~= numel(records)
     error('gem:generatorFrameCount', ...
-        ['Scenario "%s": generated %d frames but the golden deframer found ' ...
-         '%d. The generator and the model disagree about the wire.'], ...
-        name, numel(records), numel(real));
+        ['Scenario "%s": generated %d items but the golden deframer found ' ...
+         '%d DV bursts. The generator and the model disagree about the ' ...
+         'shape of the wire, before any classification is even attempted.'], ...
+        name, numel(records), numel(found));
 end
+
+checked = 0;
+skipped = 0;
 
 for k = 1:numel(records)
-    actual = gem.parseFrame(real(k).frameBytes, RxErr=real(k).rxErr).class;
+    if isempty(records(k).expectedClass)
+        % badsfd: the hunter may legitimately latch onto a later 0xD5 and
+        % produce a frame of unpredictable class, or find nothing at all.
+        % Both are R8-correct, so there is nothing to assert.
+        skipped = skipped + 1;
+        continue
+    end
+
+    if ~found(k).sfdFound
+        error('gem:generatorFrameLost', ...
+            ['Scenario "%s", frame %d (payload %d B, %s at octet %d): the ' ...
+             'generator emitted a frame the golden deframer never framed. ' ...
+             'The generator is wrong, not the design under test.'], ...
+            name, k, records(k).payloadLen, records(k).corruption, ...
+            records(k).offset);
+    end
+
+    actual = gem.parseFrame(found(k).frameBytes, RxErr=found(k).rxErr).class;
     if ~strcmp(actual, records(k).expectedClass)
         error('gem:generatorIntentMismatch', ...
             ['Scenario "%s", frame %d (payload %d B, %s at octet %d): ' ...
@@ -198,7 +220,15 @@ for k = 1:numel(records)
             name, k, records(k).payloadLen, records(k).corruption, ...
             records(k).offset, records(k).expectedClass, actual);
     end
+    checked = checked + 1;
 end
 
-report.note = sprintf('%d frames cross-checked, all agree.', nPredictable);
+report = struct('checked', checked, 'skipped', skipped, 'ok', true);
+
+if skipped > 0
+    report.note = sprintf(['%d frames cross-checked, all agree; %d badsfd ' ...
+        'frame(s) skipped as legitimately unpredictable.'], checked, skipped);
+else
+    report.note = sprintf('%d frames cross-checked, all agree.', checked);
+end
 end

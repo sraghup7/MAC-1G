@@ -62,6 +62,36 @@ classdef tParams < matlab.unittest.TestCase
                 'RX_FIFO_DEPTH and RX_FIFO_ADDR_W have drifted apart.');
         end
 
+        function cacheInvalidatesWhenTheHeaderChanges(tc)
+            % gem.params caches, and the whole reason it exists is to stop the
+            % model drifting from the RTL. A cache that never invalidates
+            % reintroduces exactly that drift inside a single session: edit
+            % gem_mac_params.vh, re-run, and silently get the old constants.
+            %
+            % The header is genuinely modified and restored via onCleanup, so
+            % an assertion failure here cannot leave the file dirty.
+            headerFile = fullfile(gem.repoRoot(), 'rtl', 'gem_mac_params.vh');
+            original = fileread(headerFile);
+            restore = onCleanup(@() writeText(headerFile, original));
+
+            before = gem.params();
+            tc.verifyFalse(isfield(before, 'CACHE_PROBE'), ...
+                'GEM_CACHE_PROBE already exists; this test would prove nothing');
+
+            writeText(headerFile, [original newline '`define GEM_CACHE_PROBE 4242' newline]);
+
+            % The stamp is (datenum, bytes); the size changed, so this does not
+            % depend on filesystem timestamp granularity.
+            after = gem.params();
+            tc.verifyTrue(isfield(after, 'CACHE_PROBE'), ...
+                'gem.params returned stale constants after the header changed');
+            tc.verifyEqual(double(after.CACHE_PROBE), 4242);
+
+            clear restore    %#ok<CLEAR> -- restore now, then confirm it took
+            tc.verifyFalse(isfield(gem.params(), 'CACHE_PROBE'), ...
+                'gem.params did not pick the restored header back up');
+        end
+
         function macroReferenceResolves(tc)
             % GEM_SIM_SCALE is defined as `GEM_MAX_PAYLOAD_BYTES, i.e. by
             % reference. The parser has to follow that, not store the literal
@@ -81,4 +111,15 @@ classdef tParams < matlab.unittest.TestCase
         end
 
     end
+end
+
+
+function writeText(path, text)
+%WRITETEXT Overwrite PATH with TEXT verbatim, no encoding surprises.
+fid = fopen(path, 'w');
+if fid < 0
+    error('tParams:cannotWrite', 'Could not open %s for writing.', path);
+end
+c = onCleanup(@() fclose(fid));
+fwrite(fid, text);
 end

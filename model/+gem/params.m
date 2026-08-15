@@ -17,19 +17,34 @@ function p = params(force)
 %
 %   See also GEM.CRC32, GEM.BUILDFRAME.
 
-persistent cached
+persistent cached cachedStamp
+
+headerFile = fullfile(gem.repoRoot(), 'rtl', 'gem_mac_params.vh');
+info = dir(headerFile);
+if isempty(info)
+    error('gem:paramsNotFound', ...
+        'Parameter header not found at %s.', headerFile);
+end
+
+% The cache is keyed on the header's modification time and size, not merely on
+% "have we read it once". Caching unconditionally would defeat the entire point
+% of this function: edit gem_mac_params.vh in an interactive session and every
+% subsequent call would keep returning the OLD constants, so the model would
+% silently drift from the RTL it exists to stay in step with -- and the symptom
+% would be a testbench mismatch that looks exactly like an RTL bug.
+%
+% A dir() stat per call is microseconds; the fileread plus two regex passes it
+% avoids is not. `matlab -batch` gets a fresh process each time so the make
+% targets were never exposed to this, but the interactive workflow -- which is
+% precisely how someone edits parameters -- was.
+stamp = [info.datenum, info.bytes];
+
 if nargin >= 1 && force
     cached = [];
 end
-if ~isempty(cached)
+if ~isempty(cached) && isequal(stamp, cachedStamp)
     p = cached;
     return
-end
-
-headerFile = fullfile(gem.repoRoot(), 'rtl', 'gem_mac_params.vh');
-if ~isfile(headerFile)
-    error('gem:paramsNotFound', ...
-        'Parameter header not found at %s.', headerFile);
 end
 
 text = fileread(headerFile);
@@ -76,7 +91,8 @@ for k = 1:numel(names)
     end
 end
 
-cached = p;
+cached      = p;
+cachedStamp = stamp;
 end
 
 

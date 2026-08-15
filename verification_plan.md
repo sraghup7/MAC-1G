@@ -22,7 +22,7 @@ python scripts/run_sim.py
 
 | Command | What it does | Gate |
 |---|---|---|
-| `make model` | the golden model's own test suite (65 tests) | must be green before any simulation result means anything |
+| `make model` | the golden model's own test suite (68 tests) | must be green before any simulation result means anything |
 | `make vectors` | regenerates every scenario from its seed | fails if the generator and the model disagree |
 | `make vectors-check` | do the **committed** vectors still match the model? | fails if an edited model left them a fossil |
 | `make sim S=<scenario>` | one scenario | — |
@@ -46,6 +46,10 @@ debug loops:
 2. **Generator self-check** (inside `gem.genScenario`) — does the generator's
    stated intent match what the golden model reads back off the wire? The two
    are derived independently, so agreement is evidence rather than tautology.
+   Runs on every frame whose class is predictable, including in scenarios that
+   mix in `badsfd`: 525 of 600 frames in `random_rx_sweep`, 6 of 12 in
+   `rx_bad_sfd`. Only `badsfd` frames are skipped, and the skip is counted
+   separately from the checks so the report cannot overstate its coverage.
 3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
    still reflect the current model?
 4. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
@@ -163,7 +167,7 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 
 | Layer | Result |
 |---|---|
-| Golden model test suite | **65 / 65 passing** |
+| Golden model test suite | **68 / 68 passing** |
 | Scenario generation | 17 / 17, every generator self-check agrees with the model |
 | Committed vectors vs the model | **46 / 46 files current** |
 | BFM self-test | **passing** — 3522 checks |
