@@ -10,8 +10,8 @@ describing a TX path that could not do it. **B.7** gains the TX store-and-forwar
 alternative and the threshold-buffer v2 note that B.4b already claimed were recorded there
 (they were not — a dangling cross-reference). **B.6** now separates what the repo actually
 contains from what is committed-to but deliberately absent; three of the paths it listed
-did not exist. **B.4**'s status paragraph and coverage criterion were stale: 65 tests not
-55, seventeen scenarios not sixteen, R1–R24 not R1–R21.
+did not exist. **B.4**'s status paragraph and coverage criterion were stale: the test count
+was 55 and is now 68, seventeen scenarios not sixteen, R1–R24 not R1–R21.
 
 **Changelog v0.3 → v0.4:** added **B.4b**, the TX underrun contract — the last question
 Stage 3 left genuinely open, and one Stage 4 cannot be written around. Resolved as
