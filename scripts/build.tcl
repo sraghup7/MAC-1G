@@ -126,8 +126,40 @@ close $fh
 # Gate 2: WNS/WHS >= 0. (Stage 2: "fail on negative slack - the tool will
 # otherwise write a broken bitstream and report success"; Stage 7: "never
 # program a bitstream with negative slack.")
-set wns [get_property SLACK [lindex [get_timing_paths -max_paths 1 -nworst 1 -setup] 0]]
-set whs [get_property SLACK [lindex [get_timing_paths -max_paths 1 -nworst 1 -hold] 0]]
+# Fetch the worst path for each check, and refuse plainly if there is not one.
+#
+# get_timing_paths returns an empty list when the design has no analysable
+# paths -- most often because no clock is defined. get_property SLACK on that
+# yields "", and Tcl compares "" < 0 as *strings*, which is true, so the build
+# was refused with "negative setup slack (WNS =  ns)". Refusing was the right
+# direction by luck; the diagnosis was wrong, and "negative slack" would send
+# someone hunting a timing problem that does not exist instead of a missing
+# create_clock.
+proc gem_worst_slack {kind} {
+    set paths [get_timing_paths -max_paths 1 -nworst 1 -$kind]
+    if {[llength $paths] == 0} {
+        puts "FATAL: the design has no $kind timing paths to analyse."
+        puts "Almost always this means no clock is defined -- check"
+        puts "constrs/clocks.xdc. A design with nothing to analyse must not"
+        puts "pass a timing gate."
+        puts "Build refused: no $kind timing paths."
+        exit 1
+    }
+    set s [get_property SLACK [lindex $paths 0]]
+    if {![string is double -strict $s]} {
+        puts "FATAL: worst $kind slack came back as '$s', which is not a number."
+        puts "A path object exists but carries no slack, which means timing was"
+        puts "never analysed for it -- check that constrs/clocks.xdc defines a"
+        puts "clock covering this design."
+        puts "Build refused: gate 2 could not evaluate slack, and a gate that"
+        puts "cannot evaluate must not report success."
+        exit 1
+    }
+    return $s
+}
+
+set wns [gem_worst_slack setup]
+set whs [gem_worst_slack hold]
 puts "==> WNS (setup) = $wns ns, WHS (hold) = $whs ns"
 if {$wns < 0} {
     puts "Build refused: negative setup slack (WNS = $wns ns)."
@@ -138,6 +170,91 @@ if {$whs < 0} {
     exit 1
 }
 puts "==> Timing check: PASS (WNS=$wns ns, WHS=$whs ns)"
+
+# Gate 3: nothing important may be unconstrained.
+#
+# WNS >= 0 is worth very little on its own, because a path nobody constrained
+# has no slack to be negative. On the Stage 2 skeleton Vivado said so directly:
+#
+#   WARNING: [Place 30-2953] Timing driven mode will be turned off because no
+#                            critical terminals were found.
+#
+# The build was reporting a healthy 17.2 ns while the placer had timing
+# analysis switched off. R20 asks for "WNS >= 0, RGMII I/O constrained", and
+# the second half is the half that a passing WNS can hide -- which is precisely
+# how a wrongly-constrained pin reaches the bench having passed every check.
+#
+# So check_timing runs, and the two conditions that are unambiguous bugs at any
+# stage refuse the build: a register with no clock reaching it, and an internal
+# endpoint with nothing constraining it. Ports with no I/O delay are listed
+# rather than refused, because on this skeleton the LEDs legitimately have none
+# -- they are declared as false paths in constrs/exceptions.xdc. When Stage 6
+# adds the RGMII I/O constraints, this becomes a refusal too.
+set ct_report "$BUILD_DIR/check_timing.rpt"
+check_timing -file $ct_report -verbose
+
+if {![file exists $ct_report]} {
+    puts "FATAL: check_timing produced no report at $ct_report."
+    puts "Build refused: gate 3 could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+
+set fh [open $ct_report r]
+set ct_text [read $fh]
+close $fh
+
+# The report's table of contents carries every check and its count as
+# "N. checking <name> (COUNT)", which is the stable thing to parse -- the prose
+# in each section varies with singular/plural and with sub-cases.
+proc gem_check_count {text name} {
+    if {[regexp "checking ${name} \\((\\d+)\\)" $text -> n]} { return $n }
+    # A check that is missing from the report did not run, which is not the
+    # same as a clean result and must not be treated as one.
+    puts "FATAL: check_timing report has no '$name' entry."
+    puts "Build refused: gate 3 cannot confirm that check ran."
+    exit 1
+}
+
+# Unambiguous bugs at any stage: sequential logic with no clock, endpoints
+# timing analysis never reaches, combinational or latch loops, and a register
+# fed by more than one clock.
+foreach {check description} {
+    no_clock                          "register/latch pin(s) with no clock reaching them"
+    constant_clock                    "register/latch pin(s) clocked by a constant"
+    unconstrained_internal_endpoints  "internal endpoint(s) unconstrained for maximum delay"
+    multiple_clock                    "register/latch pin(s) reached by multiple clocks"
+    loops                             "combinational loop(s)"
+    latch_loops                       "latch loop(s)"
+} {
+    set n [gem_check_count $ct_text $check]
+    if {$n > 0} {
+        puts "FATAL: check_timing reports $n $description ($check)."
+        puts "See $ct_report."
+        puts "Build refused: the design is not fully covered by timing analysis."
+        exit 1
+    }
+}
+
+# Reported, not refused. On this skeleton the LEDs genuinely have no timing
+# requirement and are declared as false paths in constrs/exceptions.xdc --
+# check_timing recognises that and says so ("no output delay but user has a
+# false path constraint"). Once Stage 6 adds R20's RGMII I/O constraints, an
+# unconstrained port becomes a refusal here, because at that point every pin
+# that reaches the PHY has a real timing relationship to meet.
+foreach {check description} {
+    no_input_delay       "input port(s) with no input delay"
+    no_output_delay      "output port(s) with no output delay"
+    partial_input_delay  "input port(s) with only a partial input delay"
+    partial_output_delay "output port(s) with only a partial output delay"
+} {
+    set n [gem_check_count $ct_text $check]
+    if {$n > 0} {
+        puts "==> check_timing: $n $description (see $ct_report)"
+    }
+}
+
+puts "==> Constraint coverage check: PASS (see $ct_report)"
 
 if {$TARGET eq "impl"} {
     puts "==> Target 'impl' reached. Stopping."
