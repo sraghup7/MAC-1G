@@ -608,12 +608,15 @@ Step 8 passing = the acceptance test for "fully functional."
 tests, and the committed vectors) · `rtl/` · `tb/` (testbenches, BFM, bound assertions) ·
 `constrs/` (clocks / pins / exceptions split) · `scripts/` (`build.tcl`, `program.tcl`,
 `run_sim.py`, `check_vectors.py`, `lint.py`, `clean.py`) · `Makefile` ·
-`verification_plan.md` · `Documents/` (derivations too long to inline here).
+`verification_plan.md` · `Documents/` (derivations too long to inline here) ·
+`README.md` (the repository's front door: status, the B.3 arithmetic, the block
+diagram, and how to run the gates — it summarises and links rather than restating,
+so that no number lives in two places).
 
 **Planned, and deliberately not yet present:** `sw/host/` (Scapy test harness — Stage 5,
-when there is something to talk to) · `bringup_checklist.md` (Stage 5, derived from B.5) ·
-`README.md` with the block diagram and the B.3 arithmetic. Listing them here is the
-commitment; a file that exists but is empty would be worse than one that does not.
+when there is something to talk to) · `bringup_checklist.md` (Stage 5, derived from B.5).
+Listing them here is the commitment; a file that exists but is empty would be worse
+than one that does not.
 
 ## B.7 Non-goals, architecture decisions, and weaknesses
 
