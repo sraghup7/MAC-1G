@@ -107,6 +107,14 @@
 // the regression must treat wrap as expected behaviour, not as divergence.
 `define GEM_COUNTER_WIDTH       32
 
+// R21: MAC-added RX latency ceiling, SFD on the wire to the first byte out of
+// the user interface. B.1b's bottom-up pipeline sum is 13 cycles against this
+// (IDDR 1 + deframe 2 + FCS holdback 4 + verdict 1 + FIFO CDC 4 + egress 1),
+// so there is 2.5x margin. Lives here rather than only in the spec because
+// tb_gem_mac_rx measures against it on every scenario -- a latency budget
+// nothing checks is a wish.
+`define GEM_RX_LATENCY_MAX_CYCLES 32
+
 //---------------------------------------------------------------------------
 // Simulation scaling
 //---------------------------------------------------------------------------

@@ -24,10 +24,12 @@ python scripts/run_sim.py
 |---|---|---|
 | `make model` | the golden model's own test suite (55 tests) | must be green before any simulation result means anything |
 | `make vectors` | regenerates every scenario from its seed | fails if the generator and the model disagree |
+| `make vectors-check` | do the **committed** vectors still match the model? | fails if an edited model left them a fossil |
 | `make sim S=<scenario>` | one scenario | — |
 | `make regress` | every frozen scenario | **the gate**: nonzero exit on any mismatch or assertion failure |
 | `make regress-all` | plus the large random sweeps | — |
 | `make lint` | Verilator `--lint-only` (R22) | see open item V-4 |
+| `make check` | model, then vectors-check, then regress | the whole thing, in the order that makes a failure diagnosable |
 
 > `make` is not currently on PATH on this machine. Until it is, run the
 > underlying commands directly — `python scripts/run_sim.py`,
@@ -41,10 +43,18 @@ debug loops:
 2. **Generator self-check** (inside `gem.genScenario`) — does the generator's
    stated intent match what the golden model reads back off the wire? The two
    are derived independently, so agreement is evidence rather than tautology.
-3. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
+3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
+   still reflect the current model?
+4. **BFM self-test** (`tb_rgmii_bfm`) — is the bus functional model itself
+   right? It has no DUT in it, so it is the only run that passes today, and the
+   first thing to check when something downstream looks impossible.
+5. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
    of every scenario, including ones nobody designed.
-4. **Scenario regression** (`scripts/run_sim.py`) — the design against the
+6. **Scenario regression** (`scripts/run_sim.py`) — the design against the
    model, bit for bit.
+7. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
+   the only layer where a TX and RX error that cancel each other out cannot
+   hide.
 
 ---
 
@@ -85,9 +95,9 @@ debug loops:
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
 | R18 | Line rate both directions, zero drops | `rx_min_gap`, `random_rx_sweep`, `random_tx_sweep` | sim | pending-rtl |
-| R19 | Three clock domains, zero undeclared CDC | `tb_gem_mac_rx` drives `rx_clk` deliberately offset from `tx_clk`; `report_cdc` at Stage 6 | sim + tool | partial |
+| R19 | Three clock domains, zero undeclared CDC | `tb_gem_mac_rx` drives `rx_clk` deliberately offset from `tx_clk`; `tb_gem_mac_loopback` re-emits on an independent `rx_clk` so the async FIFO is genuinely crossed; `report_cdc` at Stage 6 | sim + tool | pending-rtl |
 | R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | Stage 6/7, `scripts/build.tcl` slack gate | tool | **open** (Stage 6) |
-| R21 | RX MAC-added latency ≤ 32 cycles | — | sim | **open** · see **V-5** |
+| R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** against `GEM_RX_LATENCY_MAX_CYCLES`; `tb_rgmii_bfm` verifies the timebase the measurement rests on | sim | pending-rtl |
 | R22 | Verilator lint clean, zero warnings | `make lint` | tool | **open** · see **V-4** |
 | R23 | Zero inferred latches | `scripts/build.tcl` latch gate (Stage 2) | tool | **green** (gate in place since Stage 2) |
 | R24 | Bit-exact vs the golden model; no negative slack | `make regress` + `scripts/build.tcl` slack gate | sim + tool | pending-rtl |
@@ -142,7 +152,9 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 |---|---|
 | Golden model test suite | **55 / 55 passing** |
 | Scenario generation | 16 / 16, every generator self-check agrees with the model |
-| Frozen regression vs `gem_mac_stub` | 0 / 14 passing — **expected**, there is no design yet |
+| Committed vectors vs the model | **42 / 42 files current** |
+| BFM self-test | **passing** — 3522 checks, the only run with no DUT in it |
+| Frozen regression vs `gem_mac_stub` | 0 / 16 passing — **expected**, there is no design yet |
 
 The regression failing against a port-only stub is the Stage 3 result, not a
 problem to fix. What was being checked is that the plumbing runs end to end and
@@ -158,6 +170,12 @@ that would otherwise have surfaced mid-debug:
 - the TX driver waited on `tready` unbounded, so a MAC that never asserts it
   reported "TIMED OUT after 20 ms" — six seconds of wall clock per scenario and
   no indication of the cause. It now names the stall.
+- **the RGMII monitor sampled both nibbles on the wrong clock phases.** Captured
+  words paired the rising nibble of cycle N with the falling nibble of cycle
+  N+1 — every octet's high half taken from the next octet. Every TX scenario
+  would have reported the design as broken, and the design would have been
+  fine. Found only once `tb_rgmii_bfm` diffed the BFM against itself, which is
+  why that testbench now exists and runs first.
 
 ---
 
@@ -169,9 +187,10 @@ that would otherwise have surfaced mid-debug:
 | **V-2** | R14's RGMII skew cannot be simulated | The 1.6 ns `GTX_CLK` phase shift is an I/O timing property. Simulation will pass with any phase; only static timing analysis and a scope on the bench can confirm it. | Stage 6 `report_timing` on the constrained I/O paths, then bring-up step 5 with an ILA or scope on `GTX_CLK`/`TXD0`. |
 | **V-3** | R16 MDIO has no test | The MDIO master is an independent block on a different interface; there is no golden-model work it shares. | Add `tb_mdio.sv` with a PHY register-file BFM when the module is written (Stage 4), checking the 64-cycle Clause 22 transaction and the ≤ 2.5 MHz MDC bound. |
 | **V-4** | R22's lint gate cannot run | Verilator is not installed on this machine. `make lint` fails loudly rather than reporting success for a check that did not run. | Install Verilator, then wire `make lint` into the regression so R22 is gated rather than intended. |
-| **V-5** | R21's latency is specified but not measured | The RX testbench compares beat *values*, not the cycle count from SFD to first beat. | Add a latency check to `tb_gem_mac_rx` once a DUT exists: timestamp the SFD in the driver, timestamp the first `rx_axis_tvalid` for that frame, assert ≤ 32 cycles. Note B.1b's pipeline sum needs the FCS holdback added first — see the spec changelog. |
+| **V-5** | ~~R21's latency is specified but not measured~~ | **Closed.** `gem.expectedBeats` now emits each frame's `sfdCycle`, the driver exposes when cycle 0 was launched, and `tb_gem_mac_rx` converts the two into a per-frame cycle count checked against `GEM_RX_LATENCY_MAX_CYCLES`. The worst measured latency is printed on every run even when it passes, so erosion against B.1b's predicted 13 is visible before it becomes a violation. | — |
 | **V-6** | The golden CRC is not yet checked against a real capture | B.4 asks for validation against a Wireshark capture; the board is not in hand. Validation is currently the published check value, Python's `zlib` over 2000 vectors, and the residue property. | Close at bring-up step 5 by capturing a frame the design transmitted and confirming Wireshark reports its FCS correct. |
 | **V-7** | R12 (DA filter) has no test | Stretch requirement, not implemented. | Promote out of B.7's non-goals or leave explicitly unimplemented at release. |
+| **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
 
 ---
 

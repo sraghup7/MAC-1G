@@ -22,12 +22,6 @@ module tb_gem_mac_tx;
 
     localparam time CLK_PERIOD = 8ns;
 
-    // How long the driver waits on tready before calling it a failure. Well
-    // above any legitimate stall -- the longest frame is 1518 octets -- and far
-    // below the global timeout, so a wedged tready is reported as itself
-    // instead of as a mystery hang.
-    localparam int STALL_LIMIT = 5000;
-
     string scenario;
     string vecdir;
 
@@ -49,11 +43,11 @@ module tb_gem_mac_tx;
     //------------------------------------------------------------------
     // DUT
     //------------------------------------------------------------------
-    logic [7:0]   tx_axis_tdata  = 8'b0;
-    logic         tx_axis_tvalid = 1'b0;
-    wire          tx_axis_tready;
-    logic         tx_axis_tlast  = 1'b0;
-    logic [111:0] tx_axis_tuser  = 112'b0;
+    wire [7:0]   tx_axis_tdata;
+    wire         tx_axis_tvalid;
+    wire         tx_axis_tready;
+    wire         tx_axis_tlast;
+    wire [111:0] tx_axis_tuser;
 
     wire [3:0] rgmii_txd;
     wire       rgmii_tx_ctl;
@@ -120,78 +114,18 @@ module tb_gem_mac_tx;
     logic [11:0] expected_cycles [];
     int          n_expected;
 
-    // Drives one frame. Backpressure is honoured but never generated inside a
-    // frame -- see gem.genTxScenario for why mid-frame stalling is an open
-    // spec item rather than something this testbench guesses at.
-    task automatic send_frame(input logic [7:0] payload [],
-                              input logic [7:0] da [],
-                              input logic [7:0] sa [],
-                              input logic [15:0] etherType,
-                              input int readyGap);
-        int i, stall;
-        begin
-            repeat (readyGap) @(posedge tx_clk);
-
-            tx_axis_tuser <= {da[0], da[1], da[2], da[3], da[4], da[5],
-                              sa[0], sa[1], sa[2], sa[3], sa[4], sa[5],
-                              etherType};
-
-            for (i = 0; i < payload.size(); i++) begin
-                tx_axis_tdata  <= payload[i];
-                tx_axis_tvalid <= 1'b1;
-                tx_axis_tlast  <= (i == payload.size() - 1);
-                @(posedge tx_clk);
-
-                // Bounded wait. Spinning here until the global timeout would
-                // report "TIMED OUT after 20 ms", which says nothing about the
-                // cause and costs six seconds of wall clock per scenario. A
-                // MAC that never raises tready is a specific, nameable failure
-                // and deserves to be named.
-                stall = 0;
-                while (!tx_axis_tready) begin
-                    @(posedge tx_clk);
-                    stall++;
-                    if (stall > STALL_LIMIT) begin
-                        report_fail(scenario, $sformatf(
-                            "tready never asserted -- stalled %0d cycles at payload octet %0d",
-                            stall, i));
-                        tx_axis_tvalid <= 1'b0;
-                        tx_axis_tlast  <= 1'b0;
-                        return;
-                    end
-                end
-            end
-
-            tx_axis_tvalid <= 1'b0;
-            tx_axis_tlast  <= 1'b0;
-            @(posedge tx_clk);
-        end
-    endtask
-
-    task automatic play_stimulus(input string path);
-        int fd, code, idx, readyGap, ethType, nPayload;
-        string line, daHex, saHex, payloadHex;
-        logic [7:0] da [], sa [], payload [];
-        begin
-            fd = $fopen(path, "r");
-            if (fd == 0) $fatal(1, "gem_tb: cannot open stimulus file '%s'", path);
-
-            while (!$feof(fd)) begin
-                code = $fgets(line, fd);
-                if (code <= 0) break;
-                if (line.substr(0,0) == "#" || line.len() < 8) continue;
-
-                if ($sscanf(line, "%d %d %h %s %s %s",
-                            idx, readyGap, ethType, daHex, saHex, payloadHex) == 6) begin
-                    void'(hex_to_bytes(daHex, da));
-                    void'(hex_to_bytes(saHex, sa));
-                    nPayload = hex_to_bytes(payloadHex, payload);
-                    send_frame(payload, da, sa, 16'(ethType), readyGap);
-                end
-            end
-            $fclose(fd);
-        end
-    endtask
+    // Stimulus is driven by the shared axis_tx_driver, the same module the
+    // loopback testbench uses. One implementation of the handshake, so the two
+    // benches cannot disagree about the protocol they are exercising.
+    axis_tx_driver u_drv (
+        .clk    (tx_clk),
+        .rst_n  (tx_rst_n),
+        .tdata  (tx_axis_tdata),
+        .tvalid (tx_axis_tvalid),
+        .tready (tx_axis_tready),
+        .tlast  (tx_axis_tlast),
+        .tuser  (tx_axis_tuser)
+    );
 
     //------------------------------------------------------------------
     // Sequence
@@ -227,7 +161,7 @@ module tb_gem_mac_tx;
         repeat (4) @(posedge tx_clk);
         mon_enable = 1'b1;
 
-        play_stimulus({vecdir, "/tx_stim.txt"});
+        u_drv.play({vecdir, "/tx_stim.txt"});
 
         // Drain: the MAC still owes the last frame's FCS and its IFG.
         repeat (64) @(posedge tx_clk);

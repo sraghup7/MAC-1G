@@ -136,6 +136,20 @@ module tb_gem_mac_rx;
     int     n_expected;
     int     beat_idx = 0;
 
+    // R21 latency tracking. The golden model tells us which wire cycle carried
+    // each frame's SFD; the driver tells us when cycle 0 was launched; the
+    // clock period converts between them. So the measurement is
+    //
+    //     latency = (time of this frame's first beat)
+    //             - (t0 + sfdCycle * CLK_PERIOD)
+    //
+    // which is exactly R21's "last bit of a field in to corresponding byte out
+    // of the user interface", and needs no second SFD hunt in the testbench.
+    int  last_frame_seen  = -1;
+    int  worst_latency    = -1;
+    int  worst_latency_frame = -1;
+    int  latency_samples  = 0;
+
     // Every accepted beat is compared in the cycle it is accepted, rather than
     // collected and diffed at the end. Comparing live means the first divergence
     // is reported with the simulation still at that point, which is what makes
@@ -148,6 +162,31 @@ module tb_gem_mac_rx;
                     $sformatf("design produced a beat past the end of the expected stream (data 0x%02h, last %0b)",
                               rx_axis_tdata, rx_axis_tlast));
             end else begin
+                // First beat of a new frame: measure R21.
+                if (expected[beat_idx].frameId != last_frame_seen) begin
+                    automatic time sfd_time =
+                        u_drv.t0 + expected[beat_idx].sfdCycle * CLK_PERIOD;
+                    automatic int  cycles =
+                        int'(($realtime - real'(sfd_time)) / real'(CLK_PERIOD));
+
+                    last_frame_seen = expected[beat_idx].frameId;
+                    latency_samples++;
+
+                    if (cycles > worst_latency) begin
+                        worst_latency = cycles;
+                        worst_latency_frame = expected[beat_idx].frameId;
+                    end
+
+                    note_check();
+                    if (cycles > `GEM_RX_LATENCY_MAX_CYCLES) begin
+                        report_fail($sformatf("%s frame %0d",
+                                              scenario, expected[beat_idx].frameId),
+                            $sformatf("R21 latency %0d cycles exceeds the %0d-cycle ceiling (SFD at wire cycle %0d)",
+                                      cycles, `GEM_RX_LATENCY_MAX_CYCLES,
+                                      expected[beat_idx].sfdCycle));
+                    end
+                end
+
                 if (rx_axis_tdata !== expected[beat_idx].data) begin
                     report_fail(beat_context(beat_idx, expected[beat_idx]),
                         $sformatf("tdata expected 0x%02h, got 0x%02h",
@@ -221,6 +260,18 @@ module tb_gem_mac_rx;
             report_fail(scenario, $sformatf(
                 "design delivered %0d of %0d expected beats -- first missing is beat %0d of frame %0d",
                 beat_idx, n_expected, beat_idx, expected[beat_idx].frameId));
+        end
+
+        // Report the worst latency seen even when it passed. A budget that is
+        // only mentioned when it is blown gives no warning as it erodes -- and
+        // B.1b predicts 13 cycles, so a design measuring 30 is passing R21 and
+        // still telling you something has gone wrong in the pipeline.
+        if (latency_samples > 0) begin
+            $display("[gem_tb] R21 worst RX latency: %0d cycles over %0d frames (ceiling %0d, B.1b predicts 13) -- frame %0d",
+                     worst_latency, latency_samples,
+                     `GEM_RX_LATENCY_MAX_CYCLES, worst_latency_frame);
+        end else if (n_expected > 0) begin
+            $display("[gem_tb] R21 latency not measured: no frames were delivered");
         end
 
         check_counter("rx_ok",       stat_rx_ok);

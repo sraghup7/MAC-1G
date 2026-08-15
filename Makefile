@@ -15,13 +15,15 @@ BUILD_DIR := build
 SIM_DIR   := sim
 
 .PHONY: help synth impl bitstream program clean \
-        model vectors vectors-frozen lint sim regress regress-all clean-sim
+        model vectors vectors-frozen vectors-check lint sim regress regress-all \
+        check clean-sim
 
 help:
 	@echo "Verification (Stage 3):"
 	@echo "  make model            run the golden model's own test suite"
 	@echo "  make vectors          regenerate every scenario's vector files"
 	@echo "  make vectors-frozen   regenerate only the committed directed set"
+	@echo "  make vectors-check    committed vectors still match the model?"
 	@echo "  make lint             Verilator --lint-only on the RTL (R22)"
 	@echo "  make sim S=rx_min_gap run one scenario"
 	@echo "  make regress          run every frozen scenario (the gate)"
@@ -46,6 +48,15 @@ vectors:
 vectors-frozen:
 	$(MATLAB) -batch "addpath('model'); genVectors('Set', 'frozen', 'Exit', true);"
 
+# The committed vectors are a convenience -- they let the regression run without
+# MATLAB and let a reviewer read them -- and the hazard that comes with the
+# convenience is that an edited model leaves them a fossil. Then the regression
+# keeps comparing the design against the *old* model's opinion, and the failure
+# looks exactly like a design bug that is not there. This is the check that
+# makes that impossible rather than merely unlikely.
+vectors-check:
+	$(PYTHON) scripts/check_vectors.py
+
 # R22: zero warnings, suppressions require a justifying comment. Verilator is
 # not installed here yet; the target says so plainly rather than reporting
 # success for a check that did not run -- "silently passed because the tool was
@@ -66,6 +77,12 @@ regress:
 
 regress-all:
 	$(PYTHON) scripts/run_sim.py --all
+
+# Everything, in the order that makes a failure diagnosable: validate the model
+# first, then that the committed vectors still reflect it, then the design
+# against them. Running these the other way round means debugging a design
+# against a reference nobody has checked.
+check: model vectors-check regress
 
 # ---- Stage 2: build -------------------------------------------------------
 

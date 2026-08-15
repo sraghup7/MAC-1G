@@ -7,6 +7,14 @@ function [beats, counters] = expectedBeats(frames)
 %       BEATS.last     logical, true on the final beat of each frame
 %       BEATS.user     logical, the R9 verdict; only meaningful where last
 %       BEATS.frameId  which frame each beat belongs to, for error messages
+%       BEATS.sfdCycle zero-based index of the cycle carrying this frame's SFD
+%
+%   sfdCycle is what makes R21 measurable. The latency requirement is "last
+%   bit of a field in to corresponding byte out", so the testbench needs to
+%   know exactly which wire cycle started each frame -- and the deframer
+%   already knows, because it is what found the SFD. Recomputing it in
+%   SystemVerilog by hunting the vector file a second time would be a second
+%   implementation of the hunt, able to disagree with the first.
 %
 %       COUNTERS       .rx_ok .rx_badfcs .rx_runt .rx_oversize .rx_rxer (R17)
 %
@@ -44,10 +52,11 @@ function [beats, counters] = expectedBeats(frames)
 
 p = gem.params();
 
-data    = uint8([]);
-last    = false(1, 0);
-user    = false(1, 0);
-frameId = zeros(1, 0);
+data     = uint8([]);
+last     = false(1, 0);
+user     = false(1, 0);
+frameId  = zeros(1, 0);
+sfdCycle = zeros(1, 0);
 
 counters = struct('rx_ok', 0, 'rx_badfcs', 0, 'rx_runt', 0, ...
                   'rx_oversize', 0, 'rx_rxer', 0);
@@ -68,11 +77,18 @@ for k = 1:numel(frames)
     delivered = frames(k).frameBytes(1 : n - p.FCS_BYTES);
     m = numel(delivered);
 
-    data    = [data,    delivered];             %#ok<AGROW>
-    last    = [last,    [false(1, m-1), true]]; %#ok<AGROW>
-    user    = [user,    [false(1, m-1), r.verdict]]; %#ok<AGROW>
-    frameId = [frameId, repmat(k, 1, m)];       %#ok<AGROW>
+    % .startCycle is the 1-based index of the first octet after the SFD, so
+    % the SFD itself sits one earlier -- and one more to convert to the
+    % zero-based indexing the .hex file and the testbench use.
+    sfd0 = frames(k).startCycle - 2;
+
+    data     = [data,     delivered];                 %#ok<AGROW>
+    last     = [last,     [false(1, m-1), true]];     %#ok<AGROW>
+    user     = [user,     [false(1, m-1), r.verdict]]; %#ok<AGROW>
+    frameId  = [frameId,  repmat(k, 1, m)];           %#ok<AGROW>
+    sfdCycle = [sfdCycle, repmat(sfd0, 1, m)];        %#ok<AGROW>
 end
 
-beats = struct('data', data, 'last', last, 'user', user, 'frameId', frameId);
+beats = struct('data', data, 'last', last, 'user', user, ...
+               'frameId', frameId, 'sfdCycle', sfdCycle);
 end

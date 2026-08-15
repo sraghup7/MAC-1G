@@ -10,7 +10,11 @@ function genVectors(varargin)
 %   the generator disagrees with the golden model -- not that the design is
 %   broken. That distinction is the whole reason the check exists.
 
-opts = struct('Set', 'all', 'Exit', false);
+%   GENVECTORS('Dir', PATH) writes somewhere other than model/vectors/, which
+%   is how scripts/check_vectors.py regenerates into a temporary directory and
+%   diffs against what is committed.
+
+opts = struct('Set', 'all', 'Exit', false, 'Dir', '');
 for k = 1:2:numel(varargin)
     opts.(varargin{k}) = varargin{k+1};
 end
@@ -25,7 +29,11 @@ failures = 0;
 for k = 1:numel(list)
     try
         s = list(k).build();
-        outDir = gem.writeVectors(s);
+        if isempty(opts.Dir)
+            outDir = gem.writeVectors(s);
+        else
+            outDir = gem.writeVectors(s, fullfile(opts.Dir, s.name));
+        end
 
         switch list(k).direction
             case 'rx'

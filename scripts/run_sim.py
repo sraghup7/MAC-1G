@@ -43,15 +43,28 @@ RTL_SOURCES = ["rtl/gem_mac_stub.v"]
 TB_SOURCES = [
     "tb/gem_tb_pkg.sv",
     "tb/rgmii_bfm.sv",
+    "tb/axis_tx_driver.sv",
     "tb/assertions/gem_axis_sva.sv",
     "tb/assertions/gem_rgmii_sva.sv",
     "tb/assertions/gem_internal_sva.sv",
+    "tb/tb_rgmii_bfm.sv",
     "tb/tb_gem_mac_rx.sv",
     "tb/tb_gem_mac_tx.sv",
+    "tb/tb_gem_mac_loopback.sv",
 ]
 
 # Which testbench drives which direction.
 TB_FOR_DIRECTION = {"rx": "tb_gem_mac_rx", "tx": "tb_gem_mac_tx"}
+
+# The BFM self-test has no DUT, so it passes today and is the thing to run
+# first when something downstream looks impossible. It runs once, against one
+# scenario's vectors -- it is testing the driver, not the vectors.
+BFM_SELFTEST = ("tb_rgmii_bfm", "rx_min_gap")
+
+# The loopback runs the design against itself, so it takes a TX scenario's
+# stimulus and needs no expected-output file of its own.
+LOOPBACK_TB = "tb_gem_mac_loopback"
+LOOPBACK_SCENARIOS = ["tx_clean_sweep", "tx_padding"]
 
 
 def vivado_bin(name: str) -> str:
@@ -128,8 +141,14 @@ def elaborate(xelab: str, tb: str, snapshot: str) -> bool:
     return True
 
 
-def run_scenario(xsim: str, snapshot: str, name: str) -> tuple[bool, str]:
-    """Run one scenario. Returns (passed, one-line summary)."""
+def run_scenario(xsim: str, snapshot: str, name: str,
+                 label: str | None = None) -> tuple[bool, str]:
+    """Run one scenario. Returns (passed, one-line summary).
+
+    `label` names the run in the log and the PASS line when the testbench
+    reports under a name of its own (the BFM self-test) or when the same
+    scenario is run by more than one testbench (the loopback).
+    """
     vecdir = REPO / "model" / "vectors" / name
     if not vecdir.is_dir():
         return False, f"vectors missing -- run `make vectors` (looked in {vecdir})"
@@ -137,12 +156,13 @@ def run_scenario(xsim: str, snapshot: str, name: str) -> tuple[bool, str]:
     # The scenario is handed over by file, not plusarg (see module docstring).
     (SIM / "run.cfg").write_text(f"{name}\n{vecdir.as_posix()}\n", encoding="utf-8")
 
-    result = run([xsim, snapshot, "-R", "-log", f"{name}.log"], SIM)
+    tag = label or name
+    result = run([xsim, snapshot, "-R", "-log", f"{tag}.log"], SIM)
     output = result.stdout
 
-    (SIM / f"{name}.out").write_text(output, encoding="utf-8")
+    (SIM / f"{tag}.out").write_text(output, encoding="utf-8")
 
-    if f"[gem_tb] PASS {name}" in output:
+    if "[gem_tb] PASS " in output:
         checks = re.search(r"(\d+) checks, (\d+) failures", output)
         return True, f"{checks.group(1)} checks" if checks else "passed"
 
@@ -173,21 +193,49 @@ def main() -> int:
     if args.tb:
         todo = [s for s in todo if TB_FOR_DIRECTION[s[1]] == args.tb]
 
+    # The BFM self-test and the loopback are extra runs layered on top of the
+    # scenario list, not scenarios themselves.
+    run_bfm = not args.scenario and not args.tb
+    run_loopback = not args.scenario and (not args.tb or args.tb == LOOPBACK_TB)
+
     if not args.no_compile:
         if not compile_sources(xvlog):
             return 1
-        for direction in sorted({d for _, d in todo}):
-            tb = TB_FOR_DIRECTION[direction]
+        needed = {TB_FOR_DIRECTION[d] for _, d in todo}
+        if run_bfm:
+            needed.add(BFM_SELFTEST[0])
+        if run_loopback:
+            needed.add(LOOPBACK_TB)
+        for tb in sorted(needed):
             if not elaborate(xelab, tb, tb):
                 return 1
 
-    print(f"\n==> Running {len(todo)} scenario(s)\n")
     results = []
+
+    # Run the self-test first. If the bus functional model is wrong, every
+    # result after it is noise -- and it is the only run here with no DUT in
+    # it, so it is also the only one expected to pass today.
+    if run_bfm:
+        print("\n==> BFM self-test\n")
+        passed, detail = run_scenario(xsim, BFM_SELFTEST[0], BFM_SELFTEST[1],
+                                      label="rgmii_bfm_selftest")
+        results.append(("rgmii_bfm_selftest", passed))
+        print(f"  {'PASS' if passed else 'FAIL'}  {'rgmii_bfm_selftest':<22} {detail}")
+
+    print(f"\n==> Running {len(todo)} scenario(s)\n")
     for name, direction in todo:
         passed, detail = run_scenario(xsim, TB_FOR_DIRECTION[direction], name)
         results.append((name, passed))
         status = "PASS" if passed else "FAIL"
         print(f"  {status}  {name:<22} {detail}")
+
+    if run_loopback:
+        print("\n==> Loopback (the design against itself)\n")
+        for name in LOOPBACK_SCENARIOS:
+            label = f"loopback_{name}"
+            passed, detail = run_scenario(xsim, LOOPBACK_TB, name, label=label)
+            results.append((label, passed))
+            print(f"  {'PASS' if passed else 'FAIL'}  {label:<22} {detail}")
 
     failed = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(failed)} of {len(results)} scenario(s) passed.")

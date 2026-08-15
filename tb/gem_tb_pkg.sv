@@ -33,6 +33,7 @@ package gem_tb_pkg;
         logic       last;
         logic       user;
         int         frameId;
+        int         sfdCycle;   // wire cycle that carried this frame's SFD (R21)
     } beat_t;
 
     // The self-describing record the generator attached to each frame.
@@ -78,10 +79,10 @@ package gem_tb_pkg;
         end
     endfunction
 
-    // Reads "data last user frame" lines into BEATS, returns the count.
+    // Reads "data last user frame sfdCycle" lines into BEATS, returns the count.
     function automatic int read_beats(string path, ref beat_t beats[]);
         int fd, count, code;
-        int d, l, u, f;
+        int d, l, u, f, s;
         string line;
         begin
             beats = new [MAX_BEATS];
@@ -94,11 +95,12 @@ package gem_tb_pkg;
                 code = $fgets(line, fd);
                 if (code <= 0) break;
                 if (line.substr(0,0) == "#" || line.len() < 4) continue;
-                if ($sscanf(line, "%h %d %d %d", d, l, u, f) == 4) begin
-                    beats[count].data    = d[7:0];
-                    beats[count].last    = l[0];
-                    beats[count].user    = u[0];
-                    beats[count].frameId = f;
+                if ($sscanf(line, "%h %d %d %d %d", d, l, u, f, s) == 5) begin
+                    beats[count].data     = d[7:0];
+                    beats[count].last     = l[0];
+                    beats[count].user     = u[0];
+                    beats[count].frameId  = f;
+                    beats[count].sfdCycle = s;
                     count++;
                 end
             end

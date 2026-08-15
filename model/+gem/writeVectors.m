@@ -76,10 +76,10 @@ end
 function writeBeats(path, beats)
 fid = openOrFail(path);
 c = onCleanup(@() fclose(fid));
-fprintf(fid, '# data last user frame\n');
+fprintf(fid, '# data last user frame sfdCycle\n');
 for k = 1:numel(beats.data)
-    fprintf(fid, '%02X %d %d %d\n', beats.data(k), beats.last(k), ...
-        beats.user(k), beats.frameId(k));
+    fprintf(fid, '%02X %d %d %d %d\n', beats.data(k), beats.last(k), ...
+        beats.user(k), beats.frameId(k), beats.sfdCycle(k));
 end
 end
 
