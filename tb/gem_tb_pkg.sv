@@ -36,6 +36,56 @@ package gem_tb_pkg;
         int         sfdCycle;   // wire cycle that carried this frame's SFD (R21)
     } beat_t;
 
+    // One run of cycles with TX_EN/RX_DV asserted, plus the idle in front of it.
+    typedef struct {
+        int startIdx;    // index of the first active cycle
+        int len;         // active cycles in this burst
+        int gapBefore;   // idle cycles between the previous burst and this one
+    } burst_t;
+
+    // Split a cycle stream into frame bursts and the gaps between them.
+    //
+    // This exists because comparing two cycle streams index-for-index is wrong
+    // in both directions. The leading idle differs -- the golden model emits a
+    // full IFG before its first packet while rgmii_monitor does not start
+    // capturing until the first asserted cycle -- so a raw diff is skewed by
+    // exactly one IFG and every cycle mismatches. And the gaps *between*
+    // packets are not a property of the MAC alone: they depend on when user
+    // logic offered the next frame, so a design can be entirely conforming and
+    // still not reproduce a gap the model froze at 12.
+    //
+    // Segmenting separates the two questions. Packet content is compared cycle
+    // for cycle, because that is fully determined. Gaps are compared against
+    // R5's floor, because that is all R5 requires -- "at least 96 bit times",
+    // not exactly 96.
+    function automatic int split_bursts(ref logic [11:0] words [],
+                                        input int n,
+                                        ref burst_t bursts []);
+        int count, i, lastEnd;
+        begin
+            count   = 0;
+            i       = 0;
+            lastEnd = 0;
+            // A burst needs one active cycle and bursts need one idle between
+            // them, so n/2 + 2 can never be exceeded.
+            bursts = new [(n / 2) + 2];
+
+            while (i < n) begin
+                if (!words[i][8]) begin
+                    i++;
+                    continue;
+                end
+                bursts[count].startIdx  = i;
+                bursts[count].gapBefore = i - lastEnd;
+                while (i < n && words[i][8]) i++;
+                bursts[count].len = i - bursts[count].startIdx;
+                lastEnd = i;
+                count++;
+            end
+            return count;
+        end
+    endfunction
+
     // The self-describing record the generator attached to each frame.
     typedef struct {
         int     index;

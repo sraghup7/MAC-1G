@@ -147,9 +147,14 @@ module tb_gem_mac_tx;
         end
     endtask
 
+    burst_t      exp_bursts [];
+    burst_t      got_bursts [];
+    logic [11:0] captured [];
+    int          n_exp_bursts, n_got_bursts;
+
     initial begin
         bit ok;
-        int i, n_captured, n_compare;
+        int i, b, n_captured, n_compare;
 
         get_scenario(scenario, vecdir);
         begin_scenario(scenario);
@@ -177,26 +182,71 @@ module tb_gem_mac_tx;
                 "design transmitted nothing; expected %0d cycles", n_expected));
         end
 
-        // Compare over the shorter of the two and report the length difference
-        // separately, so a design that is right for 900 cycles and then stops
-        // says exactly that instead of drowning in mismatches.
-        n_compare = (n_captured < n_expected) ? n_captured : n_expected;
-        for (i = 0; i < n_compare; i++) begin
-            note_check();
-            if (u_mon.words[i] !== expected_cycles[i]) begin
-                report_fail($sformatf("%s cycle %0d", scenario, i), $sformatf(
-                    "expected %03h {ctl_f=%0b ctl_r=%0b d_f=%1h d_r=%1h}, got %03h {ctl_f=%0b ctl_r=%0b d_f=%1h d_r=%1h}",
-                    expected_cycles[i], expected_cycles[i][9], expected_cycles[i][8],
-                    expected_cycles[i][7:4], expected_cycles[i][3:0],
-                    u_mon.words[i], u_mon.words[i][9], u_mon.words[i][8],
-                    u_mon.words[i][7:4], u_mon.words[i][3:0]));
-            end
+        //--------------------------------------------------------------
+        // Segment both streams, then compare packets and gaps separately
+        //--------------------------------------------------------------
+        // rgmii_monitor stores into a fixed-size array; split_bursts takes a
+        // dynamic one, so copy the populated prefix across.
+        captured = new [n_captured];
+        for (i = 0; i < n_captured; i++) captured[i] = u_mon.words[i];
+
+        n_exp_bursts = split_bursts(expected_cycles, n_expected, exp_bursts);
+        n_got_bursts = split_bursts(captured,        n_captured, got_bursts);
+
+        $display("[gem_tb] %0d frames expected, %0d transmitted",
+                 n_exp_bursts, n_got_bursts);
+
+        note_check();
+        if (n_got_bursts != n_exp_bursts) begin
+            report_fail(scenario, $sformatf(
+                "transmitted %0d frames, expected %0d",
+                n_got_bursts, n_exp_bursts));
         end
 
-        if (n_captured != n_expected) begin
+        n_compare = (n_got_bursts < n_exp_bursts) ? n_got_bursts : n_exp_bursts;
+
+        for (b = 0; b < n_compare; b++) begin
+            // --- frame content: fully determined, compared cycle for cycle ---
             note_check();
-            report_fail(scenario, $sformatf(
-                "transmitted %0d cycles, expected %0d", n_captured, n_expected));
+            if (got_bursts[b].len != exp_bursts[b].len) begin
+                report_fail($sformatf("%s frame %0d", scenario, b), $sformatf(
+                    "frame is %0d cycles on the wire, expected %0d",
+                    got_bursts[b].len, exp_bursts[b].len));
+            end else begin
+                for (i = 0; i < exp_bursts[b].len; i++) begin
+                    automatic logic [11:0] e = expected_cycles[exp_bursts[b].startIdx + i];
+                    automatic logic [11:0] g = u_mon.words   [got_bursts[b].startIdx + i];
+                    note_check();
+                    if (g !== e) begin
+                        report_fail($sformatf("%s frame %0d octet %0d", scenario, b, i),
+                            $sformatf(
+                            "expected %03h {ctl_f=%0b ctl_r=%0b d_f=%1h d_r=%1h}, got %03h {ctl_f=%0b ctl_r=%0b d_f=%1h d_r=%1h}",
+                            e, e[9], e[8], e[7:4], e[3:0],
+                            g, g[9], g[8], g[7:4], g[3:0]));
+                    end
+                end
+            end
+
+            // --- gap: only the R5 floor is required -----------------------
+            //
+            // Not compared against the model's gap. The model emits a fixed
+            // IFG because it has no user-side timeline to derive one from, but
+            // the real gap also carries however long user logic took to offer
+            // the next frame -- after an abort, the MAC drains and discards the
+            // rest of a frame it will never send (B.4b item 5), which can be
+            // hundreds of cycles. A conforming MAC is free to be later than the
+            // model. It is never free to be earlier.
+            //
+            // Burst 0 is exempt: rgmii_monitor does not capture leading idle,
+            // so there is no gap in front of the first frame to measure.
+            if (b > 0) begin
+                note_check();
+                if (got_bursts[b].gapBefore < `GEM_IFG_BYTES) begin
+                    report_fail($sformatf("%s frame %0d", scenario, b), $sformatf(
+                        "inter-frame gap was %0d cycles; R5 requires at least %0d",
+                        got_bursts[b].gapBefore, `GEM_IFG_BYTES));
+                end
+            end
         end
 
         check_counter("tx_ok",       stat_tx_ok);

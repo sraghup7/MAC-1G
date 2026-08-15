@@ -1,8 +1,18 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.5 — Stage 1 complete, Stage 3 complete. Amended throughout by what
+Document status: v0.6 — Stage 1 complete, Stage 3 complete. Amended throughout by what
 building the reference model and the verification layer actually forced. Versioned
 alongside the RTL.
+
+**Changelog v0.5 → v0.6 (from an independent review of the Stage 3 vectors):** added
+**B.4c** — two limits R15's interface imposes that Ethernet does not, both of which the
+frozen transmit vectors were violating. A zero-length payload cannot be expressed on an
+AXI-Stream port (no beat to carry `tlast`) yet `tx_padding` contained two, with expected
+wire output no design could ever produce; and the inter-frame gap was frozen at exactly
+12 octets when R5 requires only a floor, so any design that was merely *later* than the
+model — which after a B.4b abort it must be, by up to 1400 cycles — would have failed.
+Also corrected R21's prose and B.3a's latency row, which still quoted the pre-holdback
+9 cycles / 3.6× that v0.3 superseded in B.1b.
 
 **Changelog v0.4 → v0.5 (accuracy pass at the close of Stage 3):** **B.1a** now shows the
 abort in the transmit path — v0.4 specified it in B.4b but left the architecture section
@@ -320,8 +330,8 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   (Table 19, "RGMII Timing") — not left unconstrained.
 - **R21 [M]** MAC-added latency (last bit of a field in → corresponding byte out of the
   user interface) ≤ 32 rx_clk cycles (256 ns) on RX. Measured in sim; a spec number to
-  design against — confirmed generous by the bottom-up pipeline sum in B.1b (9 cycles,
-  3.6× margin), not just asserted.
+  design against — confirmed generous by the bottom-up pipeline sum in B.1b (13 cycles,
+  2.5× margin), not just asserted.
 
 ### Resources (targets, to be checked per-module at Stage 4 step 6)
 
@@ -396,7 +406,7 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 | Min inter-frame gap | 96 bit-times = 12 byte-times | IEEE 802.3-2022 Table 4-2, all speeds |
 | Slack per min-size frame | 20 cycles / 64 payload-path cycles | preamble(8) + IFG(12) |
 | Worst-case frame rate | 1.488 Mframes/s | `1 Gbps ÷ ((64+20)×8 bits)` — every per-frame mechanism (counters, verdict, FIFO pointers) must sustain this |
-| MAC-added latency budget | ≤ 32 rx_clk cycles (256 ns) | R21 ceiling; bottom-up pipeline sum (IDDR 1 + SFD/deframer 2 + CRC verdict 1 + FIFO CDC 4 + egress reg 1, B.1b) = 9 cycles, 3.6× margin — confirmed, not asserted |
+| MAC-added latency budget | ≤ 32 rx_clk cycles (256 ns) | R21 ceiling; bottom-up pipeline sum (IDDR 1 + SFD/deframer 2 + **FCS holdback 4** + CRC verdict 1 + FIFO CDC 4 + egress reg 1, B.1b) = 13 cycles, 2.5× margin — confirmed, not asserted; measured per frame by `tb_gem_mac_rx` |
 | RGMII clock tolerance (each side) | ±100 ppm | IEEE 802.3-2022 Clause 40 (1000BASE-T transmit clock tolerance) — board-oscillator ppm not yet confirmed against the actual AX7035B BOM part (stated weakness, B.7) |
 | RX FIFO drift term | `2 × 100 ppm × 1518 B ≈ 0.3 B` | worst-case relative skew (`tx_clk` vs. recovered `rx_clk`) accumulated over one max-length frame (12.14 µs) — negligible, because the FIFO drains every IFG rather than absorbing sustained rate mismatch |
 | RX FIFO sync-latency term | ~4 bytes | dual-flop gray-code pointer synchronizer, 2 destination-clock cycles of pointer visibility delay, rounded up with margin |
@@ -540,6 +550,39 @@ depth, which is what makes this testable at all: the MAC can only have sent
 octets the user actually supplied, so an abort after payload octet *S* always
 produces preamble, SFD, header, payload `0..S-1`, and the inverted FCS over
 exactly that.
+
+## B.4c Two limits the transmit interface imposes (resolved in Stage 3)
+
+Both were found by an independent review of the Stage 3 vectors, and both are
+properties of R15's interface rather than of Ethernet — which is why neither
+appears in Clause 3 and why both were easy to miss.
+
+**1. Minimum transmit payload is one octet.** An AXI-Stream frame is a run of
+beats terminated by `tlast` on the last one, so a zero-beat frame has nothing to
+carry `tlast` and cannot be expressed. Padding would cheerfully turn an empty
+payload into a legal 64-octet frame on the wire (R3), which is precisely the
+trap: the model would specify a frame no conforming design could ever be asked
+to send. `gem.genTxScenario` now rejects length 0 with `gem:zeroLengthPayload`.
+The framing model itself is unchanged and still pads an empty payload, because
+that is an interface limit, not a framing one.
+
+**2. The inter-frame gap a design produces is not fully determined by the MAC.**
+R5 requires *at least* 96 bit times. What actually appears on the wire is that
+floor plus however long user logic took to offer the next frame — and after an
+abort, plus however long the MAC spends draining a frame it will never send
+(B.4b item 5), which for a maximum-size frame is over 1400 cycles.
+
+A golden model with no user-side timeline cannot predict that number, and should
+not pretend to. So the transmit comparison is split:
+
+| Property | How it is checked | Why |
+|---|---|---|
+| Frame content, preamble→FCS | cycle for cycle against the model | fully determined by the MAC |
+| Inter-frame gap | `>= GEM_IFG_BYTES` only | R5's floor is the whole requirement |
+
+Freezing an exact gap would have over-constrained R5 into "exactly 96 bit
+times" and failed every conforming design that was merely *later* than the
+model. A design is always free to be later; it is never free to be earlier.
 
 ## B.5 Bring-up order (written before hardware is touched)
 

@@ -47,6 +47,25 @@ module gem_rgmii_sva (
     //
     // Written as: on the cycle TX_EN falls, it must stay low for GEM_IFG_BYTES
     // cycles before it may rise again.
+    //
+    // SAMPLING CAVEAT, to be resolved in Stage 4 when real pin timing exists.
+    // SVA samples in the preponed region, before the clock edge. Combined with
+    // the driver's clock-to-out, what a posedge sees on a DDR control pin is
+    // the value it held through the *previous* low phase -- which for RGMII is
+    // TX_EN XOR TX_ER, not TX_EN. For clean traffic the two agree, because
+    // TX_ER is low throughout, so every scenario in the current suite is
+    // unaffected.
+    //
+    // They diverge exactly during a B.4b abort tail, where TX_ER is asserted
+    // across the four inverted-FCS octets: the sampled signal reads low for
+    // those four cycles while TX_EN is still genuinely high. A design that
+    // then left only 8 idle cycles would sample as 4 + 8 = 12 and pass, having
+    // actually emitted an illegal gap.
+    //
+    // Not fixed here because the fix depends on how the RTL brings TX_EN out --
+    // once there is an internal tx_en to bind to, this property should watch
+    // that rather than reconstruct it from the pin. Recorded so the gap in
+    // coverage is known rather than discovered later.
     a_ifg_respected: assert property (@(posedge clk) disable iff (!rst_n)
         $fell(tx_en) |-> (!tx_en)[*`GEM_IFG_BYTES])
         else $error("rgmii_tx: inter-frame gap shorter than %0d byte times (R5)",

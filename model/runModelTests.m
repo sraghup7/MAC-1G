@@ -29,7 +29,15 @@ results = runner.run(suite);
 summary = table(results);
 disp(summary);
 
-failed = nnz([results.Failed]);
+failed     = nnz([results.Failed]);
+incomplete = nnz([results.Incomplete]);
+
+% Incomplete counts as failure for the gate. A test that skipped an assumption
+% -- zlib unavailable, say -- has NOT verified what it claims to verify, and
+% tCrc32/agreesWithZlib is one of only two independent checks on the CRC. A
+% gate that reads green because a check quietly did not run is the failure mode
+% this whole stage exists to prevent.
+failed = failed + incomplete;
 fprintf('\n%d passed, %d failed, %d incomplete, %.2f s total\n', ...
     nnz([results.Passed]), failed, nnz([results.Incomplete]), ...
     sum([results.Duration]));

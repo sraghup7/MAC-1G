@@ -1,7 +1,8 @@
 function cycles = rgmiiEncode(bytes, dv, er)
 %RGMIIENCODE GMII byte stream to per-cycle RGMII double-data-rate words.
 %   CYCLES = GEM.RGMIIENCODE(BYTES, DV, ER) converts a byte stream and its
-%   two qualifiers into one 12-bit word per clock cycle. BYTES, DV and ER are
+%   two qualifiers into one word per clock cycle -- 10 significant bits, laid
+%   out as bits 9:0 and stored in a 12-bit field. BYTES, DV and ER are
 %   equal-length vectors, one entry per byte-time -- which at 125 MHz is one
 %   entry per clock cycle, because B.3's cycles-per-byte is exactly 1.0.
 %

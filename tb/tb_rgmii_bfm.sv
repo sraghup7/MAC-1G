@@ -97,6 +97,10 @@ module tb_rgmii_bfm;
     //------------------------------------------------------------------
     string scenario, vecdir;
 
+    burst_t      src_bursts [], cap_bursts [];
+    logic [11:0] src_words  [], cap_words  [];
+    int          n_src_bursts, n_cap_bursts;
+
     initial begin
         bit ok;
         int i, n_src, n_cap, n_compare, first_ctl;
@@ -135,6 +139,13 @@ module tb_rgmii_bfm;
         $display("[gem_tb] source %0d cycles (first CTL at %0d), captured %0d",
                  n_src, first_ctl, n_cap);
 
+        // Both are fixed-size arrays in their modules; split_bursts takes
+        // dynamic ones.
+        src_words = new [n_src];
+        for (i = 0; i < n_src; i++) src_words[i] = u_drv.words[i];
+        cap_words = new [n_cap];
+        for (i = 0; i < n_cap; i++) cap_words[i] = u_mon.words[i];
+
         note_check();
         if (first_ctl < 0) begin
             report_fail("bfm", "source vector has no cycle with CTL asserted");
@@ -156,6 +167,68 @@ module tb_rgmii_bfm;
         note_check();
         if (timing_checks == 0) begin
             report_fail("bfm", "the t0 timing contract was never checked -- the check itself is broken");
+        end
+
+        //--------------------------------------------------------------
+        // Property 3: burst segmentation survives the round trip.
+        //--------------------------------------------------------------
+        //
+        // tb_gem_mac_tx compares transmit streams by splitting them into frame
+        // bursts and gaps rather than diffing index for index, because the two
+        // streams do not start at the same place: the golden model emits a full
+        // IFG before its first packet and rgmii_monitor does not capture
+        // leading idle at all. An index-for-index diff was skewed by exactly
+        // one IFG, so against working RTL every cycle would have mismatched and
+        // the design would have been blamed.
+        //
+        // This is the positive control for the fix. The capture here IS the
+        // source, replayed, so segmentation must find the same bursts with the
+        // same lengths, and identical gaps everywhere except in front of the
+        // first burst. If that does not hold on a pure replay, the comparison
+        // in tb_gem_mac_tx cannot be trusted on a real design either.
+        n_src_bursts = split_bursts(src_words, n_src, src_bursts);
+        n_cap_bursts = split_bursts(cap_words, n_cap, cap_bursts);
+
+        $display("[gem_tb] segmentation: %0d bursts in source, %0d captured",
+                 n_src_bursts, n_cap_bursts);
+
+        note_check();
+        if (n_cap_bursts != n_src_bursts) begin
+            report_fail("segmentation", $sformatf(
+                "source has %0d bursts, capture has %0d", n_src_bursts, n_cap_bursts));
+        end else begin
+            note_check();
+            if (n_src_bursts < 2) begin
+                report_fail("segmentation", $sformatf(
+                    "only %0d burst(s) -- too few to check gap handling", n_src_bursts));
+            end
+
+            for (i = 0; i < n_src_bursts; i++) begin
+                note_check();
+                if (cap_bursts[i].len != src_bursts[i].len) begin
+                    report_fail($sformatf("segmentation burst %0d", i), $sformatf(
+                        "captured %0d active cycles, source has %0d",
+                        cap_bursts[i].len, src_bursts[i].len));
+                end
+                // Burst 0 is exempt by construction: the monitor never saw the
+                // leading idle, so its gapBefore is 0 while the source's is a
+                // full gap. That asymmetry is the whole reason for segmenting.
+                if (i > 0) begin
+                    note_check();
+                    if (cap_bursts[i].gapBefore != src_bursts[i].gapBefore) begin
+                        report_fail($sformatf("segmentation burst %0d", i), $sformatf(
+                            "gap before it captured as %0d, source has %0d",
+                            cap_bursts[i].gapBefore, src_bursts[i].gapBefore));
+                    end
+                end
+            end
+
+            note_check();
+            if (cap_bursts[0].gapBefore != 0) begin
+                report_fail("segmentation", $sformatf(
+                    "monitor captured %0d idle cycles before the first burst; it should start at the first active cycle",
+                    cap_bursts[0].gapBefore));
+            end
         end
 
         ok = check_done();

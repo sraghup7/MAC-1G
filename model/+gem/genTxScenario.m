@@ -71,6 +71,24 @@ if isempty(lengths)
 end
 lengths = min(double(lengths), maxPayload);
 
+% A zero-length payload cannot be presented on the transmit interface. R15's
+% AXI-Stream frame is a run of beats terminated by tlast on the last one, so a
+% frame with no beats has nothing to carry tlast and does not exist as far as
+% the interface is concerned. Padding would happily turn it into a legal
+% 64-octet frame on the wire (R3) -- which is exactly the trap: the model would
+% emit an expected frame that no conforming design can transmit, because the
+% testbench cannot even ask for it.
+%
+% This is an interface constraint, not an Ethernet one, which is why it lives
+% here and not in GEM.BUILDFRAME -- the framing model is still free to pad an
+% empty payload if some future interface can deliver one.
+if any(lengths < 1)
+    error('gem:zeroLengthPayload', ...
+        ['Payload length 0 cannot be transmitted: an AXI-Stream frame with ' ...
+         'no beats has no beat to carry tlast (R15). Minimum TX payload is ' ...
+         '1 octet -- see spec B.4c.']);
+end
+
 rng(opts.Seed, 'twister');
 
 nFrames = double(opts.NumFrames);

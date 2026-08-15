@@ -39,9 +39,9 @@ function [beats, counters] = expectedBeats(frames)
 %   Consequence worth being explicit about: because the FCS must not reach the
 %   user port, and cut-through cannot know which four octets are the FCS until
 %   DV drops, the RX path has to hold the last four octets back in a delay
-%   register. That is four cycles of latency the spec's B.1b pipeline sum does
-%   not currently list. It does not threaten R21's 32-cycle ceiling, but the
-%   spec's own arithmetic should say so rather than be quietly wrong.
+%   register. Those four cycles are in B.1b's pipeline sum, which this
+%   observation is what corrected: 13 cycles rather than 9, against R21's
+%   32-cycle ceiling.
 %
 %   A frame shorter than five octets therefore yields zero beats -- everything
 %   it contained was still in the holdback register when DV dropped. It is

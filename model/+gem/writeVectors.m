@@ -6,7 +6,8 @@ function outDir = writeVectors(s, outDir)
 %
 %   Files, for an RX scenario:
 %
-%     rx_rgmii.hex          one 12-bit word per rx_clk cycle, 3 hex chars per
+%     rx_rgmii.hex          one word per rx_clk cycle (10 significant bits),
+%                           3 hex chars per
 %                           line, ready for $readmemh. Bit layout is documented
 %                           in GEM.RGMIIENCODE.
 %     rx_expected.txt       one line per AXI-S beat: data(hex) last user frame

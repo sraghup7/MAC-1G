@@ -2,7 +2,7 @@
   "name": "rx_bad_sfd",
   "direction": "rx",
   "seed": 2.0260814E+7,
-  "generated": "2026-08-14T22:36:56",
+  "generated": "2026-08-15T05:13:23",
   "options": {
     "Seed": 2.0260814E+7,
     "NumFrames": 12,
@@ -149,6 +149,6 @@
     "checked": 6,
     "skipped": 6,
     "ok": true,
-    "note": "6 frame(s) use badsfd, whose outcome is legitimately unpredictable; positional cross-check skipped for this scenario."
+    "note": "6 frames cross-checked, all agree; 6 badsfd frame(s) skipped as legitimately unpredictable."
   }
 }

@@ -109,7 +109,25 @@ def main() -> int:
                 if not filecmp.cmp(fresh, old, shallow=False):
                     stale.append(f"{scenario_dir.name}/{filename}")
 
+        # A scenario directory that is committed but no longer generated is a
+        # fossil the rest of this check cannot see: it only walks what was just
+        # produced. Left alone it sits in the repo looking authoritative, and
+        # run_sim.py will happily run it if someone names it directly.
+        generated = {d.name for d in tmp_path.iterdir() if d.is_dir()}
+        orphaned = sorted(
+            d.name for d in VECTORS.iterdir()
+            if d.is_dir() and d.name not in generated and not d.name.startswith("random_")
+        )
+
         print(f"    compared {checked} file(s)")
+
+        if orphaned:
+            print(f"\n{len(orphaned)} committed scenario director(ies) are no longer generated:")
+            for name in orphaned:
+                print(f"    {name}")
+            print("\nThe catalogue in model/+gem/scenarios.m no longer produces these.")
+            print("Delete them, or put the scenario back.")
+            return 1
 
         if not stale and not missing:
             print("\nCommitted vectors are up to date with the model.")

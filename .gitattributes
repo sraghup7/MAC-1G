@@ -1,0 +1,9 @@
+# The committed vectors are compared byte for byte against freshly generated
+# ones by scripts/check_vectors.py. If git normalised their line endings on
+# checkout, that comparison would fail on a clean tree and the failure would
+# read as a stale-model error -- the exact confusion the check exists to avoid.
+model/vectors/** -text
+
+# Everything else keeps normal handling; the RTL and scripts are edited by
+# humans on both platforms.
+* text=auto

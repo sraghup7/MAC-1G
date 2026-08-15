@@ -80,7 +80,7 @@ debug loops:
 | R2 | DA/SA/EtherType per frame, not compile-time | `tx_clean_sweep` (header on `tx_axis_tuser` at SOF) | sim | pending-rtl |
 | R3 | Pad payloads < 46 B to a 64 B frame | `tFrame/paddingReachesMinimumFrame`, `tFrame/padIsZeros`, `tx_padding` | model + sim | pending-rtl |
 | R4 | CRC-32, reflected, LSB-octet first | `tCrc32/checkValue`, `tCrc32/agreesWithZlib`, `tCrc32/residueIsConstant`, `tFrame/fcsIsLeastSignificantOctetFirst`, `tFrame/fcsCoversHeaderAndPadOnly`, `tx_clean_sweep` | model + sim | **green** (model) / pending-rtl (design) |
-| R5 | IFG ≥ 96 bit times | `gem_rgmii_sva/a_ifg_respected`, `tx_clean_sweep` | assertion + sim | pending-rtl |
+| R5 | IFG ≥ 96 bit times | `gem_rgmii_sva/a_ifg_respected`, plus a per-frame `gap >= GEM_IFG_BYTES` check in `tb_gem_mac_tx` — a **floor**, not an equality, per B.4c | assertion + sim | pending-rtl |
 | R6 | Reject payload > 1500 B, never emit oversize | `tFrame/oversizePayloadIsRejected`, `tx_reject_oversize` | model + sim | pending-rtl |
 | R7 | Sustain back-to-back frames at line rate; abort on underrun (B.4b) | `tx_backpressure` (gaps between frames), `tx_underrun` (stall mid-payload → TX_ER + inverted FCS, then clean recovery), `tAbort` ×10, `random_tx_sweep` | model + sim | **green** (model) / pending-rtl (design) |
 
@@ -170,7 +170,7 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Golden model test suite | **68 / 68 passing** |
 | Scenario generation | 17 / 17, every generator self-check agrees with the model |
 | Committed vectors vs the model | **46 / 46 files current** |
-| BFM self-test | **passing** — 3522 checks |
+| BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
 | Verilator lint (R22) | **passing** — 2 tops, zero warnings |
 | Frozen regression vs `gem_mac_stub` | 0 / 17 passing — **expected**, there is no design yet |
@@ -212,6 +212,7 @@ that would otherwise have surfaced mid-debug:
 | **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
 | **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
 | **V-10** | ~~The Makefile has never been executed~~ | **Closed.** GNU Make 4.2.1 ships with Vivado (`$(VIVADO_ROOT)/gnuwin/bin/make.exe`), so no install was needed and it is guaranteed present wherever Vivado is. Running it found two defects that only appear on execution: `@echo "..."` printed its quotes literally under cmd.exe, and `clean`/`clean-sim` used `rm -rf`, which is not a cmd builtin — they worked only when make happened to be launched from Git Bash and failed from PowerShell or cmd. Help now uses `$(info)` (never reaches a shell) and the clean targets go through `scripts/clean.py`. `make check` runs end to end and exits nonzero on the failing regression, as a gate should. | — |
+| **V-11** | ~~TX comparison was misaligned and over-constrained~~ | **Closed.** An independent review of the Stage 3 vectors found three defects that were invisible against the stub and would all have presented as RTL bugs in Stage 4. (a) `tb_gem_mac_tx` diffed cycle streams index-for-index while `rgmii_monitor` skips leading idle and the model emits a full IFG first — a skew of exactly 12, so *every* cycle would have mismatched. (b) The frozen gap of exactly 12 over-constrained R5's floor and was unreproducible after a B.4b abort, where the MAC drains up to 1440 discarded octets. (c) `tx_padding` contained two zero-length payloads, which an AXI-Stream port cannot express — no beat to carry `tlast`. Fixed by segmenting both streams into frames and gaps (content compared exactly, gaps against the floor), and by rejecting length 0 in the generator. Spec B.4c records both interface limits. | — |
 
 ---
 
