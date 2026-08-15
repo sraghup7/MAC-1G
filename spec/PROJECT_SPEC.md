@@ -202,8 +202,8 @@ is not optional and not an implementation choice; it falls directly out of combi
 cut-through requirement with a port that excludes the FCS. v0.2's sum listed the stages
 that transform data and omitted the one that only delays it.
 
-13 cycles against R21's 32-cycle (256 ns) ceiling is **2.5× margin** (`spec/budget.py`,
-`rx_latency_budget()`) — down from the 3.6× v0.2 claimed, and still comfortable. The
+13 cycles against R21's 32-cycle (256 ns) ceiling is **2.5× margin** (`spec/budget.m`,
+`rxLatencyBudget()`) — down from the 3.6× v0.2 claimed, and still comfortable. The
 async FIFO crossing and the FCS holdback are now joint largest contributors at 4 cycles
 each, and they are there for opposite reasons: one is a genuine CDC boundary, the other
 is pure latency bought to satisfy a delivery contract. Were R21 ever tightened, the
@@ -356,7 +356,9 @@ Cycles per byte:      125 MHz ÷ 125 MB/s  =  1.0
 ## B.3a Parameter derivation table
 
 Every number in this spec traces to a formula, per the flow doc's "derive, don't choose"
-rule. Re-derivable by running [`spec/budget.py`](budget.py).
+rule. Re-derivable by running [`spec/budget.m`](budget.m), which reads the frame-geometry
+and datapath constants live from `rtl/gem_mac_params.vh` via `gem.params()` (the same
+mechanism the golden model uses) rather than keeping a second hardcoded copy.
 
 | Parameter | Value | Derivation |
 |---|---|---|
@@ -370,7 +372,7 @@ rule. Re-derivable by running [`spec/budget.py`](budget.py).
 | RGMII clock tolerance (each side) | ±100 ppm | IEEE 802.3-2022 Clause 40 (1000BASE-T transmit clock tolerance) — board-oscillator ppm not yet confirmed against the actual AX7035B BOM part (stated weakness, B.7) |
 | RX FIFO drift term | `2 × 100 ppm × 1518 B ≈ 0.3 B` | worst-case relative skew (`tx_clk` vs. recovered `rx_clk`) accumulated over one max-length frame (12.14 µs) — negligible, because the FIFO drains every IFG rather than absorbing sustained rate mismatch |
 | RX FIFO sync-latency term | ~4 bytes | dual-flop gray-code pointer synchronizer, 2 destination-clock cycles of pointer visibility delay, rounded up with margin |
-| **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.py`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
+| **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.m`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
 | TX `GTX_CLK` phase shift | ≈ 1.6 ns (−72° of an 8 ns period) | center of the KSZ9031RNX's `TsetupT`/`TholdT` window (1.2–2.0 ns, datasheet Table 19), giving ±0.4 ns margin both edges — not the window's 2.0 ns edge (zero margin) — see B.1b |
 | RX capture delay | 1.2 ns (PHY default, no FPGA action) | KSZ9031RNX default RX_CLK-to-RXD delay, inside `TsetupR`/`TholdR` (1.0–2.0 ns) — see B.1b |
 | PHY reset hold time | ≥ 10 ms | KSZ9031RNX datasheet `tSR`: stable supply → reset de-assertion |
@@ -509,7 +511,7 @@ cross-checked against the physical board — first thing to verify at Stage 2 br
 step 1 (A.2's correction note); and the LUT/FF/BRAM line items in B.2's Resources table
 are **estimates whose derivation predates this revision and isn't traceable** — unlike
 the FIFO depth, GTX_CLK phase, and R21 latency numbers, which were derived bottom-up and
-checked by `spec/budget.py`, the resource counts are inherited, plausible-looking
+checked by `spec/budget.m`, the resource counts are inherited, plausible-looking
 per-block guesses (they do line up with B.1a's module list and land comfortably under
 10% device utilization even at the budget ceiling, so the order of magnitude is very
 likely right) but have not been checked against a real synthesis of a comparable module.
