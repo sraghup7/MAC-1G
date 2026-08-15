@@ -5,7 +5,8 @@ function s = genTxScenario(name, opts)
 %   stream the MAC must produce comes out.
 %
 %   Options (name-value):
-%       Seed         RNG seed. Default 20260814.
+%       Seed         RNG seed. Default: derived from NAME by
+%                    GEM.SEEDFOR, so every scenario gets its own.
 %       NumFrames    default 32.
 %       Lengths      payload lengths to cycle through; default is B.4's
 %                    boundary set plus ordinary sizes.
@@ -46,7 +47,7 @@ function s = genTxScenario(name, opts)
 
 arguments
     name (1,:) char
-    opts.Seed        (1,1) {mustBeNumeric} = 20260814
+    opts.Seed              {mustBeNumeric} = []
     opts.NumFrames   (1,1) {mustBeNumeric, mustBePositive} = 32
     opts.Lengths           {mustBeNumeric} = []
     opts.ReadyMode   (1,:) char {mustBeMember(opts.ReadyMode, ...
@@ -89,6 +90,9 @@ if any(lengths < 1)
          '1 octet -- see spec B.4c.']);
 end
 
+if isempty(opts.Seed)
+    opts.Seed = gem.seedFor(name);
+end
 rng(opts.Seed, 'twister');
 
 nFrames = double(opts.NumFrames);

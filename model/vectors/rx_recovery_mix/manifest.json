@@ -1,10 +1,10 @@
 {
   "name": "rx_recovery_mix",
   "direction": "rx",
-  "seed": 2.0260814E+7,
-  "generated": "2026-08-15T05:13:23",
+  "seed": 2.0476071E+7,
+  "generated": "2026-08-15T06:07:42",
   "options": {
-    "Seed": 2.0260814E+7,
+    "Seed": 2.0476071E+7,
     "NumFrames": 40,
     "Lengths": [],
     "Corruptions": [
@@ -18,6 +18,7 @@
       "oversize"
     ],
     "GapMode": "min",
+    "Offsets": [],
     "PreambleMode": "random",
     "GarbageRate": 0.3,
     "MaxPayload": []
@@ -36,17 +37,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 5,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 2,
       "payloadLen": 45,
       "corruption": "badfcs",
-      "offset": 4,
+      "offset": 47,
       "expectedClass": "badfcs",
-      "preambleBytes": 2,
+      "preambleBytes": 4,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -56,19 +57,19 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 6,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 4,
       "payloadLen": 47,
       "corruption": "truncate",
-      "offset": 21,
+      "offset": 54,
       "expectedClass": "runt",
       "preambleBytes": 1,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 5,
@@ -76,17 +77,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 3,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 6,
       "payloadLen": 64,
       "corruption": "rxer",
-      "offset": 9,
+      "offset": 7,
       "expectedClass": "rxer",
-      "preambleBytes": 6,
+      "preambleBytes": 2,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -96,7 +97,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 3,
+      "preambleBytes": 7,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -104,9 +105,9 @@
       "index": 8,
       "payloadLen": 100,
       "corruption": "oversize",
-      "offset": 1557,
+      "offset": 1550,
       "expectedClass": "oversize",
-      "preambleBytes": 3,
+      "preambleBytes": 0,
       "gapBefore": 8,
       "garbageInGap": true
     },
@@ -116,7 +117,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 5,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -124,11 +125,11 @@
       "index": 10,
       "payloadLen": 1000,
       "corruption": "badfcs",
-      "offset": 331,
+      "offset": 473,
       "expectedClass": "badfcs",
-      "preambleBytes": 1,
+      "preambleBytes": 3,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 11,
@@ -136,7 +137,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 1,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -144,11 +145,11 @@
       "index": 12,
       "payloadLen": 1500,
       "corruption": "truncate",
-      "offset": 68,
+      "offset": 28,
       "expectedClass": "runt",
-      "preambleBytes": 6,
+      "preambleBytes": 7,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 13,
@@ -156,19 +157,19 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 6,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 14,
       "payloadLen": 45,
       "corruption": "rxer",
-      "offset": 22,
+      "offset": 48,
       "expectedClass": "rxer",
-      "preambleBytes": 3,
+      "preambleBytes": 4,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 15,
@@ -176,17 +177,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 4,
+      "preambleBytes": 0,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 16,
       "payloadLen": 47,
       "corruption": "oversize",
-      "offset": 1542,
+      "offset": 1527,
       "expectedClass": "oversize",
-      "preambleBytes": 7,
+      "preambleBytes": 2,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -196,7 +197,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 5,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -204,9 +205,9 @@
       "index": 18,
       "payloadLen": 64,
       "corruption": "badfcs",
-      "offset": 41,
+      "offset": 43,
       "expectedClass": "badfcs",
-      "preambleBytes": 0,
+      "preambleBytes": 1,
       "gapBefore": 8,
       "garbageInGap": true
     },
@@ -216,19 +217,19 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 4,
+      "preambleBytes": 7,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 20,
       "payloadLen": 100,
       "corruption": "truncate",
-      "offset": 49,
+      "offset": 62,
       "expectedClass": "runt",
-      "preambleBytes": 0,
+      "preambleBytes": 4,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 21,
@@ -236,17 +237,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 6,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 22,
       "payloadLen": 1000,
       "corruption": "rxer",
-      "offset": 400,
+      "offset": 347,
       "expectedClass": "rxer",
-      "preambleBytes": 3,
+      "preambleBytes": 2,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -256,7 +257,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 3,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -264,9 +265,9 @@
       "index": 24,
       "payloadLen": 1500,
       "corruption": "oversize",
-      "offset": 1553,
+      "offset": 1575,
       "expectedClass": "oversize",
-      "preambleBytes": 5,
+      "preambleBytes": 0,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -276,7 +277,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 3,
+      "preambleBytes": 4,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -284,11 +285,11 @@
       "index": 26,
       "payloadLen": 45,
       "corruption": "badfcs",
-      "offset": 42,
+      "offset": 40,
       "expectedClass": "badfcs",
-      "preambleBytes": 6,
+      "preambleBytes": 0,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 27,
@@ -296,7 +297,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 6,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -304,9 +305,9 @@
       "index": 28,
       "payloadLen": 47,
       "corruption": "truncate",
-      "offset": 28,
+      "offset": 26,
       "expectedClass": "runt",
-      "preambleBytes": 4,
+      "preambleBytes": 7,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -316,7 +317,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 1,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -324,9 +325,9 @@
       "index": 30,
       "payloadLen": 64,
       "corruption": "rxer",
-      "offset": 20,
+      "offset": 63,
       "expectedClass": "rxer",
-      "preambleBytes": 1,
+      "preambleBytes": 2,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -336,7 +337,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 1,
+      "preambleBytes": 3,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -344,11 +345,11 @@
       "index": 32,
       "payloadLen": 100,
       "corruption": "oversize",
-      "offset": 1555,
+      "offset": 1546,
       "expectedClass": "oversize",
       "preambleBytes": 5,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 33,
@@ -356,17 +357,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 5,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 34,
       "payloadLen": 1000,
       "corruption": "badfcs",
-      "offset": 145,
+      "offset": 823,
       "expectedClass": "badfcs",
-      "preambleBytes": 2,
+      "preambleBytes": 6,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -376,17 +377,17 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 3,
+      "preambleBytes": 7,
       "gapBefore": 8,
-      "garbageInGap": true
+      "garbageInGap": false
     },
     {
       "index": 36,
       "payloadLen": 1500,
       "corruption": "truncate",
-      "offset": 44,
+      "offset": 22,
       "expectedClass": "runt",
-      "preambleBytes": 1,
+      "preambleBytes": 3,
       "gapBefore": 8,
       "garbageInGap": true
     },
@@ -396,7 +397,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 7,
+      "preambleBytes": 4,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -404,11 +405,11 @@
       "index": 38,
       "payloadLen": 45,
       "corruption": "rxer",
-      "offset": 29,
+      "offset": 47,
       "expectedClass": "rxer",
-      "preambleBytes": 4,
+      "preambleBytes": 2,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     },
     {
       "index": 39,
@@ -416,7 +417,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 1,
+      "preambleBytes": 0,
       "gapBefore": 8,
       "garbageInGap": false
     },
@@ -424,11 +425,11 @@
       "index": 40,
       "payloadLen": 47,
       "corruption": "oversize",
-      "offset": 1565,
+      "offset": 1559,
       "expectedClass": "oversize",
-      "preambleBytes": 0,
+      "preambleBytes": 1,
       "gapBefore": 8,
-      "garbageInGap": false
+      "garbageInGap": true
     }
   ],
   "selfCheck": {

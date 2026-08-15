@@ -1,16 +1,17 @@
 {
   "name": "rx_clean_sweep",
   "direction": "rx",
-  "seed": 2.0260814E+7,
-  "generated": "2026-08-15T05:13:22",
+  "seed": 2.0716286E+7,
+  "generated": "2026-08-15T06:07:41",
   "options": {
-    "Seed": 2.0260814E+7,
+    "Seed": 2.0716286E+7,
     "NumFrames": 12,
     "Lengths": [],
     "Corruptions": [
       "none"
     ],
     "GapMode": "nominal",
+    "Offsets": [],
     "PreambleMode": "full",
     "GarbageRate": 0,
     "MaxPayload": []

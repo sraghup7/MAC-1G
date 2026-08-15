@@ -1,16 +1,17 @@
 {
   "name": "rx_trimmed_preamble",
   "direction": "rx",
-  "seed": 2.0260814E+7,
-  "generated": "2026-08-15T05:13:22",
+  "seed": 2.0297107E+7,
+  "generated": "2026-08-15T06:07:42",
   "options": {
-    "Seed": 2.0260814E+7,
+    "Seed": 2.0297107E+7,
     "NumFrames": 16,
     "Lengths": [],
     "Corruptions": [
       "none"
     ],
     "GapMode": "nominal",
+    "Offsets": [],
     "PreambleMode": "random",
     "GarbageRate": 0,
     "MaxPayload": []
@@ -39,7 +40,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 6,
+      "preambleBytes": 4,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -49,7 +50,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 3,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -59,7 +60,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 5,
+      "preambleBytes": 1,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -69,7 +70,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 1,
+      "preambleBytes": 6,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -79,7 +80,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 3,
+      "preambleBytes": 7,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -89,7 +90,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 1,
+      "preambleBytes": 5,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -99,7 +100,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 5,
+      "preambleBytes": 2,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -109,7 +110,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 4,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -119,7 +120,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 6,
+      "preambleBytes": 1,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -129,7 +130,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 3,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -139,7 +140,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 5,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -149,7 +150,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 0,
+      "preambleBytes": 2,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -159,7 +160,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 3,
+      "preambleBytes": 6,
       "gapBefore": 12,
       "garbageInGap": false
     },
@@ -169,7 +170,7 @@
       "corruption": "none",
       "offset": 0,
       "expectedClass": "ok",
-      "preambleBytes": 2,
+      "preambleBytes": 7,
       "gapBefore": 12,
       "garbageInGap": false
     },

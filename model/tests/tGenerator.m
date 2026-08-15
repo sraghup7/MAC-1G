@@ -96,6 +96,47 @@ classdef tGenerator < matlab.unittest.TestCase
             tc.verifyTrue(s.selfCheck.ok);
         end
 
+        function classificationBoundariesAreCovered(tc)
+            % The four received lengths where classification changes its mind
+            % must exist somewhere in the frozen set. They did before this test,
+            % but 63 and 1519 occurred exactly once each and only because
+            % seeded corruption offsets happened to land there -- so a seed
+            % change, or a different NumFrames, would have removed them and the
+            % suite would still have reported full coverage.
+            p = gem.params();
+            wanted = [p.MIN_FRAME_BYTES - 1, p.MIN_FRAME_BYTES, ...
+                      p.MAX_FRAME_BYTES,     p.MAX_FRAME_BYTES + 1];
+
+            frozen = gem.scenarios('frozen');
+            seen = [];
+            for k = 1:numel(frozen)
+                if ~strcmp(frozen(k).direction, 'rx'), continue, end
+                s = frozen(k).build();
+                f = s.frames([s.frames.sfdFound]);
+                seen = [seen, arrayfun(@(x) numel(x.frameBytes), f)]; %#ok<AGROW>
+            end
+
+            for w = wanted
+                tc.verifyTrue(ismember(w, seen), sprintf( ...
+                    ['no frozen RX scenario produces a received frame of %d ' ...
+                     'octets -- the runt/ok/oversize boundaries must be ' ...
+                     'covered by construction, see rx_length_edges'], w));
+            end
+        end
+
+        function everyScenarioHasItsOwnSeed(tc)
+            % All 18 scenarios once shared one hard-coded default, so two
+            % scenarios differing only in corruption kind drew *identical*
+            % offsets, and the random sweeps retraced the directed set's RNG
+            % trajectory. Distinctness is now a property of gem.seedFor, and
+            % this is what keeps it one.
+            l = gem.scenarios();
+            seeds = arrayfun(@(e) e.build().seed, l);
+
+            tc.verifyEqual(numel(unique(seeds)), numel(seeds), ...
+                'two or more scenarios share an RNG seed');
+        end
+
         function crossCheckCoversTheScenariosThatNeedItMost(tc)
             % rx_bad_sfd and random_rx_sweep are the two scenarios that used to
             % run with the cross-check switched off -- the second is the

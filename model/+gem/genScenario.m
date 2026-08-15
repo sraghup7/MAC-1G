@@ -6,7 +6,8 @@ function s = genScenario(name, opts)
 %   done to it.
 %
 %   Options (all name-value):
-%       Seed          RNG seed. Default 20260814.
+%       Seed          RNG seed. Default: derived from NAME by
+%                     GEM.SEEDFOR, so every scenario gets its own.
 %       NumFrames     how many frames to emit. Default 32.
 %       Lengths       payload lengths to cycle through. Default: the B.4
 %                     boundary set plus a spread of ordinary sizes.
@@ -15,7 +16,11 @@ function s = genScenario(name, opts)
 %                     scenario made entirely of broken frames never checks
 %                     that good ones still work.
 %       GapMode       'nominal' (12) | 'min' (8) | 'random' (8..40).
-%       PreambleMode  'full' (7) | 'none' (0) | 'random' (0..7).
+%       PreambleMode  'full' (7) | 'none' (0) | 'random' (a seeded order that
+%                     covers every length 0..7 before repeating).
+%       Offsets       explicit corruption offsets, cycled over the frames.
+%                     Default [] draws them from the seeded stream. Set this
+%                     when a corruption has to land on an exact boundary.
 %       GarbageRate   0..1, fraction of gaps carrying nonzero octets (R11).
 %       MaxPayload    cap on payload length, default GEM_SIM_SCALE. Lets a
 %                     smoke run finish in seconds and the full run use 1500.
@@ -50,12 +55,13 @@ function s = genScenario(name, opts)
 
 arguments
     name (1,:) char
-    opts.Seed         (1,1) {mustBeNumeric} = 20260814
+    opts.Seed               {mustBeNumeric} = []
     opts.NumFrames    (1,1) {mustBeNumeric, mustBePositive} = 32
     opts.Lengths            {mustBeNumeric} = []
     opts.Corruptions        cell = {'none'}
     opts.GapMode      (1,:) char {mustBeMember(opts.GapMode, ...
                             {'nominal','min','random'})} = 'nominal'
+    opts.Offsets            {mustBeNumeric} = []
     opts.PreambleMode (1,:) char {mustBeMember(opts.PreambleMode, ...
                             {'full','none','random'})} = 'full'
     opts.GarbageRate  (1,1) {mustBeNumeric} = 0
@@ -77,6 +83,9 @@ if isempty(lengths)
 end
 lengths = min(double(lengths), maxPayload);
 
+if isempty(opts.Seed)
+    opts.Seed = gem.seedFor(name);
+end
 rng(opts.Seed, 'twister');
 
 nFrames = double(opts.NumFrames);
@@ -84,12 +93,33 @@ nFrames = double(opts.NumFrames);
 % --- draw every random choice up front, from the one seeded stream ---------
 lengthPick   = lengths(1 + mod(0:nFrames-1, numel(lengths)));
 corruptPick  = opts.Corruptions(1 + mod(0:nFrames-1, numel(opts.Corruptions)));
-offsets      = randi([0 4095], 1, nFrames);
+if isempty(opts.Offsets)
+    offsets = randi([0 4095], 1, nFrames);
+else
+    % Explicit offsets, for scenarios that must land a corruption on an exact
+    % boundary rather than wherever the stream happens to put it.
+    offsets = double(opts.Offsets(1 + mod(0:nFrames-1, numel(opts.Offsets))));
+end
 garbageRoll  = rand(1, nFrames);
 switch opts.PreambleMode
     case 'full',   preambles = repmat(p.PREAMBLE_BYTES, 1, nFrames);
     case 'none',   preambles = zeros(1, nFrames);
-    case 'random', preambles = randi([0 p.PREAMBLE_BYTES], 1, nFrames);
+    case 'random'
+        % Every preamble length 0..7 appears before any repeats, in a seeded
+        % order. A plain randi draw does not guarantee that, and did not
+        % deliver it: rx_trimmed_preamble claims to sweep 0..7 and its 16
+        % frames actually used {0,1,2,3,5,6}, missing 4 and -- more awkwardly
+        % -- 7, the standard full-length preamble, in the one scenario whose
+        % entire purpose is preamble length. Coverage that depends on a lucky
+        % draw is not coverage; it is a coin that has been landing right.
+        allLengths = 0:p.PREAMBLE_BYTES;
+        reps = ceil(nFrames / numel(allLengths));
+        seq  = zeros(1, reps * numel(allLengths));
+        for r = 1:reps
+            span = (r-1)*numel(allLengths) + (1:numel(allLengths));
+            seq(span) = allLengths(randperm(numel(allLengths)));
+        end
+        preambles = seq(1:nFrames);
 end
 switch opts.GapMode
     case 'nominal', gaps = repmat(p.IFG_BYTES, 1, nFrames);

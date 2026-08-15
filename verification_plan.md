@@ -22,7 +22,7 @@ python scripts/run_sim.py
 
 | Command | What it does | Gate |
 |---|---|---|
-| `make model` | the golden model's own test suite (68 tests) | must be green before any simulation result means anything |
+| `make model` | the golden model's own test suite (70 tests) | must be green before any simulation result means anything |
 | `make vectors` | regenerates every scenario from its seed | fails if the generator and the model disagree |
 | `make vectors-check` | do the **committed** vectors still match the model? | fails if an edited model left them a fossil |
 | `make sim S=<scenario>` | one scenario | — |
@@ -143,6 +143,7 @@ second list that would drift.
 | `rx_garbage` | rx | R11 | DV-low octets seeded with `0xD5` |
 | `rx_bad_sfd` | rx | R8 R11 | damaged delimiter; the model defines the outcome |
 | `rx_recovery_mix` | rx | R10 R17 R21 | every class interleaved with good frames at the min gap |
+| `rx_length_edges` | rx | R9 R10 R17 | **63 / 64 / 1518 / 1519** — the exact lengths where classification changes over, constructed rather than stumbled on |
 | `tx_underrun` | tx | R7 R15 R17 | **user starves the MAC mid-payload** — B.4b abort, then clean recovery |
 | `tx_clean_sweep` | tx | R1 R2 R4 R5 R13 | frame assembly, compared at cycle granularity |
 | `tx_padding` | tx | R3 | payloads either side of 46 octets |
@@ -151,7 +152,7 @@ second list that would drift.
 | `random_rx_sweep` | rx | R8–R11 R17 | 600 frames, every corruption × the length set |
 | `random_tx_sweep` | tx | R1 R3 R5 R7 | 600 frames across the full length range |
 
-The first fifteen are frozen: their vectors are committed, so they are readable
+The first sixteen are frozen: their vectors are committed, so they are readable
 in review and runnable without MATLAB. The two `random_*` sweeps regenerate
 bit-identically from the seed in their manifest and are git-ignored. `--all`
 has been run end to end: 304,236 RX cycles and 460,992 TX cycles load and are
@@ -174,13 +175,13 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 
 | Layer | Result |
 |---|---|
-| Golden model test suite | **68 / 68 passing** |
-| Scenario generation | 17 / 17, every generator self-check agrees with the model |
+| Golden model test suite | **70 / 70 passing** |
+| Scenario generation | 18 / 18, every generator self-check agrees with the model |
 | Committed vectors vs the model | **46 / 46 files current** |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
 | Verilator lint (R22) | **passing** — 2 tops, zero warnings |
-| Frozen regression vs `gem_mac_stub` | 0 / 17 passing — **expected**, there is no design yet |
+| Frozen regression vs `gem_mac_stub` | 0 / 18 passing — **expected**, there is no design yet |
 
 The regression failing against a port-only stub is the Stage 3 result, not a
 problem to fix. What was being checked is that the plumbing runs end to end and
@@ -219,6 +220,7 @@ that would otherwise have surfaced mid-debug:
 | **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
 | **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
 | **V-10** | ~~The Makefile has never been executed~~ | **Closed.** GNU Make 4.2.1 ships with Vivado (`$(VIVADO_ROOT)/gnuwin/bin/make.exe`), so no install was needed and it is guaranteed present wherever Vivado is. Running it found two defects that only appear on execution: `@echo "..."` printed its quotes literally under cmd.exe, and `clean`/`clean-sim` used `rm -rf`, which is not a cmd builtin — they worked only when make happened to be launched from Git Bash and failed from PowerShell or cmd. Help now uses `$(info)` (never reaches a shell) and the clean targets go through `scripts/clean.py`. `make check` runs end to end and exits nonzero on the failing regression, as a gate should. | — |
+| **V-15** | ~~Vector coverage was partly accidental~~ | **Closed.** Reviewing the committed vectors rather than the catalogue that claims to produce them found three gaps. All 17 scenarios shared one hard-coded seed, so two scenarios differing only in corruption kind drew **identical** offsets, and the random sweeps retraced the directed set's RNG trajectory — `gem.seedFor` now derives a distinct seed per scenario from its name (name-derived, so inserting a scenario does not churn every other vector file). `rx_trimmed_preamble` claims to sweep preamble lengths 0..7 and actually produced {0,1,2,3,5,6}, missing 4 and — in the one scenario whose entire purpose is preamble length — 7, the standard full preamble; `PreambleMode='random'` now covers all eight before repeating. The four classification boundaries were present but 63 and 1519 occurred once each, purely because seeded offsets happened to land there, so a seed change would have removed them silently; `rx_length_edges` now constructs all four and `tGenerator` asserts they survive. | — |
 | **V-14** | ~~A passing WNS was hiding an unconstrained design~~ | **Closed.** Vivado said it plainly and nobody was reading it: *"[Place 30-2953] Timing driven mode will be turned off because no critical terminals were found"* — the build reported WNS 17.2 ns while the placer had timing analysis switched off, because nothing in the design was constrained. WNS ≥ 0 is nearly free when no path is constrained enough to have negative slack. Added gate 3, a `check_timing` coverage gate that refuses on unclocked registers, unconstrained internal endpoints, multiple clocks and loops, and lists ports lacking I/O delay. Also declared the LEDs as false paths in `constrs/exceptions.xdc` so "unconstrained because it does not matter" is written down and distinguishable from "unconstrained because somebody forgot" — check_timing now reports them as *"no output delay but user has a false path constraint"*. Gate 2's diagnosis was wrong too: with no clock, `get_property SLACK` returns `""` and Tcl compares `"" < 0` as strings, so the build was refused with "negative setup slack (WNS =  ns)" — right outcome, misleading cause. | I/O-delay refusal deferred to Stage 6 |
 | **V-13** | ~~The build gates had never been demonstrated, and one had a hole~~ | **Closed.** `make synth` could not run at all — the Makefile invoked a bare `vivado`, which is not on PATH here, so all four Stage 2 targets had been unexercised while the Python-driven ones worked. Now routed through `scripts/build.py`, which reuses `run_sim.py`'s locator. With that fixed, planting a latch showed gate 1 refuses correctly — **but a latch that synthesis infers and then optimises away passed silently**, netlist clean and `PASS` printed, while the log said `inferring latch for variable`. Gate 1b now refuses on the inference warning itself; verified against the exact case that previously passed. The timing gate runs and reports (WNS 17.2 ns on the skeleton) but has not been made to refuse — that needs a design that fails timing, which the blinker cannot supply. | timing-gate refusal still unproven |
 | **V-12** | ~~The SystemVerilog layer had four review findings~~ | **Closed.** A step-by-step review of `tb/` found: the AXI-S assertions were largely decorative (all six properties on the `tx_axis` bind watch the stimulus driver, since the user drives everything but `tready`; four more are permanently vacuous on `rx_axis` because R18's no-stall contract ties `tready` high) — now measured and reported per run, with `tready`/`tvalid` X-checks added, which were the one gap that would have presented as a dead design rather than as an X. `gem_rgmii_sva` sampled DDR pins on one edge, so `wire tx_en = tx_ctl` was reading TX_EN^TX_ER and `a_frame_starts_with_preamble` passed only because both nibbles of `0x55` are `5`; it now reconstructs the full cycle from both edges and asserts on real TX_EN, TX_ER and whole octets. The loopback scoreboard misattributed every frame after a dropped one; it now stops at the first frame-level divergence and says why. | — |

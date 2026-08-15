@@ -1,0 +1,127 @@
+{
+  "name": "rx_length_edges",
+  "direction": "rx",
+  "seed": 2.06508E+7,
+  "generated": "2026-08-15T06:07:42",
+  "options": {
+    "Seed": 2.06508E+7,
+    "NumFrames": 8,
+    "Lengths": [
+      46,
+      1500,
+      1500,
+      1500
+    ],
+    "Corruptions": [
+      "none",
+      "none",
+      "truncate",
+      "oversize"
+    ],
+    "GapMode": "nominal",
+    "Offsets": [
+      0,
+      0,
+      62,
+      0
+    ],
+    "PreambleMode": "full",
+    "GarbageRate": 0,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 4,
+    "rx_badfcs": 0,
+    "rx_runt": 2,
+    "rx_oversize": 2,
+    "rx_rxer": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 2,
+      "payloadLen": 1500,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 1500,
+      "corruption": "truncate",
+      "offset": 71,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 4,
+      "payloadLen": 1500,
+      "corruption": "oversize",
+      "offset": 1527,
+      "expectedClass": "oversize",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 5,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 6,
+      "payloadLen": 1500,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 1500,
+      "corruption": "truncate",
+      "offset": 71,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 1500,
+      "corruption": "oversize",
+      "offset": 1527,
+      "expectedClass": "oversize",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 8,
+    "skipped": 0,
+    "ok": true,
+    "note": "8 frames cross-checked, all agree."
+  }
+}

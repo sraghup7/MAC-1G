@@ -1,10 +1,10 @@
 {
   "name": "rx_min_gap",
   "direction": "rx",
-  "seed": 2.0260814E+7,
-  "generated": "2026-08-15T05:13:22",
+  "seed": 2.0511529E+7,
+  "generated": "2026-08-15T06:07:42",
   "options": {
-    "Seed": 2.0260814E+7,
+    "Seed": 2.0511529E+7,
     "NumFrames": 24,
     "Lengths": [
       1,
@@ -14,6 +14,7 @@
       "none"
     ],
     "GapMode": "min",
+    "Offsets": [],
     "PreambleMode": "none",
     "GarbageRate": 0,
     "MaxPayload": []

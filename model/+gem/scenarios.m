@@ -104,6 +104,33 @@ list(end+1) = add('rx_recovery_mix', 'rx', true, ...
                      'none','oversize'}, ...
         GapMode='min', PreambleMode='random', GarbageRate=0.3));
 
+% The four lengths where classification changes its mind, constructed rather
+% than stumbled on. All four already appeared somewhere in the frozen set, but
+% 63 and 1519 appeared exactly once each and only because seeded corruption
+% offsets happened to land there -- a seed change or a different NumFrames
+% would have removed them silently, and the suite would still have looked fully
+% covered. The offsets below place a truncate at exactly 63 octets and an
+% oversize at exactly 1519, so the edges are a property of the catalogue and
+% not of the RNG. tGenerator asserts they survive.
+%
+%   63   one octet short of GEM_MIN_FRAME_BYTES  -> runt
+%   64   exactly the minimum                     -> ok
+%   1518 exactly GEM_MAX_FRAME_BYTES             -> ok
+%   1519 one octet over                          -> oversize
+%
+% Lengths and Corruptions both cycle, so they must be phased against each other
+% deliberately. A [46 1500] x {none,truncate,none,oversize} pairing looks right
+% and never produces a clean 1500-octet payload at all -- every time the long
+% length came round it drew a corruption -- leaving 1518, the largest legal
+% frame, missing from the scenario built to cover it.
+list(end+1) = add('rx_length_edges', 'rx', true, ...
+    {'R9','R10','R17'}, ...
+    'The exact lengths where runt/ok and ok/oversize change over.', ...
+    @() gem.genScenario('rx_length_edges', NumFrames=8, ...
+        Lengths=[46 1500 1500 1500], ...
+        Corruptions={'none','none','truncate','oversize'}, ...
+        Offsets=[0 0 62 0], GapMode='nominal'));
+
 % ---- frozen, directed: TX ------------------------------------------------
 
 list(end+1) = add('tx_clean_sweep', 'tx', true, ...
