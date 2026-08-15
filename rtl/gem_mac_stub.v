@@ -30,6 +30,14 @@
 // deliberately unconnected -- that is what makes this a stub. The suppression
 // is removed along with the file when Stage 4 replaces it with real logic.
 
+/* verilator lint_off DECLFILENAME */
+// Second justified suppression, and it exists only because this file is a
+// stand-in. The module must be named `gem_mac` -- that is the name every
+// testbench instantiates -- while the file is named for what it actually is,
+// so nobody mistakes it for the design. Stage 4's real implementation lives in
+// gem_mac.v, where name and file agree and this suppression is deleted rather
+// than carried forward.
+
 module gem_mac (
     // ---- Clocks and resets (R19, B.1b) ------------------------------------
     // sys_clk = tx_clk for v1 (B.7 item 3), so there is no separate sys_clk

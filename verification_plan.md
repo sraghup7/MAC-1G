@@ -28,8 +28,8 @@ python scripts/run_sim.py
 | `make sim S=<scenario>` | one scenario | — |
 | `make regress` | every frozen scenario | **the gate**: nonzero exit on any mismatch or assertion failure |
 | `make regress-all` | plus the large random sweeps | — |
-| `make lint` | Verilator `--lint-only` (R22) | see open item V-4 |
-| `make check` | model, then vectors-check, then regress | the whole thing, in the order that makes a failure diagnosable |
+| `make lint` | Verilator `--lint-only -Wall` on every design top (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip |
+| `make check` | model, vectors-check, lint, regress | the whole thing, in the order that makes a failure diagnosable |
 
 > `make` is not currently on PATH on this machine. Until it is, run the
 > underlying commands directly — `python scripts/run_sim.py`,
@@ -98,7 +98,7 @@ debug loops:
 | R19 | Three clock domains, zero undeclared CDC | `tb_gem_mac_rx` drives `rx_clk` deliberately offset from `tx_clk`; `tb_gem_mac_loopback` re-emits on an independent `rx_clk` so the async FIFO is genuinely crossed; `report_cdc` at Stage 6 | sim + tool | pending-rtl |
 | R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | Stage 6/7, `scripts/build.tcl` slack gate | tool | **open** (Stage 6) |
 | R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** against `GEM_RX_LATENCY_MAX_CYCLES`; `tb_rgmii_bfm` verifies the timebase the measurement rests on | sim | pending-rtl |
-| R22 | Verilator lint clean, zero warnings | `make lint` | tool | **open** · see **V-4** |
+| R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 2 tops, zero warnings; gate verified to fail on an injected width mismatch |
 | R23 | Zero inferred latches | `scripts/build.tcl` latch gate (Stage 2) | tool | **green** (gate in place since Stage 2) |
 | R24 | Bit-exact vs the golden model; no negative slack | `make regress` + `scripts/build.tcl` slack gate | sim + tool | pending-rtl |
 
@@ -186,11 +186,12 @@ that would otherwise have surfaced mid-debug:
 | **V-1** | TX behaviour when the user stalls mid-frame is unspecified | At 1 byte/cycle with no slack (B.3), a MAC that has started a frame cannot pause. It must either buffer whole frames before starting — latency plus a BRAM the resource budget does not carry — or underrun and abort with TX_ER. R7 only promises line rate "when user logic supplies data every cycle" and is silent on the alternative. | Decide **before** the TX datapath is written in Stage 4, then add a `tx_underrun` scenario. The generator deliberately does not guess: `gem.genTxScenario` stalls only between frames. |
 | **V-2** | R14's RGMII skew cannot be simulated | The 1.6 ns `GTX_CLK` phase shift is an I/O timing property. Simulation will pass with any phase; only static timing analysis and a scope on the bench can confirm it. | Stage 6 `report_timing` on the constrained I/O paths, then bring-up step 5 with an ILA or scope on `GTX_CLK`/`TXD0`. |
 | **V-3** | R16 MDIO has no test | The MDIO master is an independent block on a different interface; there is no golden-model work it shares. | Add `tb_mdio.sv` with a PHY register-file BFM when the module is written (Stage 4), checking the 64-cycle Clause 22 transaction and the ≤ 2.5 MHz MDC bound. |
-| **V-4** | R22's lint gate cannot run | Verilator is not installed on this machine. `make lint` fails loudly rather than reporting success for a check that did not run. | Install Verilator, then wire `make lint` into the regression so R22 is gated rather than intended. |
+| **V-4** | ~~R22's lint gate cannot run~~ | **Closed.** Verilator 5.032 installed under WSL; `scripts/lint.py` bridges to it from Windows and falls back to a native binary elsewhere. Both design tops lint clean under `-Wall`, and the gate was verified to fail by injecting a width mismatch — it caught that plus the unused signal and exited nonzero. `make check` now runs it. | — |
 | **V-5** | ~~R21's latency is specified but not measured~~ | **Closed.** `gem.expectedBeats` now emits each frame's `sfdCycle`, the driver exposes when cycle 0 was launched, and `tb_gem_mac_rx` converts the two into a per-frame cycle count checked against `GEM_RX_LATENCY_MAX_CYCLES`. The worst measured latency is printed on every run even when it passes, so erosion against B.1b's predicted 13 is visible before it becomes a violation. | — |
 | **V-6** | The golden CRC is not yet checked against a real capture | B.4 asks for validation against a Wireshark capture; the board is not in hand. Validation is currently the published check value, Python's `zlib` over 2000 vectors, and the residue property. | Close at bring-up step 5 by capturing a frame the design transmitted and confirming Wireshark reports its FCS correct. |
 | **V-7** | R12 (DA filter) has no test | Stretch requirement, not implemented. | Promote out of B.7's non-goals or leave explicitly unimplemented at release. |
 | **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
+| **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
 
 ---
 

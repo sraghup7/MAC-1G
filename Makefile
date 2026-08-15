@@ -61,12 +61,11 @@ vectors-check:
 # not installed here yet; the target says so plainly rather than reporting
 # success for a check that did not run -- "silently passed because the tool was
 # missing" is the worst outcome a quality gate can have.
+# R22. Driven from Python rather than inline so the gate behaves the same from
+# Windows -- where Verilator lives inside WSL -- as it does on a Linux box, and
+# so "verilator is missing" stays an error rather than becoming a silent skip.
 lint:
-	@command -v $(VERILATOR) >/dev/null 2>&1 || { \
-	  echo "ERROR: verilator not found. Install it, or set VERILATOR=<path>."; \
-	  echo "       R22 requires a clean lint; this target will not pass by default."; \
-	  exit 1; }
-	$(VERILATOR) --lint-only -Wall -Irtl rtl/gem_mac_stub.v
+	$(PYTHON) scripts/lint.py
 
 S ?= rx_min_gap
 sim:
@@ -79,10 +78,11 @@ regress-all:
 	$(PYTHON) scripts/run_sim.py --all
 
 # Everything, in the order that makes a failure diagnosable: validate the model
-# first, then that the committed vectors still reflect it, then the design
-# against them. Running these the other way round means debugging a design
-# against a reference nobody has checked.
-check: model vectors-check regress
+# first, then that the committed vectors still reflect it, then lint (cheap,
+# and a lint error explains a lot of simulation nonsense), then the design
+# against the vectors. Running these the other way round means debugging a
+# design against a reference nobody has checked.
+check: model vectors-check lint regress
 
 # ---- Stage 2: build -------------------------------------------------------
 
