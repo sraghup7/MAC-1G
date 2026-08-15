@@ -1,7 +1,17 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.4 — Stage 1 complete; amended by Stage 3's golden model and by the
-Stage 3 verification work that followed it. Versioned alongside the RTL.
+Document status: v0.5 — Stage 1 complete, Stage 3 complete. Amended throughout by what
+building the reference model and the verification layer actually forced. Versioned
+alongside the RTL.
+
+**Changelog v0.4 → v0.5 (accuracy pass at the close of Stage 3):** **B.1a** now shows the
+abort in the transmit path — v0.4 specified it in B.4b but left the architecture section
+describing a TX path that could not do it. **B.7** gains the TX store-and-forward
+alternative and the threshold-buffer v2 note that B.4b already claimed were recorded there
+(they were not — a dangling cross-reference). **B.6** now separates what the repo actually
+contains from what is committed-to but deliberately absent; three of the paths it listed
+did not exist. **B.4**'s status paragraph and coverage criterion were stale: 65 tests not
+55, seventeen scenarios not sixteen, R1–R24 not R1–R21.
 
 **Changelog v0.3 → v0.4:** added **B.4b**, the TX underrun contract — the last question
 Stage 3 left genuinely open, and one Stage 4 cannot be written around. Resolved as
@@ -131,13 +141,18 @@ every simulation and fails on the bench.
 **Transmit path (tx_clk domain):**
 1. **AXI-S ingress register** — registers `tdata/tvalid/tready/tlast` plus the `tuser`
    sideband (DA/SA/EtherType, presented at SOF per R15); no combinational path to `tready`.
+   Also detects the mid-frame starve that B.4b turns into an abort: `tvalid` low while a
+   frame is in flight and no octet buffered.
 2. **Frame assembler / padder** — prepends preamble+SFD, inserts DA/SA/EtherType, pads
    payloads < 46 B with zeros (R3), rejects payload > 1500 B (R6).
 3. **Parallel CRC-32 generator** — byte-parallel update running alongside the payload
-   stream (resolved in B.7 item 2); appends FCS at frame end.
+   stream (resolved in B.7 item 2); appends FCS at frame end, or its bitwise inversion
+   when the frame is being aborted (B.4b) — one XOR on the output mux.
 4. **TX arbiter / IFG counter** — tracks a local `transmitting` flag and enforces the
    96-bit (12-byte) inter-frame gap (R5); full-duplex, so no CSMA/CD, deference, or
-   collision logic (IEEE 802.3-2022 §4.2.3.2.6).
+   collision logic (IEEE 802.3-2022 §4.2.3.2.6). Owns the abort sequence: assert `TX_ER`
+   across the inverted FCS, drop `TX_EN`, take a full IFG, discard the rest of the
+   starved frame rather than resuming it, and count `stat_tx_underrun` (B.4b).
 5. **RGMII output stage** — ODDR primitives drive `TXD[3:0]`/`TX_CTL`; a second,
    phase-shifted MMCM output drives the `GTX_CLK` pin (mechanism in B.1b).
 
@@ -405,18 +420,27 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
   to RX input through an RGMII bus-functional model that inserts the DDR timing.
 - **Assertions** (separate bound files): valid/ready protocol legality, IFG never
   violated, FIFO never overflows, state machines never enter illegal states.
-- **Coverage criterion for "done"**: every requirement R1–R21 has ≥ 1 named test; every
+- **Coverage criterion for "done"**: every requirement R1–R24 has ≥ 1 named test; every
   corruption type crossed with {min, typical, max} length; regression green from one
   `make regress` command.
 - **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
 
-**Stage 3 status (v0.3):** all of the above is built and running. The golden model is
-MATLAB (`model/+gem/`), validated by 55 tests — the published CRC-32 check value, agreement
-with Python's `zlib` over 2000 random vectors, the residue property, and a full
-build→RGMII→deframe→parse round trip across the length sweep. Sixteen scenarios generate
-vector files, each cross-checked by reading its own wire back with the golden RX path. The
-SystemVerilog layer (`tb/`) runs against a port-only stub (`rtl/gem_mac_stub.v`) and fails
-informatively, which is the intended Stage 3 result.
+**Stage 3 status (complete):** all of the above is built and running. The golden model is
+MATLAB (`model/+gem/`), validated by 65 tests — the published CRC-32 check value, agreement
+with Python's `zlib` over 2000 random vectors, the residue property, a full
+build→RGMII→deframe→parse round trip across the length sweep, and B.4b's abort contract.
+Seventeen scenarios generate vector files, each cross-checked by reading its own wire back
+with the golden RX path. The SystemVerilog layer (`tb/`) runs against a port-only stub
+(`rtl/gem_mac_stub.v`) and fails informatively, which is the intended Stage 3 result.
+
+Four gates run from `make check` — model tests, committed-vector staleness, Verilator lint
+(R22), and the scenario regression — and **each has been observed to fail**, not merely to
+pass: an injected width mismatch trips the lint gate, one corrupted octet trips the vector
+gate, a planted assertion trips the regression, and the stub trips everything else. Two
+harness self-tests (`tb_rgmii_bfm`, `tb_axis_tx_driver`) have no DUT in them and are the
+only runs green today; both exist because the harness had bugs that presented as design
+bugs. Remaining open items, all blocked on hardware or on Stage 4 RTL rather than on
+analysis, are tracked in [`verification_plan.md`](../verification_plan.md).
 
 ## B.4a RX delivery contract (resolved in Stage 3)
 
@@ -537,10 +561,16 @@ Step 8 passing = the acceptance test for "fully functional."
 
 ## B.6 Deliverables & repo layout
 
-`spec/` (this doc, versioned) · `model/` (MATLAB golden + generator) · `rtl/` ·
-`tb/` · `constrs/` (clocks / pins / exceptions split) · `scripts/build.tcl` ·
-`sw/host/` (Scapy test harness) · `Makefile` · `verification_plan.md` ·
-`bringup_checklist.md` · `README.md` with the block diagram and the B.3 arithmetic.
+**Present:** `spec/` (this doc, versioned) · `model/` (MATLAB golden model, generator,
+tests, and the committed vectors) · `rtl/` · `tb/` (testbenches, BFM, bound assertions) ·
+`constrs/` (clocks / pins / exceptions split) · `scripts/` (`build.tcl`, `program.tcl`,
+`run_sim.py`, `check_vectors.py`, `lint.py`, `clean.py`) · `Makefile` ·
+`verification_plan.md` · `Documents/` (derivations too long to inline here).
+
+**Planned, and deliberately not yet present:** `sw/host/` (Scapy test harness — Stage 5,
+when there is something to talk to) · `bringup_checklist.md` (Stage 5, derived from B.5) ·
+`README.md` with the block diagram and the B.3 arithmetic. Listing them here is the
+commitment; a file that exists but is empty would be worse than one that does not.
 
 ## B.7 Non-goals, architecture decisions, and weaknesses
 
@@ -579,6 +609,16 @@ deferred to RTL time):**
   verdict, per R9 — HFT-idiomatic (first byte out as soon as it arrives, not after the
   whole frame), at the cost of pushing bad-frame rollback onto user logic (see
   `Documents/Bad bitstream handle.md` for the full reasoning).
+- **Store-and-forward vs. cut-through (TX admission), resolved in B.4b:** cut-through,
+  aborting on underrun. Buffering a whole frame before asserting `TX_EN` would make an
+  underrun structurally impossible, but costs up to 1518 cycles (12.14 µs) of transmit
+  latency and a BRAM the B.2 table does not carry — the wrong trade in a design whose
+  premise is latency, and whose R21 caps *receive* latency at 32 cycles for the same
+  reason. **A threshold buffer — begin transmitting once N octets are queued — is the
+  recognised middle option and is the natural v2 change here** if user logic proves hard
+  to drive at one octet per cycle. It is not a substitute for the abort path: it lowers
+  the probability of underrun without removing it, so a v2 that adds it still needs
+  everything B.4b specifies.
 - Items 2 and 3 above are also, in effect, "alternatives considered" — each rejects a
   simpler-looking option (bit-serial CRC, a standalone sys_clk) for a stated, derivable
   reason rather than by default.
