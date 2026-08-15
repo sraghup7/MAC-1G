@@ -18,22 +18,36 @@ SIM_DIR   := sim
         model vectors vectors-frozen vectors-check lint sim regress regress-all \
         check clean-sim
 
+# Printed with $(info) rather than a stack of @echo lines, because @echo is not
+# portable across the shells this repo actually runs under: make here comes from
+# Vivado's gnuwin bundle and drives cmd.exe, where `echo "text"` prints the
+# quotes literally and a bare `echo` prints "ECHO is on." $(info) is expanded by
+# make itself, never reaches a shell, and so reads identically on cmd, sh and
+# WSL. The `@:` gives the target a no-op command to run afterwards.
+define HELP_TEXT
+
+Verification (Stage 3):
+  make model            run the golden model's own test suite
+  make vectors          regenerate every scenario's vector files
+  make vectors-frozen   regenerate only the committed directed set
+  make vectors-check    committed vectors still match the model?
+  make lint             Verilator --lint-only on the RTL (R22)
+  make sim S=rx_min_gap run one scenario
+  make regress          run every frozen scenario (the gate)
+  make regress-all      ... including the large random sweeps
+  make check            model, vectors-check, lint, regress -- the whole thing
+
+Build (Stage 2):
+  make synth impl bitstream program
+
+  make clean            remove build outputs
+  make clean-sim        remove simulation outputs
+
+endef
+
 help:
-	@echo "Verification (Stage 3):"
-	@echo "  make model            run the golden model's own test suite"
-	@echo "  make vectors          regenerate every scenario's vector files"
-	@echo "  make vectors-frozen   regenerate only the committed directed set"
-	@echo "  make vectors-check    committed vectors still match the model?"
-	@echo "  make lint             Verilator --lint-only on the RTL (R22)"
-	@echo "  make sim S=rx_min_gap run one scenario"
-	@echo "  make regress          run every frozen scenario (the gate)"
-	@echo "  make regress-all      ... including the large random sweeps"
-	@echo ""
-	@echo "Build (Stage 2):"
-	@echo "  make synth impl bitstream program"
-	@echo ""
-	@echo "  make clean            remove build outputs"
-	@echo "  make clean-sim        remove simulation outputs"
+	$(info $(HELP_TEXT))
+	@:
 
 # ---- Stage 3: verification ------------------------------------------------
 
@@ -98,8 +112,11 @@ bitstream:
 program: bitstream
 	$(VIVADO) -mode batch -source scripts/program.tcl -tclargs $(BUILD_DIR)/skeleton_top.bit
 
+# Via Python rather than `rm -rf`, which is not portable to the shell make
+# actually gets here. See the note in scripts/clean.py: these targets only ever
+# worked when make happened to be launched from Git Bash.
 clean:
-	rm -rf $(BUILD_DIR) .Xil vivado*.jou vivado*.log
+	$(PYTHON) scripts/clean.py build
 
 clean-sim:
-	rm -rf $(SIM_DIR) xsim.dir *.wdb *.pb xvlog.log xelab.log xsim.log
+	$(PYTHON) scripts/clean.py sim

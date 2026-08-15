@@ -31,10 +31,13 @@ python scripts/run_sim.py
 | `make lint` | Verilator `--lint-only -Wall` on every design top (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip |
 | `make check` | model, vectors-check, lint, regress | the whole thing, in the order that makes a failure diagnosable |
 
-> `make` is not currently on PATH on this machine. Until it is, run the
-> underlying commands directly — `python scripts/run_sim.py`,
-> `matlab -batch "addpath('model'); runModelTests();"`,
-> `matlab -batch "addpath('model'); genVectors();"`.
+> `make` is not on PATH by default on Windows, but Vivado bundles GNU Make at
+> `<Vivado>/gnuwin/bin/make.exe` — use that, or run the underlying commands
+> directly (`python scripts/run_sim.py`, `python scripts/lint.py`,
+> `matlab -batch "addpath('model'); runModelTests();"`). Every target has been
+> executed from both Git Bash and PowerShell; the recipes deliberately avoid
+> `echo` and `rm`, neither of which behaves portably in the shell make gets
+> under Windows.
 
 Layers, cheapest first, which is the same principle as the flow doc's four
 debug loops:
@@ -204,7 +207,7 @@ that would otherwise have surfaced mid-debug:
 | **V-7** | R12 (DA filter) has no test | Stretch requirement, not implemented. | Promote out of B.7's non-goals or leave explicitly unimplemented at release. |
 | **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
 | **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
-| **V-10** | The Makefile has never been executed | `make` is on neither Windows nor WSL on this machine, so every target in it is unverified — `check`, `lint`, `vectors-check`, `regress` and the Stage 2 build targets have only ever been exercised as the underlying commands. A typo in a target would not have been noticed. | One `sudo apt install make` inside WSL, then run `make check` once end to end. Until then the Makefile is documentation, not a tested entry point. |
+| **V-10** | ~~The Makefile has never been executed~~ | **Closed.** GNU Make 4.2.1 ships with Vivado (`$(VIVADO_ROOT)/gnuwin/bin/make.exe`), so no install was needed and it is guaranteed present wherever Vivado is. Running it found two defects that only appear on execution: `@echo "..."` printed its quotes literally under cmd.exe, and `clean`/`clean-sim` used `rm -rf`, which is not a cmd builtin — they worked only when make happened to be launched from Git Bash and failed from PowerShell or cmd. Help now uses `$(info)` (never reaches a shell) and the clean targets go through `scripts/clean.py`. `make check` runs end to end and exits nonzero on the failing regression, as a gate should. | — |
 
 ---
 
