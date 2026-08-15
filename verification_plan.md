@@ -31,6 +31,18 @@ python scripts/run_sim.py
 | `make lint` | Verilator `--lint-only -Wall` on every design top (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip |
 | `make check` | model, vectors-check, lint, regress | the whole thing, in the order that makes a failure diagnosable |
 
+Stage 2's build carries three more gates, inside `scripts/build.tcl`:
+
+| Command | What it does | Gate |
+|---|---|---|
+| `make synth` | non-project synthesis | **gate 1**: any surviving inferred latch refuses the build · **gate 1b**: so does a `Synth 8-327` inference warning, which catches a latch optimised away before gate 1 could see it |
+| `make impl` | place and route | **gate 2**: WNS or WHS below zero refuses · **gate 3**: `check_timing` refuses on unclocked registers, unconstrained internal endpoints, multiple clocks or loops |
+| `make bitstream` | writes `build/skeleton_top.bit` | inherits every gate above |
+| `make program` | loads the board | Stage 7; needs hardware |
+
+All seven gates have been made to fail on purpose. See V-4, V-13 and V-14 for
+what each canary was and what it caught.
+
 > `make` is not on PATH by default on Windows, but Vivado bundles GNU Make at
 > `<Vivado>/gnuwin/bin/make.exe` — use that, or run the underlying commands
 > directly (`python scripts/run_sim.py`, `python scripts/lint.py`,
@@ -76,6 +88,9 @@ debug loops:
 7. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
    the only layer where a TX and RX error that cancel each other out cannot
    hide.
+8. **Build gates** (`scripts/build.tcl`) — the checks a simulation cannot make:
+   inferred latches, slack, and whether timing analysis actually covered the
+   design rather than passing because nothing was constrained.
 
 ---
 
@@ -109,7 +124,7 @@ debug loops:
 | R14 | Documented clock/data skew mechanism | — | bench + static timing | **open** · see **V-2** |
 | R15 | Registered AXI-Stream, no combinational handshake paths | `gem_axis_sva` ×5 properties, bound to both ports | assertion | pending-rtl |
 | R16 | MDIO/MDC master, ≤ 2.5 MHz | — | — | **open** · see **V-3** |
-| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 15 scenarios, now including `tx_underrun` | sim | pending-rtl |
+| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 16 frozen scenarios, including `tx_underrun` | sim | pending-rtl |
 
 ## Traceability — performance and quality
 
@@ -177,10 +192,11 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 |---|---|
 | Golden model test suite | **70 / 70 passing** |
 | Scenario generation | 18 / 18, every generator self-check agrees with the model |
-| Committed vectors vs the model | **46 / 46 files current** |
+| Committed vectors vs the model | **48 / 48 files current** |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
 | Verilator lint (R22) | **passing** — 2 tops, zero warnings |
+| Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates all green on `skeleton_top`; WNS 17.204 ns |
 | Frozen regression vs `gem_mac_stub` | 0 / 18 passing — **expected**, there is no design yet |
 
 The regression failing against a port-only stub is the Stage 3 result, not a

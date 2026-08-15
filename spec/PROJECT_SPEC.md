@@ -1,8 +1,16 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.6 — Stage 1 complete, Stage 3 complete. Amended throughout by what
+Document status: v0.7 — Stage 1 complete, Stage 3 complete. Amended throughout by what
 building the reference model and the verification layer actually forced. Versioned
 alongside the RTL.
+
+**Changelog v0.6 → v0.7 (coherence pass across every document):** **B.1a**'s abort now
+also appears in [`block_diagram.md`](block_diagram.md), which still drew a transmit path
+that could not abort — the same disagreement between architecture and contract that v0.5
+fixed in the prose. B.4's status paragraph counts 70 tests and eighteen scenarios, and now
+records all **seven** gates rather than the four in `make check`, since Stage 2's build
+carries three more. Added a top-level `README.md`, which B.6 had listed as a deliverable
+since v0.2 without it existing.
 
 **Changelog v0.5 → v0.6 (from an independent review of the Stage 3 vectors):** added
 **B.4c** — two limits R15's interface imposes that Ethernet does not, both of which the
@@ -436,21 +444,27 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 - **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
 
 **Stage 3 status (complete):** all of the above is built and running. The golden model is
-MATLAB (`model/+gem/`), validated by 68 tests — the published CRC-32 check value, agreement
+MATLAB (`model/+gem/`), validated by 70 tests — the published CRC-32 check value, agreement
 with Python's `zlib` over 2000 random vectors, the residue property, a full
 build→RGMII→deframe→parse round trip across the length sweep, and B.4b's abort contract.
-Seventeen scenarios generate vector files, each cross-checked by reading its own wire back
+Eighteen scenarios generate vector files, each cross-checked by reading its own wire back
 with the golden RX path. The SystemVerilog layer (`tb/`) runs against a port-only stub
 (`rtl/gem_mac_stub.v`) and fails informatively, which is the intended Stage 3 result.
 
-Four gates run from `make check` — model tests, committed-vector staleness, Verilator lint
-(R22), and the scenario regression — and **each has been observed to fail**, not merely to
-pass: an injected width mismatch trips the lint gate, one corrupted octet trips the vector
-gate, a planted assertion trips the regression, and the stub trips everything else. Two
-harness self-tests (`tb_rgmii_bfm`, `tb_axis_tx_driver`) have no DUT in them and are the
-only runs green today; both exist because the harness had bugs that presented as design
-bugs. Remaining open items, all blocked on hardware or on Stage 4 RTL rather than on
-analysis, are tracked in [`verification_plan.md`](../verification_plan.md).
+Seven gates guard the project, four from `make check` (model tests, committed-vector
+staleness, Verilator lint per R22, and the scenario regression) and three inside
+`scripts/build.tcl` (inferred latches, slack, and constraint coverage). **Every one has
+been observed to fail**, not merely to pass — each was tested by planting the defect it
+exists to catch: an injected width mismatch trips the lint gate, one corrupted octet trips
+the vector gate, a planted assertion trips the regression, an inferred latch trips the
+build twice over (once as a surviving cell and once as a synthesis warning for a latch
+optimised away), and commenting out `create_clock` trips the timing gate. The stub trips
+everything else.
+
+Two harness self-tests (`tb_rgmii_bfm`, `tb_axis_tx_driver`) have no DUT in them and are
+the only runs green today; both exist because the harness had bugs that presented as
+design bugs. Remaining open items, all blocked on hardware or on Stage 4 RTL rather than
+on analysis, are tracked in [`verification_plan.md`](../verification_plan.md).
 
 ## B.4a RX delivery contract (resolved in Stage 3)
 

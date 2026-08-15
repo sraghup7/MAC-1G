@@ -10,11 +10,11 @@ numbers.
 ```mermaid
 flowchart LR
     subgraph TXCLK["tx_clk domain (= sys_clk)"]
-        TXIN["AXI-S ingress reg\n(tdata/tvalid/tready/tlast,\ntuser: DA/SA/EtherType @ SOF)"]
+        TXIN["AXI-S ingress reg\n(tdata/tvalid/tready/tlast,\ntuser: DA/SA/EtherType @ SOF)\ndetects mid-frame starve — B.4b"]
         ASM["Frame assembler / padder\n(preamble+SFD, DA/SA/EtherType,\npad < 46B, reject > 1500B)"]
-        CRCTX["Parallel CRC-32 gen\n(byte-parallel, B.7 item 2)"]
-        ARB["TX arbiter / IFG counter\n(96-bit IFG, no CSMA/CD)"]
-        REG["Register / status block\n(counters, link state,\nsticky flags — R17)"]
+        CRCTX["Parallel CRC-32 gen\n(byte-parallel, B.7 item 2)\nFCS, or inverted FCS on abort"]
+        ARB["TX arbiter / IFG counter\n(96-bit IFG, no CSMA/CD)\nowns the abort: TX_ER, drop TX_EN,\ndiscard the rest — B.4b"]
+        REG["Register / status block\n(8 counters incl. tx_underrun,\nlink state, sticky flags — R17)"]
         MDIO["MDIO master\n(<= 2.5 MHz MDC — R16)"]
         TXIN --> ASM --> CRCTX --> ARB
     end
