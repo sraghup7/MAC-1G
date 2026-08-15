@@ -86,6 +86,12 @@ module gem_mac (
     // ---- Status and counters (R17) ----------------------------------------
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_ok,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_rejected,
+    // R17 / B.4b: frames the user starved mid-payload, aborted on the wire
+    // with TX_ER and an inverted FCS. Counted separately from tx_rejected --
+    // a rejected frame never reached the wire, an underrun one did and was
+    // deliberately spoiled, and confusing the two would hide which end is at
+    // fault.
+    output wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_underrun,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_ok,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_badfcs,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_runt,
@@ -117,6 +123,7 @@ module gem_mac (
 
     assign stat_tx_ok       = {`GEM_COUNTER_WIDTH{1'b0}};
     assign stat_tx_rejected = {`GEM_COUNTER_WIDTH{1'b0}};
+    assign stat_tx_underrun = {`GEM_COUNTER_WIDTH{1'b0}};
     assign stat_rx_ok       = {`GEM_COUNTER_WIDTH{1'b0}};
     assign stat_rx_badfcs   = {`GEM_COUNTER_WIDTH{1'b0}};
     assign stat_rx_runt     = {`GEM_COUNTER_WIDTH{1'b0}};

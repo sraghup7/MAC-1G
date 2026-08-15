@@ -1,5 +1,5 @@
 {
-  "name": "tx_clean_sweep",
+  "name": "tx_underrun",
   "direction": "tx",
   "seed": 2.0260814E+7,
   "generated": "2026-08-14T22:14:12",
@@ -10,14 +10,14 @@
     "ReadyMode": "always",
     "MaxPayload": [],
     "IncludeOversize": false,
-    "StallEvery": 0,
+    "StallEvery": 3,
     "StallDepth": 60,
     "StallCycles": 64
   },
   "counters": {
-    "tx_ok": 12,
+    "tx_ok": 9,
     "tx_rejected": 0,
-    "tx_underrun": 0
+    "tx_underrun": 3
   },
   "records": [
     {
@@ -75,8 +75,8 @@
       "payloadLen": 64,
       "padBytes": 0,
       "expectRejected": false,
-      "expectAborted": false,
-      "stallAt": -1,
+      "expectAborted": true,
+      "stallAt": 60,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -105,8 +105,8 @@
       "payloadLen": 512,
       "padBytes": 0,
       "expectRejected": false,
-      "expectAborted": false,
-      "stallAt": -1,
+      "expectAborted": true,
+      "stallAt": 60,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -135,8 +135,8 @@
       "payloadLen": 1500,
       "padBytes": 0,
       "expectRejected": false,
-      "expectAborted": false,
-      "stallAt": -1,
+      "expectAborted": true,
+      "stallAt": 60,
       "gapBefore": 12,
       "readyGap": 0
     }

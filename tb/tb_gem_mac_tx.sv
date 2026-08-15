@@ -52,7 +52,7 @@ module tb_gem_mac_tx;
     wire [3:0] rgmii_txd;
     wire       rgmii_tx_ctl;
 
-    wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_ok, stat_tx_rejected;
+    wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_ok, stat_tx_rejected, stat_tx_underrun;
 
     gem_mac u_dut (
         .tx_clk           (tx_clk),
@@ -85,6 +85,7 @@ module tb_gem_mac_tx;
 
         .stat_tx_ok       (stat_tx_ok),
         .stat_tx_rejected (stat_tx_rejected),
+        .stat_tx_underrun (stat_tx_underrun),
         .stat_rx_ok       (),
         .stat_rx_badfcs   (),
         .stat_rx_runt     (),
@@ -200,6 +201,10 @@ module tb_gem_mac_tx;
 
         check_counter("tx_ok",       stat_tx_ok);
         check_counter("tx_rejected", stat_tx_rejected);
+        // B.4b: an aborted frame counts here and NOT in tx_ok. Checking both
+        // is what catches a MAC that aborts correctly on the wire but still
+        // scores the frame as transmitted.
+        check_counter("tx_underrun", stat_tx_underrun);
 
         ok = check_done();
         if (!ok) $fatal(1, "[gem_tb] %s FAILED", scenario);

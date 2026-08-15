@@ -22,7 +22,7 @@ python scripts/run_sim.py
 
 | Command | What it does | Gate |
 |---|---|---|
-| `make model` | the golden model's own test suite (55 tests) | must be green before any simulation result means anything |
+| `make model` | the golden model's own test suite (65 tests) | must be green before any simulation result means anything |
 | `make vectors` | regenerates every scenario from its seed | fails if the generator and the model disagree |
 | `make vectors-check` | do the **committed** vectors still match the model? | fails if an edited model left them a fossil |
 | `make sim S=<scenario>` | one scenario | — |
@@ -45,9 +45,11 @@ debug loops:
    are derived independently, so agreement is evidence rather than tautology.
 3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
    still reflect the current model?
-4. **BFM self-test** (`tb_rgmii_bfm`) — is the bus functional model itself
-   right? It has no DUT in it, so it is the only run that passes today, and the
-   first thing to check when something downstream looks impossible.
+4. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
+   functional model and the stimulus driver themselves right? Neither has a DUT
+   in it, so they are the only runs that pass today, and the first thing to
+   check when something downstream looks impossible. Both exist because the
+   harness had real bugs that presented as design bugs.
 5. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
    of every scenario, including ones nobody designed.
 6. **Scenario regression** (`scripts/run_sim.py`) — the design against the
@@ -68,7 +70,7 @@ debug loops:
 | R4 | CRC-32, reflected, LSB-octet first | `tCrc32/checkValue`, `tCrc32/agreesWithZlib`, `tCrc32/residueIsConstant`, `tFrame/fcsIsLeastSignificantOctetFirst`, `tFrame/fcsCoversHeaderAndPadOnly`, `tx_clean_sweep` | model + sim | **green** (model) / pending-rtl (design) |
 | R5 | IFG ≥ 96 bit times | `gem_rgmii_sva/a_ifg_respected`, `tx_clean_sweep` | assertion + sim | pending-rtl |
 | R6 | Reject payload > 1500 B, never emit oversize | `tFrame/oversizePayloadIsRejected`, `tx_reject_oversize` | model + sim | pending-rtl |
-| R7 | Sustain back-to-back frames at line rate | `tx_backpressure`, `random_tx_sweep` | sim | pending-rtl · see open item **V-1** |
+| R7 | Sustain back-to-back frames at line rate; abort on underrun (B.4b) | `tx_backpressure` (gaps between frames), `tx_underrun` (stall mid-payload → TX_ER + inverted FCS, then clean recovery), `tAbort` ×10, `random_tx_sweep` | model + sim | **green** (model) / pending-rtl (design) |
 
 ## Traceability — receive
 
@@ -88,7 +90,7 @@ debug loops:
 | R14 | Documented clock/data skew mechanism | — | bench + static timing | **open** · see **V-2** |
 | R15 | Registered AXI-Stream, no combinational handshake paths | `gem_axis_sva` ×5 properties, bound to both ports | assertion | pending-rtl |
 | R16 | MDIO/MDC master, ≤ 2.5 MHz | — | — | **open** · see **V-3** |
-| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 14 scenarios | sim | pending-rtl |
+| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 15 scenarios, now including `tx_underrun` | sim | pending-rtl |
 
 ## Traceability — performance and quality
 
@@ -122,6 +124,7 @@ second list that would drift.
 | `rx_garbage` | rx | R11 | DV-low octets seeded with `0xD5` |
 | `rx_bad_sfd` | rx | R8 R11 | damaged delimiter; the model defines the outcome |
 | `rx_recovery_mix` | rx | R10 R17 R21 | every class interleaved with good frames at the min gap |
+| `tx_underrun` | tx | R7 R15 R17 | **user starves the MAC mid-payload** — B.4b abort, then clean recovery |
 | `tx_clean_sweep` | tx | R1 R2 R4 R5 R13 | frame assembly, compared at cycle granularity |
 | `tx_padding` | tx | R3 | payloads either side of 46 octets |
 | `tx_reject_oversize` | tx | R6 | 1501 B in, **nothing** on the wire |
@@ -150,11 +153,13 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 
 | Layer | Result |
 |---|---|
-| Golden model test suite | **55 / 55 passing** |
-| Scenario generation | 16 / 16, every generator self-check agrees with the model |
-| Committed vectors vs the model | **42 / 42 files current** |
-| BFM self-test | **passing** — 3522 checks, the only run with no DUT in it |
-| Frozen regression vs `gem_mac_stub` | 0 / 16 passing — **expected**, there is no design yet |
+| Golden model test suite | **65 / 65 passing** |
+| Scenario generation | 17 / 17, every generator self-check agrees with the model |
+| Committed vectors vs the model | **46 / 46 files current** |
+| BFM self-test | **passing** — 3522 checks |
+| TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
+| Verilator lint (R22) | **passing** — 2 tops, zero warnings |
+| Frozen regression vs `gem_mac_stub` | 0 / 17 passing — **expected**, there is no design yet |
 
 The regression failing against a port-only stub is the Stage 3 result, not a
 problem to fix. What was being checked is that the plumbing runs end to end and
@@ -183,7 +188,7 @@ that would otherwise have surfaced mid-debug:
 
 | # | Item | Why it is open | Plan |
 |---|---|---|---|
-| **V-1** | TX behaviour when the user stalls mid-frame is unspecified | At 1 byte/cycle with no slack (B.3), a MAC that has started a frame cannot pause. It must either buffer whole frames before starting — latency plus a BRAM the resource budget does not carry — or underrun and abort with TX_ER. R7 only promises line rate "when user logic supplies data every cycle" and is silent on the alternative. | Decide **before** the TX datapath is written in Stage 4, then add a `tx_underrun` scenario. The generator deliberately does not guess: `gem.genTxScenario` stalls only between frames. |
+| **V-1** | ~~TX behaviour when the user stalls mid-frame is unspecified~~ | **Closed — resolved in spec B.4b as cut-through with abort on underrun.** Store-and-forward was rejected: buffering a max frame before starting costs 12.14 µs of transmit latency and a BRAM the B.2 table does not carry, in a design whose premise is latency. On a mid-payload stall the MAC emits the FCS over what it has sent, bitwise inverted, with TX_ER across those four cycles, counts `stat_tx_underrun`, and discards the rest rather than resuming. Modelled by `gem.abortedFrame`, exercised by the `tx_underrun` scenario, and pinned down by `tAbort`'s 10 tests. | — |
 | **V-2** | R14's RGMII skew cannot be simulated | The 1.6 ns `GTX_CLK` phase shift is an I/O timing property. Simulation will pass with any phase; only static timing analysis and a scope on the bench can confirm it. | Stage 6 `report_timing` on the constrained I/O paths, then bring-up step 5 with an ILA or scope on `GTX_CLK`/`TXD0`. |
 | **V-3** | R16 MDIO has no test | The MDIO master is an independent block on a different interface; there is no golden-model work it shares. | Add `tb_mdio.sv` with a PHY register-file BFM when the module is written (Stage 4), checking the 64-cycle Clause 22 transaction and the ≤ 2.5 MHz MDC bound. |
 | **V-4** | ~~R22's lint gate cannot run~~ | **Closed.** Verilator 5.032 installed under WSL; `scripts/lint.py` bridges to it from Windows and falls back to a native binary elsewhere. Both design tops lint clean under `-Wall`, and the gate was verified to fail by injecting a width mismatch — it caught that plus the unused signal and exited nonzero. `make check` now runs it. | — |

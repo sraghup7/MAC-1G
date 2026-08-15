@@ -87,12 +87,18 @@ end
 function writeTxStim(path, stim)
 fid = openOrFail(path);
 c = onCleanup(@() fclose(fid));
-fprintf(fid, '# index readyGap etherType da sa payload\n');
+% stallAt is the payload octet index at which the user stops supplying, or -1
+% for a frame the user feeds without interruption. It has to be in the stimulus
+% file rather than inferred, because it is the one thing the driver cannot work
+% out from the payload alone -- and B.4b makes it the difference between a frame
+% the MAC completes and one it aborts.
+fprintf(fid, '# index readyGap etherType da sa payload stallAt stallCycles\n');
 for k = 1:numel(stim)
-    fprintf(fid, '%d %d %04X %s %s %s\n', ...
+    fprintf(fid, '%d %d %04X %s %s %s %d %d\n', ...
         stim(k).index, stim(k).readyGap, stim(k).etherType, ...
         hexString(stim(k).da), hexString(stim(k).sa), ...
-        hexString(stim(k).payload));
+        hexString(stim(k).payload), ...
+        stim(k).stallAt, stim(k).stallCycles);
 end
 end
 

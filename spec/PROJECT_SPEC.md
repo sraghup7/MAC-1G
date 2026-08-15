@@ -1,7 +1,15 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.3 — Stage 1 complete; amended by Stage 3's golden model. Versioned
-alongside the RTL.
+Document status: v0.4 — Stage 1 complete; amended by Stage 3's golden model and by the
+Stage 3 verification work that followed it. Versioned alongside the RTL.
+
+**Changelog v0.3 → v0.4:** added **B.4b**, the TX underrun contract — the last question
+Stage 3 left genuinely open, and one Stage 4 cannot be written around. Resolved as
+**cut-through with abort on underrun** (`TX_ER` plus an inverted FCS, counted, never
+resumed), rejecting store-and-forward because its 12.14 µs of added transmit latency
+contradicts the latency premise this design exists to demonstrate. R7's conditional
+wording is now explicit about which branch B.4b specifies, and R17 gains
+`stat_tx_underrun`.
 
 **Changelog v0.2 → v0.3 (all changes forced by writing the reference model, which is
 what Stage 3 is for):** added **B.4a**, the RX delivery contract — three questions that
@@ -243,7 +251,11 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 - **R6 [M]** Reject (and flag via a status pulse + counter) requests with payload > 1500
   bytes; never emit an oversize frame.
 - **R7 [M]** Sustain back-to-back frames at full line rate indefinitely (no growing gap,
-  no stall) when user logic supplies data every cycle.
+  no stall) when user logic supplies data every cycle. When it does *not* — a stall
+  mid-payload — the frame is aborted per **B.4b**, marked with `TX_ER` and an inverted
+  FCS, counted in `stat_tx_underrun`, and never silently stalled or silently completed.
+  The conditional in this requirement is deliberate and B.4b is where the other branch
+  is specified.
 
 ### Functional — receive
 
@@ -275,7 +287,8 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   bring-up software (or a hardware sequencer) uses it to read PHY ID, link status, and
   resolved speed/duplex.
 - **R17 [M]** Status/debug register block readable over UART (or VIO): frame counters
-  (TX ok, RX ok, RX bad-FCS, RX runt, RX oversize, RX_ER), link state, sticky error
+  (TX ok, TX rejected, **TX underrun**, RX ok, RX bad-FCS, RX runt, RX oversize, RX_ER),
+  link state, sticky error
   flags, all clearable.
 
 ### Performance & clocking
@@ -434,6 +447,75 @@ genuinely ambiguous in v0.2, and each is now binding on the Stage 4 RTL.
    leave the runt counter permanently at zero.
 
 A consequence of (1) is the four-cycle FCS holdback added to B.1b's latency sum.
+
+## B.4b TX underrun contract (resolved in Stage 3)
+
+v0.3 left one question genuinely open, and Stage 4 cannot be written without an
+answer: **what does the TX path do when user logic stops supplying data in the
+middle of a frame?**
+
+The constraint is physical. Once `TX_EN` rises, RGMII has no pause: the MAC must
+present exactly one octet every 8 ns until the frame ends. There is no legal way
+to stall the wire mid-frame. So a MAC that has committed to a frame and then runs
+dry has exactly two options — never commit until it can finish (buffer the whole
+frame first), or commit and abort when it runs out.
+
+**Decision: cut-through, abort on underrun.**
+
+Store-and-forward was rejected on the project's own terms. Buffering a maximum
+frame before starting adds 1518 cycles — **12.14 µs** — of transmit latency, in a
+design whose opening paragraph is about being the last piece of logic an order
+passes through, and whose R21 caps *receive* latency at 32 cycles for exactly
+that reason. It would also need a BRAM the B.2 resource table does not carry.
+Trading 12 µs of latency to protect against user logic that misbehaves is the
+wrong trade for this design; a threshold buffer (start after N octets) is a
+recognised middle option and is recorded as a v2 possibility in B.7, but it
+reduces the probability of underrun rather than removing it, so it needs the
+abort path anyway and is therefore not a substitute for this decision.
+
+**The head start.** Before the MAC needs the user's first payload octet it must
+emit preamble (7) + SFD (1) + DA (6) + SA (6) + EtherType (2) = **22 octets it
+generates from its own state**. Padding (R3) is MAC-generated too. So the user
+has 22 cycles of free slack at every frame start, and the exposure is confined to
+mid-payload. This is a lower bound the design must honour — a deeper pipeline
+only adds slack — and it means a user that hesitates briefly at SOF is safe.
+
+**The contract, precisely:**
+
+1. The MAC begins transmitting as soon as it has a frame to send. It does not
+   wait for the frame to be complete.
+2. If `tx_axis_tvalid` deasserts while the MAC is emitting payload and the MAC
+   has no octet to send that cycle, the frame is **aborted**, not stalled.
+3. An abort terminates the frame immediately: the MAC emits the FCS it has
+   computed over what it has already sent, **bitwise inverted** so the value is
+   guaranteed not to satisfy the receiver's residue check, with `TX_ER` asserted
+   across those four cycles. It then deasserts `TX_EN` and enforces a full IFG
+   (R5) before the next frame.
+4. The abort is marked **twice, deliberately**. `TX_ER` (RGMII: CTL low on the
+   falling edge while high on the rising — the encoding `gem.rgmiiEncode`
+   already implements) is the IEEE 802.3 mechanism and causes a conforming PHY
+   to emit invalid symbols. The inverted FCS is the belt-and-braces: it makes
+   the frame fail any receiver's CRC check whether or not `TX_ER` survived the
+   link. One XOR buys independence from the link partner's behaviour.
+5. The remainder of the aborted frame is **discarded, not resumed**. When the
+   user eventually resumes and asserts `tlast`, the MAC drains and drops those
+   octets. A MAC that picked up where it left off would emit a frame with a hole
+   in it and a valid FCS, which is far worse than a frame plainly marked bad.
+6. The event increments `stat_tx_underrun` (R17) and does **not** increment
+   `stat_tx_ok`. An aborted frame is not a transmitted frame.
+
+**What this does not specify.** Whether a MAC absorbs a short stall using head-
+start slack is left to the implementation: it is an optimisation, not a
+requirement, and pinning it down would bake a pipeline depth into the frozen
+vectors. The `tx_underrun` scenario therefore stalls deep in the payload and for
+far longer than any head start could cover, so that its expected wire output is
+the same for every conforming implementation.
+
+Note that the aborted frame's content is deterministic regardless of pipeline
+depth, which is what makes this testable at all: the MAC can only have sent
+octets the user actually supplied, so an abort after payload octet *S* always
+produces preamble, SFD, header, payload `0..S-1`, and the inverted FCS over
+exactly that.
 
 ## B.5 Bring-up order (written before hardware is touched)
 

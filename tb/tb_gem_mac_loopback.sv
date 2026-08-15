@@ -118,6 +118,7 @@ module tb_gem_mac_loopback;
 
         .stat_tx_ok       (stat_tx_ok),
         .stat_tx_rejected (),
+        .stat_tx_underrun (),
         .stat_rx_ok       (stat_rx_ok),
         .stat_rx_badfcs   (),
         .stat_rx_runt     (),

@@ -2,7 +2,7 @@
   "name": "tx_padding",
   "direction": "tx",
   "seed": 2.0260814E+7,
-  "generated": "2026-08-14T19:29:46",
+  "generated": "2026-08-14T22:14:12",
   "options": {
     "Seed": 2.0260814E+7,
     "NumFrames": 12,
@@ -18,11 +18,15 @@
     ],
     "ReadyMode": "always",
     "MaxPayload": [],
-    "IncludeOversize": false
+    "IncludeOversize": false,
+    "StallEvery": 0,
+    "StallDepth": 60,
+    "StallCycles": 64
   },
   "counters": {
     "tx_ok": 12,
-    "tx_rejected": 0
+    "tx_rejected": 0,
+    "tx_underrun": 0
   },
   "records": [
     {
@@ -30,6 +34,8 @@
       "payloadLen": 0,
       "padBytes": 46,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -38,6 +44,8 @@
       "payloadLen": 1,
       "padBytes": 45,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -46,6 +54,8 @@
       "payloadLen": 20,
       "padBytes": 26,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -54,6 +64,8 @@
       "payloadLen": 44,
       "padBytes": 2,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -62,6 +74,8 @@
       "payloadLen": 45,
       "padBytes": 1,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -70,6 +84,8 @@
       "payloadLen": 46,
       "padBytes": 0,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -78,6 +94,8 @@
       "payloadLen": 47,
       "padBytes": 0,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -86,6 +104,8 @@
       "payloadLen": 60,
       "padBytes": 0,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -94,6 +114,8 @@
       "payloadLen": 0,
       "padBytes": 46,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -102,6 +124,8 @@
       "payloadLen": 1,
       "padBytes": 45,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -110,6 +134,8 @@
       "payloadLen": 20,
       "padBytes": 26,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     },
@@ -118,6 +144,8 @@
       "payloadLen": 44,
       "padBytes": 2,
       "expectRejected": false,
+      "expectAborted": false,
+      "stallAt": -1,
       "gapBefore": 12,
       "readyGap": 0
     }

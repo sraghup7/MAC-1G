@@ -13,6 +13,10 @@ function s = genTxScenario(name, opts)
 %       MaxPayload   cap, default GEM_SIM_SCALE.
 %       IncludeOversize  add one payload of 1501 octets, which the MAC must
 %                        refuse to transmit (R6).
+%       StallEvery   if > 0, every Nth frame stalls mid-payload and must be
+%                    aborted per B.4b. Default 0 (no mid-frame stalls).
+%       StallDepth   payload octet index at which the user stops supplying.
+%       StallCycles  how long tvalid stays low.
 %
 %   TX is the easy direction and it is worth being clear about why: the MAC
 %   owns the timing. It emits the full 7-octet preamble and the full 12-octet
@@ -20,19 +24,25 @@ function s = genTxScenario(name, opts)
 %   shrunken-gap case to survive -- gap shrinkage is something that happens to
 %   a receiver, not something a compliant transmitter does to itself.
 %
-%   BACKPRESSURE, and an open item. The tready profiles here stall only
-%   *between* frames, never inside one. Mid-frame stalling is deliberately not
-%   generated, because the spec does not say what should happen: at one byte
-%   per cycle with no slack (B.3) a MAC that has already started a frame
-%   cannot pause, so it must either buffer whole frames before starting
-%   (latency and a BRAM the design does not budget for) or underrun and abort
-%   the frame with TX_ER. R7 only promises line rate "when user logic supplies
-%   data every cycle" and never says what happens otherwise. Rather than
-%   invent an answer here and bake it into the vectors, this is recorded as an
-%   open item in verification_plan.md, to be decided before the TX datapath is
-%   written in Stage 4.
+%   BACKPRESSURE. Gaps between frames come from ReadyMode. Stalls *inside* a
+%   frame come from StallEvery, and they are a different thing entirely: an
+%   inter-frame gap is something the MAC waits through, while a mid-frame stall
+%   is an underrun the MAC cannot wait through, because RGMII has no pause once
+%   TX_EN is high. Spec B.4b resolves it as cut-through with abort -- TX_ER plus
+%   an inverted FCS, counted, never resumed -- and GEM.ABORTEDFRAME models the
+%   result.
 %
-%   See also GEM.GENSCENARIO, GEM.WRITEVECTORS, GEM.BUILDFRAME.
+%   The stall parameters are chosen so the expected wire output is identical for
+%   every conforming implementation, which is the only way this can be a frozen
+%   vector at all. StallDepth sits well past the 22-octet head start B.4b grants
+%   (preamble, SFD and header are MAC-generated, so a user that hesitates at SOF
+%   is safe) and past the 46-octet padding boundary, so no implementation can
+%   absorb the stall or pad its way out of it. StallCycles is far longer than any
+%   plausible pipeline. Whether a MAC absorbs a *short* stall using its head
+%   start is deliberately left unspecified and deliberately not tested here --
+%   pinning it down would bake a pipeline depth into the frozen vectors.
+%
+%   See also GEM.GENSCENARIO, GEM.ABORTEDFRAME, GEM.BUILDFRAME.
 
 arguments
     name (1,:) char
@@ -43,6 +53,9 @@ arguments
                         {'always','gaps','random'})} = 'always'
     opts.MaxPayload        {mustBeNumeric} = []
     opts.IncludeOversize (1,1) logical = false
+    opts.StallEvery  (1,1) {mustBeNumeric, mustBeNonnegative} = 0
+    opts.StallDepth  (1,1) {mustBeNumeric, mustBePositive} = 60
+    opts.StallCycles (1,1) {mustBeNumeric, mustBePositive} = 64
 end
 
 p = gem.params();
@@ -68,32 +81,61 @@ sa = uint8([hex2dec('DE') hex2dec('AD') hex2dec('BE') hex2dec('EF') 0 1]);
 etherType = hex2dec('0800');
 
 records = struct('index', {}, 'payloadLen', {}, 'padBytes', {}, ...
-                 'expectRejected', {}, 'gapBefore', {}, 'readyGap', {});
-items   = struct('bytes', {}, 'gapBefore', {});
+                 'expectRejected', {}, 'expectAborted', {}, 'stallAt', {}, ...
+                 'gapBefore', {}, 'readyGap', {});
+items   = struct('bytes', {}, 'gapBefore', {}, 'er', {});
 stim    = struct('index', {}, 'payload', {}, 'da', {}, 'sa', {}, ...
-                 'etherType', {}, 'readyGap', {});
+                 'etherType', {}, 'readyGap', {}, 'stallAt', {}, ...
+                 'stallCycles', {});
 
-% Stalls sit between frames only -- see the note above.
+% Stalls from ReadyMode sit between frames; StallEvery is what puts one inside.
 switch opts.ReadyMode
     case 'always', readyGaps = zeros(1, nFrames);
     case 'gaps',   readyGaps = repmat(8, 1, nFrames);
     case 'random', readyGaps = randi([0 32], 1, nFrames);
 end
 
-emitted = 0;
+stallEvery = double(opts.StallEvery);
+stallDepth = double(opts.StallDepth);
+
+emitted   = 0;
+underruns = 0;
 for k = 1:nFrames
     len = lengthPick(k);
     payload = uint8(mod((0:len-1) + k, 251));
-    f = gem.buildFrame(payload, da, sa, etherType);
+
+    % A frame can only be aborted mid-payload if it has payload past the stall
+    % depth. Short frames in the sweep transmit normally, which is what makes
+    % this a mix rather than a monoculture -- the MAC has to get back to
+    % transmitting cleanly after every abort, and R7 is about the recovery as
+    % much as the abort.
+    aborts = stallEvery > 0 && mod(k, stallEvery) == 0 && len > stallDepth;
+
+    if aborts
+        f = gem.abortedFrame(payload, da, sa, etherType, stallDepth);
+        stallAt     = stallDepth;
+        stallCycles = double(opts.StallCycles);
+        padBytes    = 0;
+        underruns   = underruns + 1;
+    else
+        f = gem.buildFrame(payload, da, sa, etherType);
+        f.er        = false(1, numel(f.packetBytes));
+        stallAt     = -1;
+        stallCycles = 0;
+        padBytes    = f.padBytes;
+    end
 
     emitted = emitted + 1;
-    items(emitted) = struct('bytes', f.packetBytes, 'gapBefore', p.IFG_BYTES);
+    items(emitted) = struct('bytes', f.packetBytes, ...
+        'gapBefore', p.IFG_BYTES, 'er', f.er);
 
     stim(emitted) = struct('index', k, 'payload', payload, 'da', da, ...
-        'sa', sa, 'etherType', etherType, 'readyGap', readyGaps(k));
+        'sa', sa, 'etherType', etherType, 'readyGap', readyGaps(k), ...
+        'stallAt', stallAt, 'stallCycles', stallCycles);
 
     records(emitted) = struct('index', k, 'payloadLen', len, ...
-        'padBytes', f.padBytes, 'expectRejected', false, ...
+        'padBytes', padBytes, 'expectRejected', false, ...
+        'expectAborted', aborts, 'stallAt', stallAt, ...
         'gapBefore', p.IFG_BYTES, 'readyGap', readyGaps(k));
 end
 
@@ -106,10 +148,12 @@ if opts.IncludeOversize
     k = nFrames + 1;
     stim(end+1) = struct('index', k, ...
         'payload', uint8(mod(0:p.MAX_PAYLOAD_BYTES, 251)), ...
-        'da', da, 'sa', sa, 'etherType', etherType, 'readyGap', 0);
+        'da', da, 'sa', sa, 'etherType', etherType, 'readyGap', 0, ...
+        'stallAt', -1, 'stallCycles', 0);
     records(end+1) = struct('index', k, ...
         'payloadLen', p.MAX_PAYLOAD_BYTES + 1, 'padBytes', 0, ...
-        'expectRejected', true, 'gapBefore', p.IFG_BYTES, 'readyGap', 0);
+        'expectRejected', true, 'expectAborted', false, 'stallAt', -1, ...
+        'gapBefore', p.IFG_BYTES, 'readyGap', 0);
 end
 
 [bytes, dv, er] = gem.buildStream(items);
@@ -123,6 +167,7 @@ s = struct( ...
     'records',   records, ...
     'stim',      stim, ...
     'cycles',    cycles, ...
-    'counters',  struct('tx_ok', emitted, ...
-                        'tx_rejected', double(opts.IncludeOversize)));
+    'counters',  struct('tx_ok', emitted - underruns, ...
+                        'tx_rejected', double(opts.IncludeOversize), ...
+                        'tx_underrun', underruns));
 end

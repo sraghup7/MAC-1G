@@ -48,6 +48,7 @@ TB_SOURCES = [
     "tb/assertions/gem_rgmii_sva.sv",
     "tb/assertions/gem_internal_sva.sv",
     "tb/tb_rgmii_bfm.sv",
+    "tb/tb_axis_tx_driver.sv",
     "tb/tb_gem_mac_rx.sv",
     "tb/tb_gem_mac_tx.sv",
     "tb/tb_gem_mac_loopback.sv",
@@ -56,10 +57,18 @@ TB_SOURCES = [
 # Which testbench drives which direction.
 TB_FOR_DIRECTION = {"rx": "tb_gem_mac_rx", "tx": "tb_gem_mac_tx"}
 
-# The BFM self-test has no DUT, so it passes today and is the thing to run
-# first when something downstream looks impossible. It runs once, against one
-# scenario's vectors -- it is testing the driver, not the vectors.
-BFM_SELFTEST = ("tb_rgmii_bfm", "rx_min_gap")
+# Harness self-tests. Neither has a DUT in it, so both pass today, and they are
+# what to run first when something downstream looks impossible: they check the
+# things every other result silently depends on. Each names the vectors it
+# borrows -- it is exercising the harness, not those vectors.
+#
+# Both exist because the harness had real bugs that masqueraded as design bugs:
+# the RGMII monitor sampled on the wrong clock phases, and nothing would have
+# noticed the TX driver stalling in the wrong place.
+SELFTESTS = [
+    ("tb_rgmii_bfm",     "rx_min_gap",  "rgmii_bfm_selftest"),
+    ("tb_axis_tx_driver", "tx_underrun", "axis_tx_driver_selftest"),
+]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.
@@ -203,7 +212,8 @@ def main() -> int:
             return 1
         needed = {TB_FOR_DIRECTION[d] for _, d in todo}
         if run_bfm:
-            needed.add(BFM_SELFTEST[0])
+            for tb, _, _ in SELFTESTS:
+                needed.add(tb)
         if run_loopback:
             needed.add(LOOPBACK_TB)
         for tb in sorted(needed):
@@ -212,15 +222,15 @@ def main() -> int:
 
     results = []
 
-    # Run the self-test first. If the bus functional model is wrong, every
-    # result after it is noise -- and it is the only run here with no DUT in
-    # it, so it is also the only one expected to pass today.
+    # Self-tests first. If the harness is wrong, every result after it is
+    # noise -- and these are the only runs with no DUT in them, so they are
+    # also the only ones expected to pass today.
     if run_bfm:
-        print("\n==> BFM self-test\n")
-        passed, detail = run_scenario(xsim, BFM_SELFTEST[0], BFM_SELFTEST[1],
-                                      label="rgmii_bfm_selftest")
-        results.append(("rgmii_bfm_selftest", passed))
-        print(f"  {'PASS' if passed else 'FAIL'}  {'rgmii_bfm_selftest':<22} {detail}")
+        print("\n==> Harness self-tests\n")
+        for tb, vectors, label in SELFTESTS:
+            passed, detail = run_scenario(xsim, tb, vectors, label=label)
+            results.append((label, passed))
+            print(f"  {'PASS' if passed else 'FAIL'}  {label:<24} {detail}")
 
     print(f"\n==> Running {len(todo)} scenario(s)\n")
     for name, direction in todo:

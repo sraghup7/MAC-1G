@@ -12,10 +12,19 @@
 // what lets the loopback testbench build its expectation independently of the
 // golden model's vector files.
 //
-// BACKPRESSURE: stalls are inserted only *between* frames, never inside one.
-// See gem.genTxScenario -- what a MAC should do when the user stalls mid-frame
-// is an open spec item (V-1 in verification_plan.md), and the testbench does
-// not get to invent the answer.
+// BACKPRESSURE comes in two kinds and they are not variations of one thing:
+//
+//   readyGap    idle cycles BETWEEN frames. The MAC waits through these.
+//   stallAt     the octet index mid-payload at which tvalid drops, and
+//   stallCycles how long it stays down. The MAC cannot wait through these --
+//               RGMII has no pause once TX_EN is high -- so per spec B.4b it
+//               aborts the frame with TX_ER and an inverted FCS.
+//
+// After the stall the driver resumes and sends the REST of the payload,
+// including tlast. That is deliberate and it is the sharp edge of the test:
+// B.4b item 5 says the MAC must discard those octets rather than pick up where
+// it left off. A MAC that resumes emits a full frame with a valid FCS and a
+// hole in the middle, and the cycle-level diff is what catches it.
 //----------------------------------------------------------------------------
 
 `ifndef AXIS_TX_DRIVER_SV
@@ -55,6 +64,8 @@ module axis_tx_driver #(
     logic [15:0] f_et      [MAX_FRAMES];
     logic [7:0]  f_payload [MAX_FRAMES][];
     int          f_len     [MAX_FRAMES];
+    int          f_stallAt [MAX_FRAMES];
+    int          f_stallCyc[MAX_FRAMES];
 
     initial begin
         tdata  = 8'b0;
@@ -67,7 +78,9 @@ module axis_tx_driver #(
                               input logic [47:0] da,
                               input logic [47:0] sa,
                               input logic [15:0] etherType,
-                              input int          readyGap);
+                              input int          readyGap,
+                              input int          stallAt,
+                              input int          stallCycles);
         int i, stall;
         begin
             repeat (readyGap) @(posedge clk);
@@ -75,6 +88,16 @@ module axis_tx_driver #(
             tuser <= {da, sa, etherType};
 
             for (i = 0; i < payload.size(); i++) begin
+                // The mid-frame stall: drop tvalid before presenting octet
+                // `stallAt` and hold it low. Everything already handed over
+                // stays handed over -- this starves the MAC from here on, it
+                // does not retract anything.
+                if (stallAt >= 0 && i == stallAt) begin
+                    tvalid <= 1'b0;
+                    tlast  <= 1'b0;
+                    repeat (stallCycles) @(posedge clk);
+                end
+
                 tdata  <= payload[i];
                 tvalid <= 1'b1;
                 tlast  <= (i == payload.size() - 1);
@@ -106,7 +129,7 @@ module axis_tx_driver #(
     endtask
 
     task automatic play(input string path);
-        int fd, code, idx, readyGap, ethType, n;
+        int fd, code, idx, readyGap, ethType, n, stallAt, stallCycles;
         string line, daHex, saHex, payloadHex;
         logic [7:0] da [], sa [], payload [];
         begin
@@ -118,8 +141,9 @@ module axis_tx_driver #(
                 if (code <= 0) break;
                 if (line.substr(0,0) == "#" || line.len() < 8) continue;
 
-                if ($sscanf(line, "%d %d %h %s %s %s",
-                            idx, readyGap, ethType, daHex, saHex, payloadHex) == 6) begin
+                if ($sscanf(line, "%d %d %h %s %s %s %d %d",
+                            idx, readyGap, ethType, daHex, saHex, payloadHex,
+                            stallAt, stallCycles) == 8) begin
                     void'(gem_tb_pkg::hex_to_bytes(daHex, da));
                     void'(gem_tb_pkg::hex_to_bytes(saHex, sa));
                     n = gem_tb_pkg::hex_to_bytes(payloadHex, payload);
@@ -128,14 +152,16 @@ module axis_tx_driver #(
                         f_da[frames_sent]      = {da[0], da[1], da[2], da[3], da[4], da[5]};
                         f_sa[frames_sent]      = {sa[0], sa[1], sa[2], sa[3], sa[4], sa[5]};
                         f_et[frames_sent]      = 16'(ethType);
-                        f_payload[frames_sent] = payload;
-                        f_len[frames_sent]     = n;
+                        f_payload[frames_sent]  = payload;
+                        f_len[frames_sent]      = n;
+                        f_stallAt[frames_sent]  = stallAt;
+                        f_stallCyc[frames_sent] = stallCycles;
                     end
 
                     send_frame(payload,
                                {da[0], da[1], da[2], da[3], da[4], da[5]},
                                {sa[0], sa[1], sa[2], sa[3], sa[4], sa[5]},
-                               16'(ethType), readyGap);
+                               16'(ethType), readyGap, stallAt, stallCycles);
                     frames_sent++;
                 end
             end
