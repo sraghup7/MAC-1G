@@ -79,12 +79,103 @@ module gem_axis_sva #(
         tvalid |-> !$isunknown({tdata, tlast, tuser}))
         else $error("%s: X or Z on the data path during a valid beat", PORT_NAME);
 
+    // 6. The handshake signals themselves must be known.
+    //
+    //    Property 5 checks the payload *given* tvalid, which leaves the two
+    //    signals that decide whether anything happens at all unchecked. An X on
+    //    tvalid is the nastiest version: every property above becomes ambiguous,
+    //    and a scoreboard qualifying on (tvalid && tready) silently counts zero
+    //    beats -- so the failure reports as "the design delivered nothing",
+    //    which sends you looking at the datapath instead of at an
+    //    uninitialised register.
+    a_tvalid_known: assert property (@(posedge clk) disable iff (!rst_n)
+        !$isunknown(tvalid))
+        else $error("%s: tvalid is X or Z -- every handshake check below is now meaningless", PORT_NAME);
+
+    a_tready_known: assert property (@(posedge clk) disable iff (!rst_n)
+        !$isunknown(tready))
+        else $error("%s: tready is X or Z", PORT_NAME);
+
+    //------------------------------------------------------------------
+    // Vacuity, measured rather than assumed
+    //------------------------------------------------------------------
+    //
+    // Properties 1-4 are all gated on (tvalid && !tready). If that never
+    // happens, all four pass without ever examining anything -- and a green
+    // assertion nobody knows is vacuous reads as coverage it does not have.
+    //
+    // That is the current state on the rx_axis bind: R18's no-stall user
+    // contract is what B.3a's 64-entry FIFO derivation assumes, so every
+    // testbench ties rx_axis_tready high and the stall properties can never
+    // fire. That is correct behaviour, not a bug to fix by inventing stalls
+    // the spec says will not occur. What was wrong was that nothing said so.
+    //
+    // So count the antecedent and report at the end of simulation. A run that
+    // never exercised a property now says which one, instead of quietly
+    // counting it as passed.
+    int n_stalled_beats = 0;
+    int n_beats         = 0;
+
+    // Counted in a plain always block, not in a cover property's action block.
+    // XSim 2024.2 accepts `cover property (...) stmt;` and then does not run
+    // stmt, so the counters stayed at zero and the report claimed every run was
+    // vacuous -- including runs that were not. A vacuity report that is itself
+    // silently broken is worse than no report, so this uses the mechanism that
+    // demonstrably executes.
+    always @(posedge clk) begin
+        if (rst_n && !$isunknown(tvalid) && !$isunknown(tready)) begin
+            if (tvalid &&  tready) n_beats++;
+            if (tvalid && !tready) n_stalled_beats++;
+        end
+    end
+
+    // The cover statements stay, for coverage tools and formal runs that do
+    // honour them. Nothing in this file depends on them.
+    c_beat_exercised:  cover property (@(posedge clk) disable iff (!rst_n)
+        (tvalid && tready));
+    c_stall_exercised: cover property (@(posedge clk) disable iff (!rst_n)
+        (tvalid && !tready));
+
+    final begin
+        if (n_beats == 0) begin
+            $display("[gem_tb] SVA %s: no beats occurred -- every property on this port was vacuous",
+                     PORT_NAME);
+        end else if (n_stalled_beats == 0) begin
+            $display("[gem_tb] SVA %s: %0d beats, 0 stalled -- the four stall properties were vacuous (expected on rx_axis, see R18)",
+                     PORT_NAME, n_beats);
+        end else begin
+            $display("[gem_tb] SVA %s: %0d beats, %0d stalled -- stall properties exercised",
+                     PORT_NAME, n_beats, n_stalled_beats);
+        end
+    end
+
 endmodule
 
 
 //----------------------------------------------------------------------------
 // Binds. Both user ports of gem_mac get the same contract -- which is the
 // point of using a standard interface in the first place.
+//
+// WHAT EACH BIND ACTUALLY WATCHES, because the two are not symmetric and it
+// matters when reading a green result:
+//
+//   tx_axis -- the *user* drives tdata/tvalid/tlast/tuser and the MAC drives
+//              only tready. So properties 1-5 here constrain the testbench
+//              driver, not the design. That is still worth having (a driver
+//              that withdraws a beat would corrupt every TX scenario and look
+//              like an RTL bug) but it is not design verification, and
+//              a_tready_known is the only property on this bind that watches
+//              the MAC at all.
+//
+//   rx_axis -- the MAC drives tdata/tvalid/tlast/tuser and the testbench
+//              drives tready. Here properties 1-5 do constrain the design.
+//
+// Combined with the vacuity note inside the module: of the twelve property
+// instances, the ones that constrain the design under the current no-stall
+// contract are a_tlast_needs_tvalid, a_no_x, a_tvalid_known and a_tready_known
+// on rx_axis, plus a_tready_known on tx_axis. The stall properties become live
+// on rx_axis the moment R18's contract is relaxed, and the final block above
+// reports whether they ran.
 //----------------------------------------------------------------------------
 
 bind gem_mac gem_axis_sva #(

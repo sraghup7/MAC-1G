@@ -5,10 +5,12 @@
 // properties that no functional test naturally covers: a design can emit every
 // octet of every frame correctly and still be non-compliant on the gap.
 //
-// Sampling note: RGMII carries two nibbles per cycle, but TX_EN is the rising-
-// edge half of TX_CTL, so the properties below are written against the value
-// sampled at posedge. That is exactly what the PHY latches, and the inter-frame
-// gap in Clause 4.2.3.2.2 is defined in byte times, not edges.
+// Sampling: RGMII carries two nibbles and two control bits per cycle, so the
+// module reconstructs the whole cycle from both clock edges before asserting
+// anything -- see the note above the reconstruction. Properties are then
+// written against TX_EN, TX_ER and the complete octet, which is what Clause
+// 4.2 actually talks about; the inter-frame gap is defined in byte times, not
+// edges.
 //----------------------------------------------------------------------------
 
 `ifndef GEM_RGMII_SVA_SV
@@ -28,12 +30,49 @@ module gem_rgmii_sva (
     // The reset guard is repeated per property rather than written once as
     // `default disable iff (!rst_n)`, which XSim 2024.2 rejects outright.
 
-    // TX_EN as the PHY sees it.
-    wire tx_en = tx_ctl;
-
-    // A sized constant, because a bit-select cannot be applied directly to a
-    // macro that expands to a literal (`8'h55[3:0]` is a syntax error).
     localparam logic [7:0] PREAMBLE_OCTET = `GEM_PREAMBLE_OCTET;
+
+    //------------------------------------------------------------------
+    // Reconstruct the RGMII cycle before asserting anything about it
+    //------------------------------------------------------------------
+    //
+    // These pins are double-data-rate: TXD carries the low nibble on the
+    // rising edge and the high nibble on the falling one, and TX_CTL carries
+    // TX_EN on the rising edge and TX_EN XOR TX_ER on the falling. A property
+    // written directly against the pin and clocked on one edge therefore does
+    // not see TX_EN at all -- SVA samples in the preponed region, so a posedge
+    // reads whatever the pin held through the preceding low phase, which is
+    // the XOR term.
+    //
+    // `wire tx_en = tx_ctl` was exactly that mistake. It is benign for clean
+    // traffic, where TX_ER is low and the two happen to agree, and wrong
+    // precisely during a B.4b abort tail: TX_ER rides the four inverted-FCS
+    // octets, so the sampled signal reads low while TX_EN is genuinely high,
+    // and a design leaving only 8 idle cycles afterwards would sample as
+    // 4 + 8 = 12 and pass having emitted an illegal gap.
+    //
+    // The same flaw made a_frame_starts_with_preamble pass for the wrong
+    // reason: it compared one ambiguously-sampled nibble against 0x5, which
+    // succeeds whichever phase it caught, because both nibbles of 0x55 are 5.
+    // It could not have detected a frame starting with any other octet.
+    //
+    // So rebuild the cycle the way rgmii_monitor does -- rising half latched
+    // at the negedge, falling half read at the posedge that completes it --
+    // and asserts against TX_EN, TX_ER and the whole octet as separate,
+    // unambiguous things.
+    reg [3:0] d_rise    = 4'b0;
+    reg       ctl_rise  = 1'b0;
+
+    always @(negedge clk) begin
+        if (rst_n) begin
+            d_rise   <= txd;
+            ctl_rise <= tx_ctl;
+        end
+    end
+
+    wire [7:0] octet = {txd, d_rise};   // {high nibble, low nibble}
+    wire       tx_en = ctl_rise;
+    wire       tx_er = ctl_rise ^ tx_ctl;
 
     //------------------------------------------------------------------
     // R5 -- inter-frame gap, 96 bit times = 12 byte times (Table 4-2).
@@ -48,24 +87,8 @@ module gem_rgmii_sva (
     // Written as: on the cycle TX_EN falls, it must stay low for GEM_IFG_BYTES
     // cycles before it may rise again.
     //
-    // SAMPLING CAVEAT, to be resolved in Stage 4 when real pin timing exists.
-    // SVA samples in the preponed region, before the clock edge. Combined with
-    // the driver's clock-to-out, what a posedge sees on a DDR control pin is
-    // the value it held through the *previous* low phase -- which for RGMII is
-    // TX_EN XOR TX_ER, not TX_EN. For clean traffic the two agree, because
-    // TX_ER is low throughout, so every scenario in the current suite is
-    // unaffected.
-    //
-    // They diverge exactly during a B.4b abort tail, where TX_ER is asserted
-    // across the four inverted-FCS octets: the sampled signal reads low for
-    // those four cycles while TX_EN is still genuinely high. A design that
-    // then left only 8 idle cycles would sample as 4 + 8 = 12 and pass, having
-    // actually emitted an illegal gap.
-    //
-    // Not fixed here because the fix depends on how the RTL brings TX_EN out --
-    // once there is an internal tx_en to bind to, this property should watch
-    // that rather than reconstruct it from the pin. Recorded so the gap in
-    // coverage is known rather than discovered later.
+    // TX_EN here is the reconstructed rising-edge bit, so this stays correct
+    // through a B.4b abort tail where TX_ER is asserted but TX_EN is not.
     a_ifg_respected: assert property (@(posedge clk) disable iff (!rst_n)
         $fell(tx_en) |-> (!tx_en)[*`GEM_IFG_BYTES])
         else $error("rgmii_tx: inter-frame gap shorter than %0d byte times (R5)",
@@ -77,21 +100,38 @@ module gem_rgmii_sva (
     //
     // Nothing on the data lines may be X while the PHY is being told the data
     // is valid. Driving X here is the one failure the PHY cannot report back.
+    // Checked on the whole reconstructed octet, so an X on either nibble is
+    // caught rather than only the half this edge happened to expose.
     a_no_x_when_enabled: assert property (@(posedge clk) disable iff (!rst_n)
-        tx_en |-> !$isunknown(txd))
+        tx_en |-> !$isunknown(octet))
         else $error("rgmii_tx: X or Z on TXD while TX_EN is asserted");
+
+    // TX_ER may only be asserted inside a frame. Asserting it during idle is
+    // the RGMII carrier-extend encoding, which is a 1000BASE-X notion with no
+    // meaning here (B.7 lists half duplex as a non-goal) and would confuse a
+    // link partner that does implement it.
+    a_no_error_while_idle: assert property (@(posedge clk) disable iff (!rst_n)
+        !tx_en |-> !tx_er)
+        else $error("rgmii_tx: TX_ER asserted while TX_EN is low");
 
     //------------------------------------------------------------------
     // Clause 4.2.5 -- a frame begins with preamble, never with data.
     //------------------------------------------------------------------
     //
-    // The first nibble after TX_EN rises must be the low nibble of 0x55.
-    // A transmitter that starts a frame at the SFD, or at DA, is legal for a
+    // The first octet after TX_EN rises must be the full preamble octet. A
+    // transmitter that starts a frame at the SFD, or at DA, is legal for a
     // receiver to accept (R8 requires our own RX to tolerate it) but is not
     // something a compliant transmitter may emit.
+    //
+    // Compared as a whole octet against 0x55, not as a nibble: a nibble
+    // comparison passes on either DDR phase purely because both halves of 0x55
+    // are 5, so it would have accepted a frame beginning with any octet whose
+    // sampled nibble happened to be 5 -- 0x5D, say, or the 0xD5 SFD itself on
+    // the other phase.
     a_frame_starts_with_preamble: assert property (@(posedge clk) disable iff (!rst_n)
-        $rose(tx_en) |-> (txd == PREAMBLE_OCTET[3:0]))
-        else $error("rgmii_tx: frame did not begin with a preamble nibble (R1)");
+        $rose(tx_en) |-> (octet == PREAMBLE_OCTET))
+        else $error("rgmii_tx: frame did not begin with the preamble octet 0x%02h (R1)",
+                    PREAMBLE_OCTET);
 
 endmodule
 

@@ -188,8 +188,21 @@ module tb_gem_mac_loopback;
     int  rx_beat  = 0;      // beat index within it
     bit  have_expected = 1'b0;
 
+    // Received frame N is matched against sent frame N by position, which holds
+    // only while nothing is lost. If the design drops or invents a frame the
+    // alignment is gone, and every later frame is then compared against the
+    // wrong expectation -- thousands of mismatches, all of them misattributed,
+    // burying the one divergence that actually mattered.
+    //
+    // Resynchronising by content is not worth building here: the loopback runs
+    // only clean scenarios, where a missing frame is itself the bug. So on the
+    // first frame-level divergence, say so and stop comparing. The first
+    // divergence is the actionable one; everything after it is noise generated
+    // by the scoreboard, not by the design.
+    bit desynced = 1'b0;
+
     always @(posedge tx_clk) begin
-        if (tx_rst_n && rx_axis_tvalid && rx_axis_tready) begin
+        if (tx_rst_n && rx_axis_tvalid && rx_axis_tready && !desynced) begin
             if (!have_expected) begin
                 if (rx_frame >= u_drv.frames_sent) begin
                     note_check();
@@ -197,6 +210,7 @@ module tb_gem_mac_loopback;
                         "design delivered a frame that was never transmitted (frame index %0d, only %0d sent)",
                         rx_frame, u_drv.frames_sent));
                     rx_frame++;
+                    desynced = 1'b1;
                 end else begin
                     expected_frame(rx_frame, expected);
                     have_expected = 1'b1;
@@ -208,8 +222,9 @@ module tb_gem_mac_loopback;
                 note_check();
                 if (rx_beat >= expected.size()) begin
                     report_fail($sformatf("%s frame %0d", scenario, rx_frame),
-                        $sformatf("frame is longer than expected: got beat %0d, expected %0d octets",
+                        $sformatf("frame is longer than expected: got beat %0d, expected %0d octets -- positional alignment is lost, no further frames compared",
                                   rx_beat, expected.size()));
+                    desynced = 1'b1;
                 end else if (rx_axis_tdata !== expected[rx_beat]) begin
                     report_fail($sformatf("%s frame %0d octet %0d", scenario, rx_frame, rx_beat),
                         $sformatf("looped back 0x%02h, sent 0x%02h",
@@ -220,8 +235,9 @@ module tb_gem_mac_loopback;
                     note_check();
                     if (rx_beat + 1 != expected.size()) begin
                         report_fail($sformatf("%s frame %0d", scenario, rx_frame),
-                            $sformatf("frame ended after %0d octets, expected %0d",
+                            $sformatf("frame ended after %0d octets, expected %0d -- positional alignment is lost, no further frames compared",
                                       rx_beat + 1, expected.size()));
+                        desynced = 1'b1;
                     end
                     // A frame that went out clean must come back clean. If the
                     // verdict is bad here, the design corrupted its own frame
@@ -262,10 +278,15 @@ module tb_gem_mac_loopback;
 
         $display("[gem_tb] sent %0d frames, received %0d", u_drv.frames_sent, rx_frame);
 
-        note_check();
-        if (rx_frame != u_drv.frames_sent) begin
-            report_fail(scenario, $sformatf(
-                "sent %0d frames, got %0d back", u_drv.frames_sent, rx_frame));
+        if (desynced) begin
+            $display("[gem_tb] comparison stopped at frame %0d -- once a frame is lost, every later frame would be checked against the wrong expectation",
+                     rx_frame);
+        end else begin
+            note_check();
+            if (rx_frame != u_drv.frames_sent) begin
+                report_fail(scenario, $sformatf(
+                    "sent %0d frames, got %0d back", u_drv.frames_sent, rx_frame));
+            end
         end
 
         ok = check_done();
