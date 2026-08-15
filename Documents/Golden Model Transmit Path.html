@@ -65,7 +65,13 @@
     margin: 0;
     padding: 4rem 1.5rem 6rem;
   }
-  .wrap { max-width: 78ch; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+  .wrap { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column;
+          align-items: center; gap: 2rem; }
+  /* Prose keeps a 78ch measure; figures take the full width so the SVGs
+     render at their authored size instead of being scaled down to fit a
+     text column, which is what made the labels unreadable. */
+  .wrap > * { width: 100%; max-width: 78ch; }
+  .wrap > figure { max-width: 1200px; }
 
   .eyebrow {
     font-family: var(--mono);
@@ -107,7 +113,9 @@
     gap: 0.9rem;
   }
   .scroll { overflow-x: auto; }
-  figure svg { display: block; max-width: 100%; height: auto; color: var(--ink); min-width: 640px; }
+  figure svg { display: block; width: 100%; height: auto; color: var(--ink); }
+  #fig-topology { min-width: 1000px; }
+  #fig-sequence { min-width: 1060px; }
   figcaption {
     font-family: var(--mono);
     font-size: 0.76rem;
@@ -160,7 +168,7 @@
 
   <figure>
     <div class="scroll">
-      <svg viewBox="0 0 1000 430" role="img" aria-label="Data flow: payload enters buildFrame or abortedFrame, which call crc32 and fcsBytes; the resulting packet octets pass through buildStream and rgmiiEncode to writeVectors, which emits the stimulus and expectation files.">
+      <svg id="fig-topology" viewBox="0 0 1000 430" role="img" aria-label="Data flow: payload enters buildFrame or abortedFrame, which call crc32 and fcsBytes; the resulting packet octets pass through buildStream and rgmiiEncode to writeVectors, which emits the stimulus and expectation files.">
         <defs>
           <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -171,73 +179,73 @@
         </defs>
 
         <!-- input -->
-        <text x="20" y="40" font-family="ui-monospace, monospace" font-size="12" fill="currentColor">payload &middot; DA &middot; SA &middot; EtherType</text>
+        <text x="20" y="40" font-family="ui-monospace, monospace" font-size="14" fill="currentColor">payload &middot; DA &middot; SA &middot; EtherType</text>
         <line x1="110" y1="50" x2="110" y2="82" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
 
         <!-- builders -->
         <rect x="20" y="84" width="180" height="44" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="110" y="111" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">buildFrame</text>
+        <text x="110" y="111" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="currentColor">buildFrame</text>
 
         <rect x="20" y="142" width="180" height="44" rx="3" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
-        <text x="110" y="163" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="var(--accent)">abortedFrame</text>
-        <text x="110" y="178" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--accent)">B.4b &middot; underrun</text>
+        <text x="110" y="163" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="var(--accent)">abortedFrame</text>
+        <text x="110" y="178" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11.5" fill="var(--accent)">B.4b &middot; underrun</text>
 
         <!-- merge into buildStream -->
         <path d="M 200 106 H 240 V 135 H 288" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
         <path d="M 200 164 H 240 V 135" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
-        <text x="243" y="99" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">packetBytes[] &middot; er[]</text>
+        <text x="243" y="99" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">packetBytes[] &middot; er[]</text>
 
         <rect x="290" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="365" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">buildStream</text>
-        <text x="365" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--ink-faint)">+ IFG, 12 octets</text>
+        <text x="365" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="currentColor">buildStream</text>
+        <text x="365" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11.5" fill="var(--ink-faint)">+ IFG, 12 octets</text>
 
         <line x1="440" y1="135" x2="538" y2="135" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="489" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">bytes dv er</text>
+        <text x="489" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">bytes dv er</text>
 
         <rect x="540" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="615" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">rgmiiEncode</text>
-        <text x="615" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--ink-faint)">DDR, 2 nibbles</text>
+        <text x="615" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="currentColor">rgmiiEncode</text>
+        <text x="615" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11.5" fill="var(--ink-faint)">DDR, 2 nibbles</text>
 
         <line x1="690" y1="135" x2="788" y2="135" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="739" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">cycles[]</text>
+        <text x="739" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">cycles[]</text>
 
         <rect x="790" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="865" y="140" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">writeVectors</text>
+        <text x="865" y="140" text-anchor="middle" font-family="ui-monospace, monospace" font-size="15" fill="currentColor">writeVectors</text>
 
         <line x1="865" y1="159" x2="865" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="790" y="212" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">tx_stim.txt</text>
-        <text x="790" y="230" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">tx_expected.hex</text>
-        <text x="790" y="248" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">counters_expected.txt</text>
+        <text x="790" y="212" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">tx_stim.txt</text>
+        <text x="790" y="230" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">tx_expected.hex</text>
+        <text x="790" y="248" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">counters_expected.txt</text>
 
         <!-- CRC service -->
         <rect x="20" y="266" width="480" height="132" rx="4" fill="none" stroke="var(--rule)" stroke-width="1.2" stroke-dasharray="4 3"/>
-        <text x="34" y="286" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-faint)">CRC SERVICE &mdash; called once per frame, integer-exact uint32</text>
+        <text x="34" y="286" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-faint)">CRC SERVICE &mdash; called once per frame, integer-exact uint32</text>
 
         <path d="M 92 188 V 300 H 128" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="98" y="240" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">octets to protect</text>
+        <text x="98" y="240" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">octets to protect</text>
 
         <rect x="130" y="300" width="120" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="190" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12.5" fill="currentColor">crc32</text>
+        <text x="190" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="14.5" fill="currentColor">crc32</text>
 
         <rect x="130" y="356" width="120" height="30" rx="3" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
-        <text x="190" y="376" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="var(--ink-soft)">crc32Table</text>
+        <text x="190" y="376" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="var(--ink-soft)">crc32Table</text>
         <line x1="190" y1="356" x2="190" y2="346" stroke="var(--ink-soft)" stroke-width="1.2" marker-end="url(#a1)"/>
 
         <line x1="250" y1="321" x2="308" y2="321" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="279" y="313" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">CRC</text>
+        <text x="279" y="313" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">CRC</text>
 
         <rect x="310" y="300" width="120" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-        <text x="370" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12.5" fill="currentColor">fcsBytes</text>
+        <text x="370" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="14.5" fill="currentColor">fcsBytes</text>
 
-        <path d="M 430 314 H 466 V 200 H 152" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
-        <text x="474" y="258" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">4 FCS octets, LSB first</text>
+        <path d="M 430 314 H 466 V 208 H 152 V 190" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="474" y="258" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">4 FCS octets, LSB first</text>
 
         <!-- params note -->
         <line x1="560" y1="290" x2="960" y2="290" stroke="var(--rule)" stroke-width="1"/>
-        <text x="560" y="312" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">every block above calls gem.params(),</text>
-        <text x="560" y="329" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">which parses rtl/gem_mac_params.vh &mdash;</text>
-        <text x="560" y="346" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">no constant is typed twice, so the</text>
-        <text x="560" y="363" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">model cannot drift from the RTL.</text>
+        <text x="560" y="312" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">every block above calls gem.params(),</text>
+        <text x="560" y="329" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">which parses rtl/gem_mac_params.vh &mdash;</text>
+        <text x="560" y="346" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">no constant is typed twice, so the</text>
+        <text x="560" y="363" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--ink-soft)">model cannot drift from the RTL.</text>
       </svg>
     </div>
     <figcaption>The transmit chain is linear. Only the frame builder branches &mdash; <span class="fn">abortedFrame</span>
@@ -249,7 +257,7 @@
 
   <figure>
     <div class="scroll">
-      <svg viewBox="0 0 1060 690" role="img" aria-label="UML sequence diagram: genTxScenario reads constants from params, then per frame calls buildFrame, which pads, calls crc32 and fcsBytes, and returns packet octets; genTxScenario then calls buildStream and rgmiiEncode to produce RGMII cycles.">
+      <svg id="fig-sequence" viewBox="0 0 1060 690" role="img" aria-label="UML sequence diagram: genTxScenario reads constants from params, then per frame calls buildFrame, which pads, calls crc32 and fcsBytes, and returns packet octets; genTxScenario then calls buildStream and rgmiiEncode to produce RGMII cycles.">
         <defs>
           <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -257,7 +265,7 @@
         </defs>
 
         <!-- participant headers -->
-        <g font-family="ui-monospace, monospace" font-size="11.5" text-anchor="middle">
+        <g font-family="ui-monospace, monospace" font-size="13.5" text-anchor="middle">
           <rect x="20"  y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
           <text x="80"  y="43" fill="currentColor">genTxScenario</text>
 
@@ -291,7 +299,7 @@
           <line x1="980" y1="58" x2="980" y2="600"/>
         </g>
 
-        <g font-family="ui-monospace, monospace" font-size="10.5" fill="currentColor">
+        <g font-family="ui-monospace, monospace" font-size="12.5" fill="currentColor">
 
           <!-- params -->
           <line x1="80" y1="92" x2="224" y2="92" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
@@ -303,8 +311,8 @@
           <!-- loop frame -->
           <rect x="40" y="146" width="960" height="300" rx="3" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
           <path d="M 40 146 H 128 V 166 H 40 z" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
-          <text x="52" y="160" font-size="10" fill="var(--ink-soft)">loop</text>
-          <text x="136" y="160" font-size="10" fill="var(--ink-soft)">per frame</text>
+          <text x="52" y="160" font-size="12" fill="var(--ink-soft)">loop</text>
+          <text x="136" y="160" font-size="12" fill="var(--ink-soft)">per frame</text>
 
           <line x1="80" y1="196" x2="374" y2="196" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
           <text x="227" y="189" text-anchor="middle">payload &middot; DA &middot; SA &middot; EtherType</text>
@@ -348,8 +356,8 @@
 
         <!-- abort variant -->
         <rect x="240" y="614" width="640" height="58" rx="3" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
-        <text x="256" y="634" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--accent)">abortedFrame &mdash; same path, three differences (B.4b)</text>
-        <text x="256" y="654" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">no pad &nbsp;&middot;&nbsp; FCS inverted with bitcmp &nbsp;&middot;&nbsp; er[] true on the final four octets</text>
+        <text x="256" y="634" font-family="ui-monospace, monospace" font-size="12.5" fill="var(--accent)">abortedFrame &mdash; same path, three differences (B.4b)</text>
+        <text x="256" y="654" font-family="ui-monospace, monospace" font-size="12" fill="var(--ink-soft)">no pad &nbsp;&middot;&nbsp; FCS inverted with bitcmp &nbsp;&middot;&nbsp; er[] true on the final four octets</text>
       </svg>
     </div>
     <figcaption>Read top to bottom. Solid arrows are calls, dashed are returns. The loop body runs once per frame;
