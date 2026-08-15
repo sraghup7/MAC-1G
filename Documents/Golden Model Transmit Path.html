@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  gem_mac -- golden model transmit path.
+
+  Companion to spec/PROJECT_SPEC.md B.1a (transmit architecture) and B.4b (the
+  underrun contract). Describes the MATLAB reference model in model/+gem/, not
+  the RTL -- the two are deliberately the same shape, which is what makes a
+  cycle-level diff between them meaningful.
+
+  Self-contained: no external CSS, fonts, scripts or images. Open it in any
+  browser. Diagrams are hand-authored SVG using currentColor, so they follow
+  the light/dark preference of whatever is displaying them.
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  img, svg { max-width: 100%; }
+</style>
+<title>gem_mac Transmit Path</title>
+<style>
+  :root {
+    --bg:        #e9edf0;
+    --surface:   #f7f9fa;
+    --ink:       #16202a;
+    --ink-soft:  #4d5e6c;
+    --ink-faint: #7b8b98;
+    --rule:      #c3cfd7;
+    --accent:    #a95c15;
+    --accent-bg: #f2e3d0;
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #0d141a;
+      --surface:   #151f27;
+      --ink:       #dde6ec;
+      --ink-soft:  #94a7b4;
+      --ink-faint: #6a7d8b;
+      --rule:      #2a3944;
+      --accent:    #dd9245;
+      --accent-bg: #2a2116;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #0d141a;
+    --surface:   #151f27;
+    --ink:       #dde6ec;
+    --ink-soft:  #94a7b4;
+    --ink-faint: #6a7d8b;
+    --rule:      #2a3944;
+    --accent:    #dd9245;
+    --accent-bg: #2a2116;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 4rem 1.5rem 6rem;
+  }
+  .wrap { max-width: 78ch; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.6rem, 4vw, 2.1rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0.3rem 0 0;
+  }
+  h2 {
+    font-family: var(--mono);
+    font-size: 1.02rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+    margin: 1.5rem 0 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  p { margin: 0; }
+  .lede { color: var(--ink-soft); font-size: 1.05rem; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 1.4rem 1.2rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .scroll { overflow-x: auto; }
+  figure svg { display: block; max-width: 100%; height: auto; color: var(--ink); min-width: 640px; }
+  figcaption {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--rule);
+    padding-top: 0.8rem;
+  }
+
+  code { font-family: var(--mono); font-size: 0.87em; }
+  .fn { color: var(--accent); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  td:first-child { font-family: var(--mono); font-size: 0.8rem; white-space: nowrap; color: var(--accent); }
+  td:last-child { font-family: var(--mono); font-size: 0.76rem; color: var(--ink-soft); }
+  .tw { overflow-x: auto; }
+
+  .note {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-bg);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+  .note strong { font-family: var(--mono); font-size: 0.85em; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">gem_mac &middot; golden model &middot; stage 3</p>
+    <h1>Transmit Path</h1>
+  </header>
+
+  <p class="lede">Which block calls which, and what data crosses each boundary, when the MATLAB
+  reference model turns one user payload into the RGMII cycles the hardware must produce.
+  Receive is a separate chain and is not shown.</p>
+
+  <h2>1 &nbsp;Topology</h2>
+
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1000 430" role="img" aria-label="Data flow: payload enters buildFrame or abortedFrame, which call crc32 and fcsBytes; the resulting packet octets pass through buildStream and rgmiiEncode to writeVectors, which emits the stimulus and expectation files.">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- input -->
+        <text x="20" y="40" font-family="ui-monospace, monospace" font-size="12" fill="currentColor">payload &middot; DA &middot; SA &middot; EtherType</text>
+        <line x1="110" y1="50" x2="110" y2="82" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+
+        <!-- builders -->
+        <rect x="20" y="84" width="180" height="44" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="110" y="111" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">buildFrame</text>
+
+        <rect x="20" y="142" width="180" height="44" rx="3" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="110" y="163" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="var(--accent)">abortedFrame</text>
+        <text x="110" y="178" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--accent)">B.4b &middot; underrun</text>
+
+        <!-- merge into buildStream -->
+        <path d="M 200 106 H 240 V 135 H 288" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <path d="M 200 164 H 240 V 135" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="243" y="99" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">packetBytes[] &middot; er[]</text>
+
+        <rect x="290" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="365" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">buildStream</text>
+        <text x="365" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--ink-faint)">+ IFG, 12 octets</text>
+
+        <line x1="440" y1="135" x2="538" y2="135" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="489" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">bytes dv er</text>
+
+        <rect x="540" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="615" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">rgmiiEncode</text>
+        <text x="615" y="148" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9.5" fill="var(--ink-faint)">DDR, 2 nibbles</text>
+
+        <line x1="690" y1="135" x2="788" y2="135" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="739" y="127" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">cycles[]</text>
+
+        <rect x="790" y="111" width="150" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="865" y="140" text-anchor="middle" font-family="ui-monospace, monospace" font-size="13" fill="currentColor">writeVectors</text>
+
+        <line x1="865" y1="159" x2="865" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="790" y="212" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">tx_stim.txt</text>
+        <text x="790" y="230" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">tx_expected.hex</text>
+        <text x="790" y="248" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">counters_expected.txt</text>
+
+        <!-- CRC service -->
+        <rect x="20" y="266" width="480" height="132" rx="4" fill="none" stroke="var(--rule)" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="34" y="286" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-faint)">CRC SERVICE &mdash; called once per frame, integer-exact uint32</text>
+
+        <path d="M 92 188 V 300 H 128" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="98" y="240" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">octets to protect</text>
+
+        <rect x="130" y="300" width="120" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="190" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12.5" fill="currentColor">crc32</text>
+
+        <rect x="130" y="356" width="120" height="30" rx="3" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
+        <text x="190" y="376" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="var(--ink-soft)">crc32Table</text>
+        <line x1="190" y1="356" x2="190" y2="346" stroke="var(--ink-soft)" stroke-width="1.2" marker-end="url(#a1)"/>
+
+        <line x1="250" y1="321" x2="308" y2="321" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="279" y="313" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">CRC</text>
+
+        <rect x="310" y="300" width="120" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="370" y="326" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12.5" fill="currentColor">fcsBytes</text>
+
+        <path d="M 430 314 H 466 V 200 H 152" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#a1)"/>
+        <text x="474" y="258" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">4 FCS octets, LSB first</text>
+
+        <!-- params note -->
+        <line x1="560" y1="290" x2="960" y2="290" stroke="var(--rule)" stroke-width="1"/>
+        <text x="560" y="312" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">every block above calls gem.params(),</text>
+        <text x="560" y="329" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">which parses rtl/gem_mac_params.vh &mdash;</text>
+        <text x="560" y="346" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">no constant is typed twice, so the</text>
+        <text x="560" y="363" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--ink-soft)">model cannot drift from the RTL.</text>
+      </svg>
+    </div>
+    <figcaption>The transmit chain is linear. Only the frame builder branches &mdash; <span class="fn">abortedFrame</span>
+    replaces <span class="fn">buildFrame</span> when the user starves the MAC mid-payload, and everything downstream is
+    unchanged, because an aborted frame is still just octets plus a per-octet TX_ER qualifier.</figcaption>
+  </figure>
+
+  <h2>2 &nbsp;Call sequence, one frame</h2>
+
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1060 690" role="img" aria-label="UML sequence diagram: genTxScenario reads constants from params, then per frame calls buildFrame, which pads, calls crc32 and fcsBytes, and returns packet octets; genTxScenario then calls buildStream and rgmiiEncode to produce RGMII cycles.">
+        <defs>
+          <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- participant headers -->
+        <g font-family="ui-monospace, monospace" font-size="11.5" text-anchor="middle">
+          <rect x="20"  y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="80"  y="43" fill="currentColor">genTxScenario</text>
+
+          <rect x="170" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="230" y="43" fill="currentColor">params</text>
+
+          <rect x="320" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="380" y="43" fill="currentColor">buildFrame</text>
+
+          <rect x="470" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="530" y="43" fill="currentColor">crc32</text>
+
+          <rect x="620" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="680" y="43" fill="currentColor">fcsBytes</text>
+
+          <rect x="770" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="830" y="43" fill="currentColor">buildStream</text>
+
+          <rect x="920" y="18" width="120" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <text x="980" y="43" fill="currentColor">rgmiiEncode</text>
+        </g>
+
+        <!-- lifelines -->
+        <g stroke="var(--rule)" stroke-width="1.2" stroke-dasharray="3 4">
+          <line x1="80"  y1="58" x2="80"  y2="600"/>
+          <line x1="230" y1="58" x2="230" y2="600"/>
+          <line x1="380" y1="58" x2="380" y2="600"/>
+          <line x1="530" y1="58" x2="530" y2="600"/>
+          <line x1="680" y1="58" x2="680" y2="600"/>
+          <line x1="830" y1="58" x2="830" y2="600"/>
+          <line x1="980" y1="58" x2="980" y2="600"/>
+        </g>
+
+        <g font-family="ui-monospace, monospace" font-size="10.5" fill="currentColor">
+
+          <!-- params -->
+          <line x1="80" y1="92" x2="224" y2="92" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="152" y="85" text-anchor="middle">read gem_mac_params.vh</text>
+
+          <line x1="230" y1="122" x2="86" y2="122" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="152" y="115" text-anchor="middle" fill="var(--ink-soft)">GEM_* constants</text>
+
+          <!-- loop frame -->
+          <rect x="40" y="146" width="960" height="300" rx="3" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
+          <path d="M 40 146 H 128 V 166 H 40 z" fill="none" stroke="var(--rule)" stroke-width="1.2"/>
+          <text x="52" y="160" font-size="10" fill="var(--ink-soft)">loop</text>
+          <text x="136" y="160" font-size="10" fill="var(--ink-soft)">per frame</text>
+
+          <line x1="80" y1="196" x2="374" y2="196" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="227" y="189" text-anchor="middle">payload &middot; DA &middot; SA &middot; EtherType</text>
+
+          <!-- self message: pad -->
+          <path d="M 380 218 H 424 V 240 H 386" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="432" y="233">pad to 46 octets (R3)</text>
+
+          <line x1="380" y1="272" x2="524" y2="272" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="452" y="265" text-anchor="middle">DA .. pad</text>
+
+          <line x1="530" y1="302" x2="386" y2="302" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="458" y="295" text-anchor="middle" fill="var(--ink-soft)">uint32 CRC</text>
+
+          <line x1="380" y1="332" x2="674" y2="332" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="527" y="325" text-anchor="middle">CRC word</text>
+
+          <line x1="680" y1="362" x2="386" y2="362" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="533" y="355" text-anchor="middle" fill="var(--ink-soft)">4 octets, LSB first</text>
+
+          <!-- self message: preamble -->
+          <path d="M 380 384 H 424 V 406 H 386" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="432" y="399">prepend preamble + SFD</text>
+
+          <line x1="380" y1="432" x2="86" y2="432" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="233" y="425" text-anchor="middle" fill="var(--ink-soft)">packetBytes[] &middot; er[]</text>
+
+          <!-- assemble -->
+          <line x1="80" y1="482" x2="824" y2="482" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="452" y="475" text-anchor="middle">items[] &middot; gapBefore = 12 octets (R5)</text>
+
+          <line x1="830" y1="512" x2="86" y2="512" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="458" y="505" text-anchor="middle" fill="var(--ink-soft)">bytes[] &middot; dv[] &middot; er[] &mdash; equal length</text>
+
+          <line x1="80" y1="542" x2="974" y2="542" stroke="currentColor" stroke-width="1.4" marker-end="url(#s1)"/>
+          <text x="527" y="535" text-anchor="middle">bytes &middot; dv &middot; er</text>
+
+          <line x1="980" y1="572" x2="86" y2="572" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#s1)"/>
+          <text x="533" y="565" text-anchor="middle" fill="var(--ink-soft)">cycles[] &mdash; one 12-bit word per octet</text>
+        </g>
+
+        <!-- abort variant -->
+        <rect x="240" y="614" width="640" height="58" rx="3" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="256" y="634" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--accent)">abortedFrame &mdash; same path, three differences (B.4b)</text>
+        <text x="256" y="654" font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-soft)">no pad &nbsp;&middot;&nbsp; FCS inverted with bitcmp &nbsp;&middot;&nbsp; er[] true on the final four octets</text>
+      </svg>
+    </div>
+    <figcaption>Read top to bottom. Solid arrows are calls, dashed are returns. The loop body runs once per frame;
+    <span class="fn">buildStream</span> and <span class="fn">rgmiiEncode</span> run once for the whole scenario, which is
+    why inter-frame gap is <em>their</em> concern and not the builder's.</figcaption>
+  </figure>
+
+  <div class="note">
+    <strong>Why the chain ends in two files, not one.</strong>
+    <span class="fn">writeVectors</span> emits <code>tx_stim.txt</code> &mdash; what the testbench feeds the design &mdash;
+    and <code>tx_expected.hex</code>, the cycles the design must produce. Both come from the same model run, so the
+    stimulus and the expectation cannot disagree about what frame was sent. The testbench drives one, captures the pins,
+    and diffs against the other.
+  </div>
+
+  <h2>3 &nbsp;Where each block can be wrong</h2>
+
+  <p>Every one of these produces a model that is internally consistent and still wrong &mdash; which is why the
+  validation for the CRC comes from outside this codebase entirely.</p>
+
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Block</th><th>The failure that does not announce itself</th><th>Caught by</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>params</td>
+          <td>A constant parsed wrong, or a stale cache serving values from before the header was edited. The model then disagrees with the RTL about something like the minimum frame length, and the mismatch looks exactly like a design bug.</td>
+          <td>tParams &times; 7</td>
+        </tr>
+        <tr>
+          <td>crc32</td>
+          <td>Reflection applied at the wrong stage. Produces a self-consistent CRC that round-trips perfectly against itself and fails every real receiver.</td>
+          <td>check value 0xCBF43926<br>zlib &times; 2000</td>
+        </tr>
+        <tr>
+          <td>fcsBytes</td>
+          <td>Octet order reversed. The frame looks correct in every log you own and is rejected by every NIC on the wire.</td>
+          <td>tFrame/fcsIsLeast&shy;SignificantOctetFirst</td>
+        </tr>
+        <tr>
+          <td>buildFrame</td>
+          <td>FCS coverage off by eight &mdash; including preamble and SFD, which are part of the packet but not the frame. Also EtherType, the one field that is big-endian at octet granularity while every octet still ships LSB-bit-first.</td>
+          <td>tFrame &times; 18</td>
+        </tr>
+        <tr>
+          <td>abortedFrame</td>
+          <td>Padding an aborted frame, or emitting an FCS that merely differs rather than one guaranteed to fail. Either makes the RTL chase behaviour the standard never asked for.</td>
+          <td>tAbort &times; 10</td>
+        </tr>
+        <tr>
+          <td>buildStream</td>
+          <td>Emitting only the nominal 12-octet gap. A receiver must survive 8 (Table 4-2 Note 3), so a regression that never shrinks the gap passes even when RX recovery silently needs 15 cycles &mdash; and that bug debuts on hardware.</td>
+          <td>rx_min_gap scenario</td>
+        </tr>
+        <tr>
+          <td>rgmiiEncode</td>
+          <td>The falling-edge control XOR backwards. Yields a MAC that carries clean traffic perfectly and never reports an error.</td>
+          <td>tRgmii/control&shy;EncodingTable</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>The pattern.</strong> Every failure above is silent by construction &mdash; it produces output that is
+    plausible, self-consistent, and wrong. That is why <span class="fn">crc32</span> is validated against a published
+    constant and a different language's implementation rather than against itself, and why the generator reads its own
+    wire back with the golden receive path before it will write a vector file.
+  </div>
+
+</div>
+
+</body>
+</html>
