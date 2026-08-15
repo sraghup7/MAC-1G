@@ -1,0 +1,116 @@
+{
+  "name": "tx_backpressure",
+  "direction": "tx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 12,
+    "Lengths": [],
+    "ReadyMode": "random",
+    "MaxPayload": [],
+    "IncludeOversize": false
+  },
+  "counters": {
+    "tx_ok": 12,
+    "tx_rejected": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "padBytes": 45,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 30
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "padBytes": 1,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 31
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 10
+    },
+    {
+      "index": 5,
+      "payloadLen": 63,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 18
+    },
+    {
+      "index": 6,
+      "payloadLen": 64,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 3
+    },
+    {
+      "index": 7,
+      "payloadLen": 65,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 5
+    },
+    {
+      "index": 8,
+      "payloadLen": 100,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 17
+    },
+    {
+      "index": 9,
+      "payloadLen": 512,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 24
+    },
+    {
+      "index": 10,
+      "payloadLen": 1000,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 19
+    },
+    {
+      "index": 11,
+      "payloadLen": 1499,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 26
+    },
+    {
+      "index": 12,
+      "payloadLen": 1500,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 8
+    }
+  ]
+}

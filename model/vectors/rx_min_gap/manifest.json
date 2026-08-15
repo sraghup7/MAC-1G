@@ -1,0 +1,276 @@
+{
+  "name": "rx_min_gap",
+  "direction": "rx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 24,
+    "Lengths": [
+      1,
+      46
+    ],
+    "Corruptions": [
+      "none"
+    ],
+    "GapMode": "min",
+    "PreambleMode": "none",
+    "GarbageRate": 0,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 24,
+    "rx_badfcs": 0,
+    "rx_runt": 0,
+    "rx_oversize": 0,
+    "rx_rxer": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 2,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 4,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 5,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 6,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 9,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 10,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 11,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 12,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 13,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 14,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 15,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 16,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 17,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 18,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 19,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 20,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 21,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 22,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 23,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 24,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 24,
+    "skipped": 0,
+    "ok": true,
+    "note": "24 frames cross-checked, all agree."
+  }
+}

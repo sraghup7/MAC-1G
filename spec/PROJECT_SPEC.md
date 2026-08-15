@@ -1,6 +1,16 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.2 — Stage 1 complete, to be reviewed and versioned alongside the RTL.
+Document status: v0.3 — Stage 1 complete; amended by Stage 3's golden model. Versioned
+alongside the RTL.
+
+**Changelog v0.2 → v0.3 (all changes forced by writing the reference model, which is
+what Stage 3 is for):** added **B.4a**, the RX delivery contract — three questions that
+were genuinely ambiguous in v0.2 and that the model could not be written without
+answering (what `rx_axis_tdata` carries, when `tlast` fires for a bad frame, and which
+error class wins when a frame is in several at once); corrected **B.1b's R21 latency
+sum** from 9 cycles to 13, adding the four-cycle FCS holdback register that cut-through
+delivery requires and v0.2 omitted — margin against R21's ceiling drops from 3.6× to
+2.5×, still comfortable; recorded the Stage 3 status against B.4's verification strategy.
 
 **Changelog v0.1 → v0.2:** corrected the AX7035B's Ethernet PHY identity (it is a Micrel/
 Microchip **KSZ9031RNX**, not a Realtek RTL8211 — see the note in A.2); resolved all four
@@ -176,18 +186,34 @@ every simulation and fails on the bench.
 |---|---|
 | IDDR capture + nibble combine (DDR → 1 byte/cycle) | 1 |
 | SFD hunt / deframer FSM | 2 |
+| **FCS holdback register (added v0.3 — see below)** | **4** |
 | CRC-32 verdict generation at EOF (parallel accumulator, registered compare) | 1 |
 | Async FIFO CDC, `rx_clk` → `sys_clk` — same structural cost as the sync-latency term in B.3a | 4 |
 | Registered AXI-S egress stage (R15: no combinational paths through the handshake) | 1 |
-| **Total** | **9 cycles = 72 ns** |
+| **Total** | **13 cycles = 104 ns** |
 
-9 cycles against R21's 32-cycle (256 ns) ceiling is **3.6× margin** (`spec/budget.py`,
-`rx_latency_budget()`) — the number holds up under an actual pipeline sum, not just an
-assertion, and the async FIFO crossing is confirmed as the single largest contributor
-(4 of the 9 cycles), which is expected: it's the only genuine CDC boundary on the RX
-path. 3.6× leaves real room for cycles this Stage-1 estimate hasn't modeled yet (an extra
-pipeline register added during Stage 6/7 timing closure, for instance) without threatening
-the ceiling.
+**The FCS holdback term, and why v0.2 missed it.** The RX user port must not emit the
+four FCS octets (B.4a's delivery contract: DA through pad, nothing else). But cut-through
+delivery cannot know *which* four octets are the FCS until `RX_DV` drops — by which time
+a naive implementation has already streamed them out. The only way to keep them off the
+port is a four-octet delay line: bytes are held back four cycles so that when the frame
+ends, the FCS is still inside the register and is discarded rather than delivered. This
+is not optional and not an implementation choice; it falls directly out of combining R9's
+cut-through requirement with a port that excludes the FCS. v0.2's sum listed the stages
+that transform data and omitted the one that only delays it.
+
+13 cycles against R21's 32-cycle (256 ns) ceiling is **2.5× margin** (`spec/budget.py`,
+`rx_latency_budget()`) — down from the 3.6× v0.2 claimed, and still comfortable. The
+async FIFO crossing and the FCS holdback are now joint largest contributors at 4 cycles
+each, and they are there for opposite reasons: one is a genuine CDC boundary, the other
+is pure latency bought to satisfy a delivery contract. Were R21 ever tightened, the
+holdback is the term to attack first — delivering the FCS to user logic and letting it
+discard four octets would buy all four cycles back, at the cost of a messier interface.
+
+*Found in Stage 3 while writing the golden model's `expectedBeats` function, which is
+exactly the kind of omission the flow doc predicts a reference model will surface: the
+question "what precisely comes out of this port, on which cycle?" cannot be answered
+hand-wavily by working code.*
 
 **Reset strategy:**
 
@@ -367,7 +393,45 @@ rule. Re-derivable by running [`spec/budget.py`](budget.py).
 - **Coverage criterion for "done"**: every requirement R1–R21 has ≥ 1 named test; every
   corruption type crossed with {min, typical, max} length; regression green from one
   `make regress` command.
-- **Traceability table** (test ↔ requirement ↔ status) lives in `verification_plan.md`.
+- **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
+
+**Stage 3 status (v0.3):** all of the above is built and running. The golden model is
+MATLAB (`model/+gem/`), validated by 55 tests — the published CRC-32 check value, agreement
+with Python's `zlib` over 2000 random vectors, the residue property, and a full
+build→RGMII→deframe→parse round trip across the length sweep. Sixteen scenarios generate
+vector files, each cross-checked by reading its own wire back with the golden RX path. The
+SystemVerilog layer (`tb/`) runs against a port-only stub (`rtl/gem_mac_stub.v`) and fails
+informatively, which is the intended Stage 3 result.
+
+## B.4a RX delivery contract (resolved in Stage 3)
+
+Three questions the golden model could not be written without answering. Each was
+genuinely ambiguous in v0.2, and each is now binding on the Stage 4 RTL.
+
+1. **`rx_axis_tdata` carries DA through pad** — the whole frame except preamble, SFD and
+   FCS. Consequently `rx_axis_tuser` stays the single good/bad bit R15 specifies, and no
+   RX header sideband exists; user logic reads DA/SA/EtherType from the first 14 beats.
+   This resolves a contradiction between R15 (RX `tuser` = good/bad at EOF, one bit) and
+   B.1a module 7 ("extracts DA/SA/EtherType, streams payload onward"), which could not
+   both hold. Pad is not stripped either: with a Type-interpreted Length/Type field there
+   is no length in the frame to strip against (Clause 3.2.6), and the standard puts that
+   burden on the client. A 20-octet payload therefore arrives as 46 octets, and that is
+   correct.
+2. **Every frame ends with exactly one `tlast`**, at the natural end of its `RX_DV`
+   burst, carrying the verdict — whatever went wrong. Errors detectable mid-frame
+   (oversize, RX_ER) do **not** cut the stream short. `Documents/Bad bitstream handle.md`
+   said early termination "can also be" done, which is not a decision; one delivery rule
+   for all five classes means one `tlast` timing for the RTL, the assertions and the
+   model to agree on rather than two.
+3. **Error class precedence is `rxer > oversize > runt > badfcs`.** R10 requires one
+   counter per class (R17) and a single frame can be in several at once — a truncated
+   frame is usually both a runt and an FCS failure. The order is argued from diagnostic
+   value in `model/+gem/parseFrame.m`; the short version is that RX_ER outranks
+   everything because every other classification is computed from bits the PHY just told
+   us to distrust, and runt outranks bad-FCS because scoring truncation as bad-FCS would
+   leave the runt counter permanently at zero.
+
+A consequence of (1) is the four-cycle FCS holdback added to B.1b's latency sum.
 
 ## B.5 Bring-up order (written before hardware is touched)
 

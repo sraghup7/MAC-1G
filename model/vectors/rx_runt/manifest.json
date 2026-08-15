@@ -1,0 +1,194 @@
+{
+  "name": "rx_runt",
+  "direction": "rx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 16,
+    "Lengths": [],
+    "Corruptions": [
+      "none",
+      "truncate"
+    ],
+    "GapMode": "nominal",
+    "PreambleMode": "full",
+    "GarbageRate": 0,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 8,
+    "rx_badfcs": 0,
+    "rx_runt": 8,
+    "rx_oversize": 0,
+    "rx_rxer": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "corruption": "truncate",
+      "offset": 71,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "corruption": "truncate",
+      "offset": 27,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 5,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 6,
+      "payloadLen": 64,
+      "corruption": "truncate",
+      "offset": 42,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 100,
+      "corruption": "truncate",
+      "offset": 13,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 9,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 10,
+      "payloadLen": 1000,
+      "corruption": "truncate",
+      "offset": 42,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 11,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 12,
+      "payloadLen": 1500,
+      "corruption": "truncate",
+      "offset": 69,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 13,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 14,
+      "payloadLen": 45,
+      "corruption": "truncate",
+      "offset": 12,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 15,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 16,
+      "payloadLen": 47,
+      "corruption": "truncate",
+      "offset": 58,
+      "expectedClass": "runt",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 16,
+    "skipped": 0,
+    "ok": true,
+    "note": "16 frames cross-checked, all agree."
+  }
+}

@@ -1,0 +1,2 @@
+tx_ok 4
+tx_rejected 1

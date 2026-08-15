@@ -1,0 +1,60 @@
+{
+  "name": "tx_reject_oversize",
+  "direction": "tx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 4,
+    "Lengths": [],
+    "ReadyMode": "always",
+    "MaxPayload": [],
+    "IncludeOversize": true
+  },
+  "counters": {
+    "tx_ok": 4,
+    "tx_rejected": 1
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "padBytes": 45,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "padBytes": 1,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 5,
+      "payloadLen": 1501,
+      "padBytes": 0,
+      "expectRejected": true,
+      "gapBefore": 12,
+      "readyGap": 0
+    }
+  ]
+}

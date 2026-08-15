@@ -25,9 +25,17 @@ PHY_RX_DEFAULT_DELAY_NS = 1.2          # KSZ9031RNX default RX_CLK-to-RXD delay
 CLOCK_PERIOD_NS = 1e9 / CLOCK_HZ       # 8.0 ns at 125 MHz
 
 R21_LATENCY_CEILING_CYCLES = 32        # spec requirement, 256 ns @ 125 MHz
+FCS_BYTES = 4                          # 802.3 Clause 3.2.9
+
 RX_PIPELINE_STAGES = [                 # (name, cycles) -- B.1b bottom-up latency check
     ("IDDR capture + nibble combine", 1),
     ("SFD hunt / deframer FSM", 2),
+    # Added v0.3, found in Stage 3. The RX port delivers DA..pad and must not
+    # emit the FCS, but cut-through cannot know which four octets those are
+    # until RX_DV drops -- so the datapath holds four octets back and discards
+    # whatever is still in the register at end of frame. Pure latency, bought
+    # to satisfy the delivery contract.
+    ("FCS holdback register", FCS_BYTES),
     ("CRC-32 verdict generation at EOF", 1),
     ("Async FIFO CDC (rx_clk -> sys_clk)", CDC_SYNC_LATENCY_BYTES),
     ("Registered AXI-S egress stage", 1),

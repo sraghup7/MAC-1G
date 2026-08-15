@@ -1,0 +1,5 @@
+rx_ok 20
+rx_badfcs 5
+rx_runt 5
+rx_oversize 5
+rx_rxer 5

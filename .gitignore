@@ -45,8 +45,20 @@ output_files/
 *.qws
 *.rpt.bak
 
+# Generated stimulus vectors. The frozen directed set under model/vectors/ is
+# committed -- it is the evidence behind verification_plan.md, and it lets the
+# regression run on a machine without MATLAB. The large random sweeps are not:
+# they regenerate bit-identically from the seed in their manifest via
+# `make vectors`, and committing megabytes of generated hex is exactly what
+# the authored-vs-generated rule exists to prevent.
+model/vectors/random_*/
+
 # Simulation
 *.vcd
+xsim.dir/
+*.pb
+*.wdb
+sim/
 *.fst
 *.wlf
 *.ghw

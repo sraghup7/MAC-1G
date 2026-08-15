@@ -1,0 +1,194 @@
+{
+  "name": "rx_bad_fcs",
+  "direction": "rx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 16,
+    "Lengths": [],
+    "Corruptions": [
+      "none",
+      "badfcs"
+    ],
+    "GapMode": "nominal",
+    "PreambleMode": "full",
+    "GarbageRate": 0,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 8,
+    "rx_badfcs": 8,
+    "rx_runt": 0,
+    "rx_oversize": 0,
+    "rx_rxer": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "corruption": "badfcs",
+      "offset": 9,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "corruption": "badfcs",
+      "offset": 52,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 5,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 6,
+      "payloadLen": 64,
+      "corruption": "badfcs",
+      "offset": 10,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 100,
+      "corruption": "badfcs",
+      "offset": 31,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 9,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 10,
+      "payloadLen": 1000,
+      "corruption": "badfcs",
+      "offset": 337,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 11,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 12,
+      "payloadLen": 1500,
+      "corruption": "badfcs",
+      "offset": 1014,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 13,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 14,
+      "payloadLen": 45,
+      "corruption": "badfcs",
+      "offset": 26,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 15,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 16,
+      "payloadLen": 47,
+      "corruption": "badfcs",
+      "offset": 55,
+      "expectedClass": "badfcs",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 16,
+    "skipped": 0,
+    "ok": true,
+    "note": "16 frames cross-checked, all agree."
+  }
+}

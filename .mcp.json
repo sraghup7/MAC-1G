@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "matlab": {
+      "type": "stdio",
+      "command": "E:\\Projects\\MATLAB_MCP\\bin\\matlab-mcp-server-windows-x64.exe",
+      "args": ["--initial-working-folder=E:\\Projects\\MAC1G"],
+      "env": {}
+    }
+  }
+}

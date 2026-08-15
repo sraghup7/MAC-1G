@@ -1,0 +1,84 @@
+classdef tParams < matlab.unittest.TestCase
+    %TPARAMS The model and the RTL must agree about every constant.
+    %
+    %   GEM.PARAMS parses rtl/gem_mac_params.vh rather than restating its
+    %   values, which removes the possibility of drift -- but only if the
+    %   parser itself is right. These tests check the parse against values
+    %   traceable to IEEE 802.3-2022 and PROJECT_SPEC.md B.3a, and check the
+    %   internal arithmetic of the header for self-consistency.
+    %
+    %   "Model and RTL disagree about a constant" is a bug that presents as a
+    %   real RTL failure and costs a day. This file is the cheap insurance.
+
+    methods (Test)
+
+        function standardValues(tc)
+            p = gem.params(true);
+
+            % IEEE 802.3-2022 Clause 3 / Table 4-2.
+            tc.verifyEqual(p.PREAMBLE_BYTES,   7);
+            tc.verifyEqual(p.PREAMBLE_OCTET,   uint32(hex2dec('55')));
+            tc.verifyEqual(p.SFD_OCTET,        uint32(hex2dec('D5')));
+            tc.verifyEqual(p.MIN_FRAME_BYTES,  64);     % minFrameSize, 512 bits
+            tc.verifyEqual(p.MAX_FRAME_BYTES,  1518);   % maxBasicFrameSize
+            tc.verifyEqual(p.IFG_BYTES,        12);     % interPacketGap, 96 bits
+            tc.verifyEqual(p.FCS_BYTES,        4);
+
+            % Clause 3.2.9 CRC parameters.
+            tc.verifyEqual(p.CRC32_POLY,    uint32(hex2dec('04C11DB7')));
+            tc.verifyEqual(p.CRC32_INIT,    uint32(hex2dec('FFFFFFFF')));
+            tc.verifyEqual(p.CRC32_XOROUT,  uint32(hex2dec('FFFFFFFF')));
+        end
+
+        function rxGapFloorIsEight(tc)
+            % Not 12. Table 4-2 Note 3 lets the observed gap shrink to 64 bit
+            % times, and R8 lets the preamble vanish, so RX recovery has 8
+            % cycles. If this ever gets "corrected" to 12, the generator stops
+            % exercising the tight case and the regression goes quietly blind.
+            p = gem.params(true);
+            tc.verifyEqual(p.IFG_RX_MIN_BYTES, 8);
+            tc.verifyLessThan(p.IFG_RX_MIN_BYTES, p.IFG_BYTES);
+        end
+
+        function headerArithmeticIsConsistent(tc)
+            % The payload bounds are not independent numbers -- they follow
+            % from the frame bounds. Check the header's own arithmetic so a
+            % hand edit to one line cannot leave the others stale.
+            p = gem.params(true);
+
+            tc.verifyEqual(p.HEADER_BYTES, ...
+                p.DA_BYTES + p.SA_BYTES + p.ETHERTYPE_BYTES);
+
+            tc.verifyEqual(p.MIN_PAYLOAD_BYTES, ...
+                p.MIN_FRAME_BYTES - p.HEADER_BYTES - p.FCS_BYTES);
+
+            tc.verifyEqual(p.MAX_PAYLOAD_BYTES, ...
+                p.MAX_FRAME_BYTES - p.HEADER_BYTES - p.FCS_BYTES);
+        end
+
+        function fifoDepthMatchesAddressWidth(tc)
+            p = gem.params(true);
+            tc.verifyEqual(p.RX_FIFO_DEPTH, 2^p.RX_FIFO_ADDR_W, ...
+                'RX_FIFO_DEPTH and RX_FIFO_ADDR_W have drifted apart.');
+        end
+
+        function macroReferenceResolves(tc)
+            % GEM_SIM_SCALE is defined as `GEM_MAX_PAYLOAD_BYTES, i.e. by
+            % reference. The parser has to follow that, not store the literal
+            % backtick text.
+            p = gem.params(true);
+            tc.verifyEqual(p.SIM_SCALE, p.MAX_PAYLOAD_BYTES);
+            tc.verifyClass(p.SIM_SCALE, 'double');
+        end
+
+        function residueMatchesTheAlgorithm(tc)
+            % The residue in the header is a claim about the CRC. Verify it
+            % against the CRC itself rather than trusting the comment.
+            p = gem.params(true);
+            data = uint8(1:100);
+            frame = [data, gem.fcsBytes(gem.crc32(data))];
+            tc.verifyEqual(gem.crc32(frame), uint32(p.CRC32_RESIDUE));
+        end
+
+    end
+end

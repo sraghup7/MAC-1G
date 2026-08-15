@@ -1,0 +1,440 @@
+{
+  "name": "rx_recovery_mix",
+  "direction": "rx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 40,
+    "Lengths": [],
+    "Corruptions": [
+      "none",
+      "badfcs",
+      "none",
+      "truncate",
+      "none",
+      "rxer",
+      "none",
+      "oversize"
+    ],
+    "GapMode": "min",
+    "PreambleMode": "random",
+    "GarbageRate": 0.3,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 20,
+    "rx_badfcs": 5,
+    "rx_runt": 5,
+    "rx_oversize": 5,
+    "rx_rxer": 5
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "corruption": "badfcs",
+      "offset": 4,
+      "expectedClass": "badfcs",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "corruption": "truncate",
+      "offset": 21,
+      "expectedClass": "runt",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 5,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 6,
+      "payloadLen": 64,
+      "corruption": "rxer",
+      "offset": 9,
+      "expectedClass": "rxer",
+      "preambleBytes": 6,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 100,
+      "corruption": "oversize",
+      "offset": 1557,
+      "expectedClass": "oversize",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 9,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 10,
+      "payloadLen": 1000,
+      "corruption": "badfcs",
+      "offset": 331,
+      "expectedClass": "badfcs",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 11,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 12,
+      "payloadLen": 1500,
+      "corruption": "truncate",
+      "offset": 68,
+      "expectedClass": "runt",
+      "preambleBytes": 6,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 13,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 14,
+      "payloadLen": 45,
+      "corruption": "rxer",
+      "offset": 22,
+      "expectedClass": "rxer",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 15,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 4,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 16,
+      "payloadLen": 47,
+      "corruption": "oversize",
+      "offset": 1542,
+      "expectedClass": "oversize",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 17,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 18,
+      "payloadLen": 64,
+      "corruption": "badfcs",
+      "offset": 41,
+      "expectedClass": "badfcs",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 19,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 4,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 20,
+      "payloadLen": 100,
+      "corruption": "truncate",
+      "offset": 49,
+      "expectedClass": "runt",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 21,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 22,
+      "payloadLen": 1000,
+      "corruption": "rxer",
+      "offset": 400,
+      "expectedClass": "rxer",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 23,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 24,
+      "payloadLen": 1500,
+      "corruption": "oversize",
+      "offset": 1553,
+      "expectedClass": "oversize",
+      "preambleBytes": 5,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 25,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 26,
+      "payloadLen": 45,
+      "corruption": "badfcs",
+      "offset": 42,
+      "expectedClass": "badfcs",
+      "preambleBytes": 6,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 27,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 28,
+      "payloadLen": 47,
+      "corruption": "truncate",
+      "offset": 28,
+      "expectedClass": "runt",
+      "preambleBytes": 4,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 29,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 30,
+      "payloadLen": 64,
+      "corruption": "rxer",
+      "offset": 20,
+      "expectedClass": "rxer",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 31,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 32,
+      "payloadLen": 100,
+      "corruption": "oversize",
+      "offset": 1555,
+      "expectedClass": "oversize",
+      "preambleBytes": 5,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 33,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 34,
+      "payloadLen": 1000,
+      "corruption": "badfcs",
+      "offset": 145,
+      "expectedClass": "badfcs",
+      "preambleBytes": 2,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 35,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 3,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 36,
+      "payloadLen": 1500,
+      "corruption": "truncate",
+      "offset": 44,
+      "expectedClass": "runt",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": true
+    },
+    {
+      "index": 37,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 38,
+      "payloadLen": 45,
+      "corruption": "rxer",
+      "offset": 29,
+      "expectedClass": "rxer",
+      "preambleBytes": 4,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 39,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 1,
+      "gapBefore": 8,
+      "garbageInGap": false
+    },
+    {
+      "index": 40,
+      "payloadLen": 47,
+      "corruption": "oversize",
+      "offset": 1565,
+      "expectedClass": "oversize",
+      "preambleBytes": 0,
+      "gapBefore": 8,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 40,
+    "skipped": 0,
+    "ok": true,
+    "note": "40 frames cross-checked, all agree."
+  }
+}

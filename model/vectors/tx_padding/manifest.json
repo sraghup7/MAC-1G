@@ -1,0 +1,125 @@
+{
+  "name": "tx_padding",
+  "direction": "tx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 12,
+    "Lengths": [
+      0,
+      1,
+      20,
+      44,
+      45,
+      46,
+      47,
+      60
+    ],
+    "ReadyMode": "always",
+    "MaxPayload": [],
+    "IncludeOversize": false
+  },
+  "counters": {
+    "tx_ok": 12,
+    "tx_rejected": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 0,
+      "padBytes": 46,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 2,
+      "payloadLen": 1,
+      "padBytes": 45,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 3,
+      "payloadLen": 20,
+      "padBytes": 26,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 4,
+      "payloadLen": 44,
+      "padBytes": 2,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 5,
+      "payloadLen": 45,
+      "padBytes": 1,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 6,
+      "payloadLen": 46,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 7,
+      "payloadLen": 47,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 8,
+      "payloadLen": 60,
+      "padBytes": 0,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 9,
+      "payloadLen": 0,
+      "padBytes": 46,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 10,
+      "payloadLen": 1,
+      "padBytes": 45,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 11,
+      "payloadLen": 20,
+      "padBytes": 26,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    },
+    {
+      "index": 12,
+      "payloadLen": 44,
+      "padBytes": 2,
+      "expectRejected": false,
+      "gapBefore": 12,
+      "readyGap": 0
+    }
+  ]
+}

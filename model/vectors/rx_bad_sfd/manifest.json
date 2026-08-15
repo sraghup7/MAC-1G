@@ -1,0 +1,154 @@
+{
+  "name": "rx_bad_sfd",
+  "direction": "rx",
+  "seed": 2.0260814E+7,
+  "generated": "2026-08-14T19:02:29",
+  "options": {
+    "Seed": 2.0260814E+7,
+    "NumFrames": 12,
+    "Lengths": [],
+    "Corruptions": [
+      "none",
+      "badsfd"
+    ],
+    "GapMode": "nominal",
+    "PreambleMode": "full",
+    "GarbageRate": 0,
+    "MaxPayload": []
+  },
+  "counters": {
+    "rx_ok": 6,
+    "rx_badfcs": 2,
+    "rx_runt": 0,
+    "rx_oversize": 0,
+    "rx_rxer": 0
+  },
+  "records": [
+    {
+      "index": 1,
+      "payloadLen": 1,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 2,
+      "payloadLen": 45,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 3,
+      "payloadLen": 46,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 4,
+      "payloadLen": 47,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 5,
+      "payloadLen": 63,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 6,
+      "payloadLen": 64,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 7,
+      "payloadLen": 65,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 8,
+      "payloadLen": 100,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 9,
+      "payloadLen": 512,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 10,
+      "payloadLen": 1000,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 11,
+      "payloadLen": 1499,
+      "corruption": "none",
+      "offset": 0,
+      "expectedClass": "ok",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    },
+    {
+      "index": 12,
+      "payloadLen": 1500,
+      "corruption": "badsfd",
+      "offset": 8,
+      "expectedClass": "",
+      "preambleBytes": 7,
+      "gapBefore": 12,
+      "garbageInGap": false
+    }
+  ],
+  "selfCheck": {
+    "checked": 6,
+    "skipped": 6,
+    "ok": true,
+    "note": "6 frame(s) use badsfd, whose outcome is legitimately unpredictable; positional cross-check skipped for this scenario."
+  }
+}
