@@ -870,10 +870,11 @@ so that no number lives in two places).
 and `rtl/gem_stat_report.v` (R17's readout, B.7 item 5), and the pin and clock
 constraints in `constrs/`.
 
-**Planned, and deliberately not yet present:** `sw/host/` (Scapy test harness — Stage 5,
-when there is something to talk to) · `bringup_checklist.md` (Stage 5, derived from B.5).
-Listing them here is the commitment; a file that exists but is empty would be worse
-than one that does not.
+`sw/host/` (the Scapy harness and the record parser, with its own tests) and
+`bringup_checklist.md` (B.5's order, with what each failure would mean) were listed
+here as deliberately absent from v0.2 until Stage 5 built them. Listing them was the
+commitment; a file that exists but is empty would have been worse than one that does
+not. **Nothing on this page is now outstanding.**
 
 ## B.7 Non-goals, architecture decisions, and weaknesses
 
