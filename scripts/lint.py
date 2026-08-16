@@ -9,9 +9,12 @@ that it fails, so this script is written to be hard to accidentally satisfy:
     the worst possible behaviour for a quality gate.
   * warnings are failures. Verilator's own `-Wall` already exits nonzero on a
     warning; this script does not soften that.
-  * suppressions must be justified in the source. There are exactly two today,
-    both in rtl/gem_mac_stub.v, both explaining themselves and both scheduled
-    for deletion when Stage 4 replaces the stub.
+  * suppressions must be justified in the source. There are exactly three today,
+    each explaining itself where it sits: the nonblocking assignment in the
+    simulation model of the DDR output cell (rtl/gem_oddr.v), a signal driven
+    only for a bound assertion to watch (rtl/gem_rx_deframe.v), and the bits of
+    an MDIO read this design does not act on (rtl/gem_mdio.v). Stage 3's two
+    lived in the port-only stub and went with it, as V-9 required.
 
 WSL: on Windows the natural place for Verilator is inside WSL, so if it is not
 on PATH natively this falls back to `wsl -- verilator`. Relative paths survive
@@ -34,15 +37,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Design entry points, each linted as its own top. Today that is the port-only
-# stub and the Stage 2 skeleton; in Stage 4 the stub is replaced by the real
-# gem_mac and linting it covers the whole hierarchy beneath it.
+# Design entry points, each linted as its own top. Linting gem_mac covers every
+# module beneath it, which is the whole design -- Verilator finds them by name
+# in rtl/ (-Irtl), so a module added to the hierarchy is linted the moment it is
+# instantiated rather than the moment somebody remembers to list it here.
 TOPS = [
-    "rtl/gem_mac_stub.v",
+    "rtl/gem_mac.v",
     "rtl/skeleton_top.v",
 ]
 
-FLAGS = ["--lint-only", "-Wall", "-Irtl"]
+# GEM_BEHAVIORAL_IO selects the plain-Verilog models of the DDR I/O cells. The
+# synthesis path instantiates Xilinx ODDR/IDDR primitives, which Verilator has
+# no source for; see the header of rtl/gem_ddr_io.v for why the primitive path
+# is the default and the model has to be asked for.
+FLAGS = ["--lint-only", "-Wall", "-Irtl", "-DGEM_BEHAVIORAL_IO"]
 
 
 def verilator_command(explicit: str | None) -> list[str]:

@@ -1,25 +1,25 @@
 //----------------------------------------------------------------------------
 // gem_internal_sva -- invariants on gem_mac's internal state.
 //
-// STATUS: properties specified, binds deliberately not yet active.
+// STATUS: active as of Stage 4. Every property below was written in Stage 3,
+// before the modules it refers to existed, and none of them was changed to suit
+// the RTL when the RTL arrived.
 //
-// This file cannot be completed in Stage 3 and that is not an oversight. Every
-// property below refers to a signal inside a module that does not exist yet --
-// the async FIFO's occupancy, the RX control FSM's state encoding, the CRC
-// accumulator. Writing the properties now is still worth doing, because it
-// forces the question "what would I have to be able to observe to check this?"
-// while the module boundaries are still free to move. A FIFO whose fill level
-// is buried in a continuous assignment with no name is one whose overflow
-// cannot be asserted on.
+// That order is the point. Writing these first forced the question "what would
+// I have to be able to observe to check this?" while the module boundaries were
+// still free to move -- a FIFO whose fill level is buried in an unnamed
+// expression is one whose overflow cannot be asserted on. So gem_rx_fifo
+// exposes `level`, gem_rx_deframe exposes `state` and `frame_active`, and
+// gem_crc32 keeps its accumulator in a register called `crc_reg`, because these
+// properties asked for them. Writing assertions after the RTL means asserting
+// whatever the implementation happened to expose, which is how a design ends up
+// with assertions that restate the code instead of the spec.
 //
-// Stage 4 obligation, per module, as it lands:
-//   1. expose the named signal below (a plain wire is enough)
-//   2. uncomment the matching property and its bind
-//   3. run the existing regression -- no new vectors needed
-//
-// The alternative -- writing these after the RTL -- means writing assertions
-// against whatever the implementation happened to expose, which is how a
-// design ends up with assertions that restate the code instead of the spec.
+// One of them did real work immediately. a_crc_reseeded fails if the
+// accumulator still holds the previous frame's remainder on the first hunting
+// cycle, which is exactly what the obvious implementation does -- re-seed when
+// the hunt begins. The RX deframer asserts init one cycle earlier, on the
+// end-of-frame cycle, and the comment there says why.
 //----------------------------------------------------------------------------
 
 `ifndef GEM_INTERNAL_SVA_SV
@@ -28,8 +28,6 @@
 `timescale 1ns / 1ps
 
 `include "gem_mac_params.vh"
-
-/*  ---- Stage 4: enable, module by module -----------------------------------
 
 module gem_internal_sva (
     input wire        rx_clk,
@@ -112,7 +110,5 @@ bind gem_mac gem_internal_sva u_internal_sva (
     .rx_frame_active (u_rx_ctrl.frame_active),
     .rx_crc_reg      (u_rx_crc.crc_reg)
 );
-
---------------------------------------------------------------------------- */
 
 `endif

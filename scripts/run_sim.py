@@ -38,7 +38,29 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SIM = REPO / "sim"
 
-RTL_SOURCES = ["rtl/gem_mac_stub.v"]
+# The design, leaves first. Order does not matter to xvlog, but reading it
+# top-down here is the fastest way to see what the hierarchy is.
+RTL_SOURCES = [
+    "rtl/gem_oddr.v",
+    "rtl/gem_iddr.v",
+    "rtl/gem_crc32.v",
+    "rtl/gem_pulse_sync.v",
+    "rtl/gem_rgmii_tx.v",
+    "rtl/gem_rgmii_rx.v",
+    "rtl/gem_tx_ingress.v",
+    "rtl/gem_tx_engine.v",
+    "rtl/gem_rx_deframe.v",
+    "rtl/gem_rx_fifo.v",
+    "rtl/gem_rx_egress.v",
+    "rtl/gem_stats.v",
+    "rtl/gem_mdio.v",
+    "rtl/gem_mac.v",
+]
+
+# Simulation gets the plain-Verilog models of the DDR I/O cells; synthesis gets
+# the Xilinx primitives. rtl/gem_oddr.v explains why that is the direction the
+# default points in.
+RTL_DEFINES = ["GEM_BEHAVIORAL_IO"]
 
 TB_SOURCES = [
     "tb/gem_tb_pkg.sv",
@@ -47,6 +69,9 @@ TB_SOURCES = [
     "tb/assertions/gem_axis_sva.sv",
     "tb/assertions/gem_rgmii_sva.sv",
     "tb/assertions/gem_internal_sva.sv",
+    "tb/tb_gem_crc32.sv",
+    "tb/tb_gem_rx_fifo.sv",
+    "tb/tb_gem_mdio.sv",
     "tb/tb_rgmii_bfm.sv",
     "tb/tb_axis_tx_driver.sv",
     "tb/tb_gem_mac_rx.sv",
@@ -69,6 +94,24 @@ SELFTESTS = [
     ("tb_rgmii_bfm",     "rx_min_gap",  "rgmii_bfm_selftest"),
     ("tb_axis_tx_driver", "tx_underrun", "axis_tx_driver_selftest"),
 ]
+
+# Per-module testbenches (Stage 4 step 4: "write its self-checking testbench",
+# before the module is integrated). None of them reads a vector file -- each
+# builds its own stimulus and checks a property the integrated regression
+# cannot isolate:
+#
+#   tb_gem_crc32   the published CRC-32 check value and the residue, which come
+#                  from outside this project. The scenario regression compares
+#                  the design against the golden model, so a model that was
+#                  wrong about the CRC would agree with an RTL that was wrong
+#                  the same way. These numbers do not come from either.
+#   tb_gem_rx_fifo the async FIFO at full, at empty, and with the two clocks
+#                  running at unrelated rates -- none of which the integrated
+#                  tests reach, because R18's contract keeps it nearly empty.
+#   tb_gem_mdio    Clause 22 framing against a PHY register-file model (V-3).
+#
+# They run first, because a failure here explains a failure everywhere else.
+UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio"]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.
@@ -123,6 +166,8 @@ def scenarios_from_catalogue(include_random: bool) -> list[tuple[str, str]]:
 def compile_sources(xvlog: str) -> bool:
     print("==> Compiling")
     cmd = [xvlog, "-sv", "-i", str(REPO / "rtl")]
+    for macro in RTL_DEFINES:
+        cmd += ["-d", macro]
     cmd += [str(REPO / s) for s in RTL_SOURCES + TB_SOURCES]
 
     result = run(cmd, SIM)
@@ -199,6 +244,25 @@ def run_scenario(xsim: str, snapshot: str, name: str,
     return False, summary
 
 
+def run_unit(xsim: str, tb: str) -> tuple[bool, str]:
+    """Run a per-module testbench. No vectors, so no run.cfg to hand over."""
+    result = run([xsim, tb, "-R", "-log", f"{tb}.log"], SIM)
+    output = result.stdout
+    (SIM / f"{tb}.out").write_text(output, encoding="utf-8")
+
+    sva = [l for l in output.splitlines() if l.startswith("Error:")]
+    if "[gem_tb] PASS " in output and not sva:
+        checks = re.search(r"(\d+) checks, (\d+) failures", output)
+        return True, f"{checks.group(1)} checks" if checks else "passed"
+
+    fails = [l for l in output.splitlines() if l.startswith("FAIL ")]
+    if fails:
+        return False, fails[0][:150]
+    if sva:
+        return False, f"{len(sva)} assertion failure(s) -- first: {sva[0][7:].strip()[:100]}"
+    return False, "no PASS line -- see the log"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", help="run only this scenario")
@@ -228,6 +292,7 @@ def main() -> int:
 
     # The BFM self-test and the loopback are extra runs layered on top of the
     # scenario list, not scenarios themselves.
+    run_units = not args.scenario and not args.tb
     run_bfm = not args.scenario and not args.tb
     run_loopback = not args.scenario and (not args.tb or args.tb == LOOPBACK_TB)
 
@@ -235,6 +300,8 @@ def main() -> int:
         if not compile_sources(xvlog):
             return 1
         needed = {TB_FOR_DIRECTION[d] for _, d in todo}
+        if run_units:
+            needed.update(UNIT_TBS)
         if run_bfm:
             for tb, _, _ in SELFTESTS:
                 needed.add(tb)
@@ -245,6 +312,16 @@ def main() -> int:
                 return 1
 
     results = []
+
+    # Per-module tests before anything integrated: they are the cheapest layer
+    # that can fail, and each one isolates a module the scenarios can only
+    # reach through everything else.
+    if run_units:
+        print("\n==> Per-module testbenches\n")
+        for tb in UNIT_TBS:
+            passed, detail = run_unit(xsim, tb)
+            results.append((tb, passed))
+            print(f"  {'PASS' if passed else 'FAIL'}  {tb:<24} {detail}")
 
     # Self-tests first. If the harness is wrong, every result after it is
     # noise -- and these are the only runs with no DUT in them, so they are

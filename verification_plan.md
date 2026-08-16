@@ -1,6 +1,6 @@
 # `gem_mac` — Verification Plan
 
-Document status: v1.0 — Stage 3 complete. Versioned alongside the RTL.
+Document status: v1.1 — Stage 4 complete. Versioned alongside the RTL.
 
 This is how "are we done?" gets answered with evidence instead of opinion. Every
 requirement in [`spec/PROJECT_SPEC.md`](spec/PROJECT_SPEC.md) B.2 appears below
@@ -26,7 +26,7 @@ python scripts/run_sim.py
 | `make vectors` | regenerates every scenario from its seed | fails if the generator and the model disagree |
 | `make vectors-check` | do the **committed** vectors still match the model? | fails if an edited model left them a fossil |
 | `make sim S=<scenario>` | one scenario | — |
-| `make regress` | every frozen scenario | **the gate**: nonzero exit on any mismatch or assertion failure |
+| `make regress` | per-module tests, harness self-tests, every frozen scenario, loopback | **the gate**: nonzero exit on any mismatch or assertion failure |
 | `make regress-all` | plus the large random sweeps | — |
 | `make lint` | Verilator `--lint-only -Wall` on every design top (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip |
 | `make check` | model, vectors-check, lint, regress | the whole thing, in the order that makes a failure diagnosable |
@@ -36,6 +36,7 @@ Stage 2's build carries three more gates, inside `scripts/build.tcl`:
 | Command | What it does | Gate |
 |---|---|---|
 | `make synth` | non-project synthesis | **gate 1**: any surviving inferred latch refuses the build · **gate 1b**: so does a `Synth 8-327` inference warning, which catches a latch optimised away before gate 1 could see it |
+| `make oocsynth` | `gem_mac` alone, out of context (Stage 4 step 6) | **gates**: both latch gates, negative post-synthesis slack at 125 MHz, and any B.2 resource line exceeded |
 | `make impl` | place and route | **gate 2**: WNS or WHS below zero refuses · **gate 3**: `check_timing` refuses on unclocked registers, unconstrained internal endpoints, multiple clocks or loops |
 | `make bitstream` | writes `build/skeleton_top.bit` | inherits every gate above |
 | `make program` | loads the board | Stage 7; needs hardware |
@@ -64,31 +65,41 @@ debug loops:
    separately from the checks so the report cannot overstate its coverage.
 3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
    still reflect the current model?
-4. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
+4. **Per-module testbenches** (`tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio`,
+   ~2 s) — Stage 4 step 4, each module checked before it is judged through
+   everything else. `tb_gem_crc32` is the only layer whose reference does not
+   come from this project: the published CRC-32 check value and the residue
+   constant are properties of the standard, so a golden model that was wrong
+   about the CRC could not hide behind an RTL that was wrong the same way.
+   `tb_gem_rx_fifo` runs the async FIFO full, empty and against two unrelated
+   clock rates — none of which the scenarios reach, because R18's contract keeps
+   it nearly empty. `tb_gem_mdio` is V-3's PHY register-file BFM.
+5. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
    functional model and the stimulus driver themselves right? Neither has a DUT
-   in it, so they are the only runs that pass today, and the first thing to
-   check when something downstream looks impossible. Both exist because the
-   harness had real bugs that presented as design bugs.
-5. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
-   of every scenario, including ones nobody designed. `gem_axis_sva` (bound
-   twice, to both ports) and `gem_rgmii_sva` are live; `gem_internal_sva` is
-   written but deliberately not yet bound — see the Stage 4 obligation list in
-   its header. An SVA failure fails the scenario even when every data
+   in it, so they are the first thing to check when something downstream looks
+   impossible. Both exist because the harness had real bugs that presented as
+   design bugs.
+6. **Bound assertions** (`tb/assertions/`) — invariants checked on every cycle
+   of every scenario, including ones nobody designed. All three files are live as of
+   Stage 4: `gem_axis_sva` (bound twice, to both ports), `gem_rgmii_sva`, and
+   `gem_internal_sva`, whose properties were written in Stage 3 against modules
+   that did not exist and were bound unchanged when they did. An SVA failure fails the scenario even when every data
    comparison passed, which `scripts/run_sim.py` enforces because a bound
    assertion's `$error` does not route through the testbench's failure count.
 
    **Vacuity is measured, not assumed.** Each `gem_axis_sva` bind reports at
    the end of every run how many beats and how many stalled beats it saw, so a
    property that never had an antecedent to evaluate says so instead of
-   counting as coverage. Against the current stub that report reads *"no beats
-   occurred — every property on this port was vacuous"*, which is the honest
-   description of where the assertion layer stands before there is a design.
-6. **Scenario regression** (`scripts/run_sim.py`) — the design against the
+   counting as coverage. A typical Stage 4 run now reports thousands of beats on
+   both ports and zero stalled beats on `rx_axis` — the four stall properties
+   there remain vacuous, which is R18's no-stall contract working as specified
+   rather than a gap to fix by inventing stalls.
+7. **Scenario regression** (`scripts/run_sim.py`) — the design against the
    model, bit for bit.
-7. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
+8. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
    the only layer where a TX and RX error that cancel each other out cannot
    hide.
-8. **Build gates** (`scripts/build.tcl`) — the checks a simulation cannot make:
+9. **Build gates** (`scripts/build.tcl`, `scripts/synth_module.tcl`) — the checks a simulation cannot make:
    inferred latches, slack, and whether timing analysis actually covered the
    design rather than passing because nothing was constrained.
 
@@ -98,45 +109,45 @@ debug loops:
 
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
-| R1 | Ethernet II encapsulation, preamble→FCS | `tFrame/fieldOrderAndLengths`, `tFrame/etherTypeIsBigEndian`, `tx_clean_sweep`, `gem_rgmii_sva/a_frame_starts_with_preamble` | model + sim + assertion | pending-rtl |
-| R2 | DA/SA/EtherType per frame, not compile-time | `tx_clean_sweep` (header on `tx_axis_tuser` at SOF) | sim | pending-rtl |
-| R3 | Pad payloads < 46 B to a 64 B frame | `tFrame/paddingReachesMinimumFrame`, `tFrame/padIsZeros`, `tx_padding` | model + sim | pending-rtl |
-| R4 | CRC-32, reflected, LSB-octet first | `tCrc32/checkValue`, `tCrc32/agreesWithZlib`, `tCrc32/residueIsConstant`, `tFrame/fcsIsLeastSignificantOctetFirst`, `tFrame/fcsCoversHeaderAndPadOnly`, `tx_clean_sweep` | model + sim | **green** (model) / pending-rtl (design) |
-| R5 | IFG ≥ 96 bit times | `gem_rgmii_sva/a_ifg_respected`, plus a per-frame `gap >= GEM_IFG_BYTES` check in `tb_gem_mac_tx` — a **floor**, not an equality, per B.4c | assertion + sim | pending-rtl |
-| R6 | Reject payload > 1500 B, never emit oversize | `tFrame/oversizePayloadIsRejected`, `tx_reject_oversize` | model + sim | pending-rtl |
-| R7 | Sustain back-to-back frames at line rate; abort on underrun (B.4b) | `tx_backpressure` (gaps between frames), `tx_underrun` (stall mid-payload → TX_ER + inverted FCS, then clean recovery), `tAbort` ×10, `random_tx_sweep` | model + sim | **green** (model) / pending-rtl (design) |
+| R1 | Ethernet II encapsulation, preamble→FCS | `tFrame/fieldOrderAndLengths`, `tFrame/etherTypeIsBigEndian`, `tx_clean_sweep`, `gem_rgmii_sva/a_frame_starts_with_preamble` | model + sim + assertion | **green** |
+| R2 | DA/SA/EtherType per frame, not compile-time | `tx_clean_sweep` (header on `tx_axis_tuser` at SOF) | sim | **green** |
+| R3 | Pad payloads < 46 B to a 64 B frame | `tFrame/paddingReachesMinimumFrame`, `tFrame/padIsZeros`, `tx_padding` | model + sim | **green** |
+| R4 | CRC-32, reflected, LSB-octet first | `tCrc32/*`, `tFrame/fcsIsLeastSignificantOctetFirst`, `tb_gem_crc32` (published check value + residue, against numbers from outside this project), `tx_clean_sweep` | model + unit + sim | **green** |
+| R5 | IFG ≥ 96 bit times | `gem_rgmii_sva/a_ifg_respected`, plus a per-frame `gap >= GEM_IFG_BYTES` check in `tb_gem_mac_tx` — a **floor**, not an equality, per B.4c | assertion + sim | **green** |
+| R6 | Reject payload > 1500 B, never emit oversize | `tFrame/oversizePayloadIsRejected`, `tx_reject_oversize` | model + sim | **green** — R6 reworded in Stage 4, see **V-16** and spec B.4d |
+| R7 | Sustain back-to-back frames at line rate; abort on underrun (B.4b) | `tx_backpressure`, `tx_underrun` (stall mid-payload → TX_ER + inverted FCS, then clean recovery), `tAbort` ×10, `random_tx_sweep` (600 frames) | model + sim | **green** |
 
 ## Traceability — receive
 
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
-| R8 | Detect SFD anywhere; tolerate absent preamble | `tDeframe/findsSfdWithNoPreambleAtAll`, `tDeframe/findsSfdAfterFullPreamble`, `rx_trimmed_preamble`, `rx_min_gap` | model + sim | pending-rtl |
-| R9 | Verify FCS, deliver with an EOF verdict | `tCrc32/residueIsConstant`, `tCrc32/residueRejectsCorruption`, `tFrame/goodFrameParsesClean`, `rx_clean_sweep`, `rx_bad_fcs` | model + sim | pending-rtl |
-| R10 | Classify + count + recover from 4 error classes | `tFrame/classifiesBadFcs`, `tFrame/classifiesRunt`, `tFrame/classifiesOversize`, `tFrame/classifiesRxError`, `tFrame/classPrecedenceIsRuntOverBadFcs`, `tDeframe/goodFrameSurvivesAfterABadOne`, `rx_bad_fcs`, `rx_runt`, `rx_oversize`, `rx_rxer`, `rx_recovery_mix`, `gem_internal_sva/a_rx_recovers_in_budget` | model + sim + assertion | pending-rtl |
-| R11 | Ignore inter-frame garbage silently | `tDeframe/ignoresInterFrameGarbage`, `tDeframe/dvBurstWithoutSfdIsReportedNotSilentlyDropped`, `rx_garbage`, `rx_bad_sfd` | model + sim | pending-rtl |
+| R8 | Detect SFD anywhere; tolerate absent preamble | `tDeframe/findsSfdWithNoPreambleAtAll`, `tDeframe/findsSfdAfterFullPreamble`, `rx_trimmed_preamble`, `rx_min_gap` | model + sim | **green** |
+| R9 | Verify FCS, deliver with an EOF verdict | `tCrc32/residueIsConstant`, `tCrc32/residueRejectsCorruption`, `tb_gem_crc32` (residue and its rejection of a single flipped bit), `rx_clean_sweep`, `rx_bad_fcs` | model + unit + sim | **green** |
+| R10 | Classify + count + recover from 4 error classes | `tFrame/classifies*`, `tFrame/classPrecedenceIsRuntOverBadFcs`, `rx_bad_fcs`, `rx_runt`, `rx_oversize`, `rx_rxer`, `rx_recovery_mix`, `gem_internal_sva/a_rx_recovers_in_budget` | model + sim + assertion | **green** — recovery assertion live and demonstrated to refuse a 10-cycle recovery |
+| R11 | Ignore inter-frame garbage silently | `tDeframe/ignoresInterFrameGarbage`, `rx_garbage`, `rx_bad_sfd` | model + sim | **green** |
 | R12 | *[stretch]* DA filter / promiscuous mode | — | — | n/a for v1 (B.7 non-goal until R12 is promoted) |
 
 ## Traceability — interfaces
 
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
-| R13 | RGMII v2.0, 4-bit DDR at 125 MHz | `tRgmii/lowNibbleOnRisingEdge`, `tRgmii/controlEncodingTable`, `tRgmii/encodeDecodeRoundTrip`, `rgmii_bfm` (drives real DDR), every sim scenario | model + sim | **green** (model) / pending-rtl |
+| R13 | RGMII v2.0, 4-bit DDR at 125 MHz | `tRgmii/*`, `rgmii_bfm` (drives real DDR), every sim scenario | model + sim | **green** (simulation) — the pins' electrical timing is V-2 |
 | R14 | Documented clock/data skew mechanism | — | bench + static timing | **open** · see **V-2** |
-| R15 | Registered AXI-Stream, no combinational handshake paths | `gem_axis_sva` ×5 properties, bound to both ports | assertion | pending-rtl |
-| R16 | MDIO/MDC master, ≤ 2.5 MHz | — | — | **open** · see **V-3** |
-| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 16 frozen scenarios, including `tx_underrun` | sim | pending-rtl |
+| R15 | Registered AXI-Stream, no combinational handshake paths | `gem_axis_sva` ×8 properties, bound to both ports | assertion | **green** |
+| R16 | MDIO/MDC master, ≤ 2.5 MHz | `tb_gem_mdio`: Clause 22 framing, field order, bus turnaround and a measured MDC period, against a PHY register-file BFM | unit | **green** (framing) — PHY address and the vendor speed register are bring-up step 3 · see **V-3** |
+| R17 | Status/counter block, per error class | `counters_expected.txt` checked in all 16 frozen scenarios, including `tx_underrun` | sim | **green** |
 
 ## Traceability — performance and quality
 
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
-| R18 | Line rate both directions, zero drops | `rx_min_gap`, `random_rx_sweep`, `random_tx_sweep` | sim | pending-rtl |
-| R19 | Three clock domains, zero undeclared CDC | `tb_gem_mac_rx` drives `rx_clk` deliberately offset from `tx_clk`; `tb_gem_mac_loopback` re-emits on an independent `rx_clk` so the async FIFO is genuinely crossed; `report_cdc` at Stage 6 | sim + tool | pending-rtl |
-| R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | `scripts/build.tcl` gate 2 (slack) **and** gate 3 (`check_timing` coverage — refuses on unclocked registers, unconstrained endpoints, multiple clocks, loops) | tool | **partial** — both gates run and gate 3 has been shown to refuse; the I/O-delay half of R20 lands with the RGMII constraints in Stage 6 |
-| R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** against `GEM_RX_LATENCY_MAX_CYCLES`; `tb_rgmii_bfm` verifies the timebase the measurement rests on | sim | pending-rtl |
-| R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 2 tops, zero warnings; gate verified to fail on an injected width mismatch |
-| R23 | Zero inferred latches | `scripts/build.tcl` gate 1 (surviving latch cells) **and** gate 1b (the `Synth 8-327` inference warning, which catches latches optimised away before gate 1 can see them) | tool | **green** — both demonstrated to refuse a build by planting a latch; gate 1b catches a case gate 1 passed |
-| R24 | Bit-exact vs the golden model; no negative slack | `make regress` + `scripts/build.tcl` slack gate | sim + tool | pending-rtl |
+| R18 | Line rate both directions, zero drops | `rx_min_gap`, `random_rx_sweep`, `random_tx_sweep`, `tb_gem_mac_loopback` (both directions at once) | sim | **green** |
+| R19 | Three clock domains, zero undeclared CDC | one async FIFO and five toggle synchronisers, and nothing else crossing; `tb_gem_rx_fifo` runs the FIFO across two unrelated clock rates; `tb_gem_mac_loopback` re-emits on an independent `rx_clk`; `report_cdc` at Stage 6 | sim + unit + tool | **green** (structural + sim) — `report_cdc` is Stage 6 |
+| R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | `scripts/synth_module.tcl` (WNS +2.135 ns post-synthesis, out of context, refuses on negative), `scripts/build.tcl` gates 2 and 3 | tool | **partial** — the I/O-delay half lands with the RGMII constraints in Stage 6 |
+| R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** | sim | **green** — **13 cycles**, on every frame of every scenario, exactly B.1b's bottom-up prediction |
+| R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 2 tops, zero warnings, three justified suppressions |
+| R23 | Zero inferred latches | `scripts/build.tcl` gates 1 and 1b, and the same two in `scripts/synth_module.tcl` | tool | **green** |
+| R24 | Bit-exact vs the golden model; no negative slack | `make regress` + the slack gates | sim + tool | **green** — 23 of 23 runs pass; WNS +2.135 ns out of context at 125 MHz |
 
 ---
 
@@ -162,7 +173,7 @@ second list that would drift.
 | `tx_underrun` | tx | R7 R15 R17 | **user starves the MAC mid-payload** — B.4b abort, then clean recovery |
 | `tx_clean_sweep` | tx | R1 R2 R4 R5 R13 | frame assembly, compared at cycle granularity |
 | `tx_padding` | tx | R3 | payloads either side of 46 octets |
-| `tx_reject_oversize` | tx | R6 | 1501 B in, **nothing** on the wire |
+| `tx_reject_oversize` | tx | R6 | 1501 B in, **1517 B out marked bad** — the only vector Stage 4 amended (B.4d) |
 | `tx_backpressure` | tx | R7 R15 | tready deasserted between frames |
 | `random_rx_sweep` | rx | R8–R11 R17 | 600 frames, every corruption × the length set |
 | `random_tx_sweep` | tx | R1 R3 R5 R7 | 600 frames across the full length range |
@@ -193,15 +204,46 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Golden model test suite | **70 / 70 passing** |
 | Scenario generation | 18 / 18, every generator self-check agrees with the model |
 | Committed vectors vs the model | **48 / 48 files current** |
+| Per-module testbenches (Stage 4 step 4) | **3 / 3** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
-| Verilator lint (R22) | **passing** — 2 tops, zero warnings |
-| Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates all green on `skeleton_top`; WNS 17.204 ns |
-| Frozen regression vs `gem_mac_stub` | 0 / 18 passing — **expected**, there is no design yet |
+| Verilator lint (R22) | **passing** — 2 tops, zero warnings, 3 justified suppressions |
+| Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates green |
+| **Frozen regression vs `gem_mac`** | **16 / 16 passing** |
+| Random sweeps | **2 / 2** — 600 frames each |
+| Loopback, across an independent rx_clk | **2 / 2** |
+| `gem_mac` out of context (Stage 4 step 6) | 946 LUT · 1316 FF · 0 BRAM · 0 DSP · WNS **+2.135 ns** at 125 MHz |
+| R21 measured worst-case RX latency | **13 cycles** against a 32-cycle ceiling — exactly B.1b's predicted 13 |
 
-The regression failing against a port-only stub is the Stage 3 result, not a
-problem to fix. What was being checked is that the plumbing runs end to end and
-that failures are legible, and running it found two real defects in the harness
+Three things are worth pulling out of that table.
+
+**The design was compared against a reference nobody had tuned to it.** Every
+number the scenarios check was frozen before the RTL existed, and the one
+vector that changed (`tx_reject_oversize`, V-16) changed because the
+specification was wrong, not because the design was — the counters it checks
+were right both before and after.
+
+**The assertions written in Stage 3 were bound unchanged and caught something
+immediately.** `gem_internal_sva` refers to signals inside modules that did not
+exist when it was written; the RTL was made to expose them rather than the
+properties rewritten to suit the RTL. `a_crc_reseeded` then failed on a design
+whose every data comparison passed, because the CRC accumulator was re-seeded
+when the hunt began instead of one cycle earlier at end of frame. At the 8-byte
+gap floor that poisons the next frame. No data check in this repository would
+have found it.
+
+**Both new assertion properties were made to fail on purpose**, like the seven
+gates before them: re-seeding the CRC one cycle late trips `a_crc_reseeded` (12
+failures on `rx_clean_sweep`, data comparison still green), and lengthening RX
+recovery from 1 cycle to 10 trips `a_rx_recovers_in_budget` on `rx_min_gap`.
+
+---
+
+### What Stage 3 left behind, and what Stage 4 found in it
+
+The Stage 3 result — the regression failing against a port-only stub — was not a
+problem to fix. What was being checked is that the plumbing ran end to end and
+that failures were legible, and running it found real defects in the harness
 that would otherwise have surfaced mid-debug:
 
 - `trim_nl` compared against the string literal `"\r"`, which is **not** a
@@ -220,6 +262,29 @@ that would otherwise have surfaced mid-debug:
   fine. Found only once `tb_rgmii_bfm` diffed the BFM against itself, which is
   why that testbench now exists and runs first.
 
+Stage 4 found three more of the same kind, and the pattern is worth naming: **a
+harness written against a stub encodes assumptions the stub could never
+violate.** All three presented as design bugs and none of them was one.
+
+- **the loopback scoreboard assumed a frame cannot come back before it has
+  finished being sent.** It compared `rx_frame >= u_drv.frames_sent` and failed
+  on the first beat of the first frame of every loopback run. That inequality is
+  correct for a store-and-forward MAC and correct against a stub that transmits
+  nothing; against this design it is wrong, because cut-through means the header
+  is on the wire and looping back while the driver is still handing over the
+  payload. B.4b's 22-octet head start, observed from the far end.
+- **the FIFO unit test counted reads the FIFO never made.** It qualified its
+  data check on `rd_en` alone, while the FIFO advances on `rd_en && !empty`; on
+  the cycle after the last entry is taken those disagree, and every later entry
+  read back as shifted by one. The design was right to refuse the pop.
+- **the same test's writer held `wr_en` up one cycle too long**, offering an
+  extra entry the burst had not counted, which then read back as a duplicate.
+  Both of these were written to catch a CDC bug and would have reported one.
+
+None of the three could have been found before there was a design, which is the
+argument for writing them anyway and the argument for not trusting them until
+something real has run through them.
+
 ---
 
 ## Open items
@@ -227,14 +292,15 @@ that would otherwise have surfaced mid-debug:
 | # | Item | Why it is open | Plan |
 |---|---|---|---|
 | **V-1** | ~~TX behaviour when the user stalls mid-frame is unspecified~~ | **Closed — resolved in spec B.4b as cut-through with abort on underrun.** Store-and-forward was rejected: buffering a max frame before starting costs 12.14 µs of transmit latency and a BRAM the B.2 table does not carry, in a design whose premise is latency. On a mid-payload stall the MAC emits the FCS over what it has sent, bitwise inverted, with TX_ER across those four cycles, counts `stat_tx_underrun`, and discards the rest rather than resuming. Modelled by `gem.abortedFrame`, exercised by the `tx_underrun` scenario, and pinned down by `tAbort`'s 10 tests. | — |
+| **V-16** | ~~R6 as written and B.4b as written cannot both be satisfied~~ | **Closed — R6 reworded, one vector regenerated (spec B.4d).** Found by writing the Stage 4 transmit path, and unfindable before it: R6 said reject payloads over 1500 octets and never emit an oversize frame, and `tx_reject_oversize` froze that as *nothing at all on the wire* for a 1501-octet request. But the transmit interface carries no length — a frame's length is known only when `tlast` arrives, and B.4b's cut-through decision means TX_EN went up long before that. Knowing the length before committing means holding the whole frame first: store-and-forward, which B.4b rejected for costing 12.14 µs and a BRAM the B.2 table does not carry, and which a threshold buffer does not rescue, because a buffer deep enough to decide *is* a whole-frame buffer. The two requirements were jointly unsatisfiable and the vector encoded the impossible half. Resolved the way B.4b would have resolved it: refuse the octet that would be the 1501st **before** transmitting it, leaving 14 + 1499 + 4 = 1517 octets on the wire — inside maxBasicFrameSize, so R6's "never emit an oversize frame" holds literally — marked bad with `TX_ER` and an inverted FCS, counted in `stat_tx_rejected`, remainder drained and discarded. `gem.abortedFrame` already modelled the object; only `gem.genTxScenario` needed to emit it. | — Closed. `tx_reject_oversize/tx_expected.hex` is the only vector datum that changed; all 47 other committed files regenerated byte-identically, which is the evidence that this was a contained specification error rather than a design that had drifted. The counters never moved: they were right before the amendment and after it. |
 | **V-2** | R14's RGMII skew cannot be simulated | The 1.6 ns `GTX_CLK` phase shift is an I/O timing property. Simulation will pass with any phase; only static timing analysis and a scope on the bench can confirm it. | Stage 6 `report_timing` on the constrained I/O paths, then bring-up step 5 with an ILA or scope on `GTX_CLK`/`TXD0`. |
-| **V-3** | R16 MDIO has no test | The MDIO master is an independent block on a different interface; there is no golden-model work it shares. | Add `tb_mdio.sv` with a PHY register-file BFM when the module is written (Stage 4), checking the 64-cycle Clause 22 transaction and the ≤ 2.5 MHz MDC bound. |
+| **V-3** | ~~R16 MDIO has no test~~ | **Closed as planned.** `tb/tb_gem_mdio.sv` runs the master against a PHY register-file BFM that decodes Clause 22 the way the standard specifies rather than the way this MAC happens to emit it, so a wrongly ordered field is answered by silence instead of accommodated. It checks the 64-period frame, start and opcode, PHY and register address, bus turnaround, a **measured** MDC period against R16's 2.5 MHz ceiling, and that a returned register value actually reaches `link_up` and `link_speed`. What it cannot check is what the board straps `PHY_ADDR` to, and whether register 0x1F carries the speed bits where the KSZ9031RNX datasheet says: both are stated in the module header, and both are bring-up step 3. | the remaining half is bring-up |
 | **V-4** | ~~R22's lint gate cannot run~~ | **Closed.** Verilator 5.032 installed under WSL; `scripts/lint.py` bridges to it from Windows and falls back to a native binary elsewhere. Both design tops lint clean under `-Wall`, and the gate was verified to fail by injecting a width mismatch — it caught that plus the unused signal and exited nonzero. `make check` now runs it. | — |
 | **V-5** | ~~R21's latency is specified but not measured~~ | **Closed.** `gem.expectedBeats` now emits each frame's `sfdCycle`, the driver exposes when cycle 0 was launched, and `tb_gem_mac_rx` converts the two into a per-frame cycle count checked against `GEM_RX_LATENCY_MAX_CYCLES`. The worst measured latency is printed on every run even when it passes, so erosion against B.1b's predicted 13 is visible before it becomes a violation. | — |
 | **V-6** | The golden CRC is not yet checked against a real capture | B.4 asks for validation against a Wireshark capture; the board is not in hand. Validation is currently the published check value, Python's `zlib` over 2000 vectors, and the residue property. | Close at bring-up step 5 by capturing a frame the design transmitted and confirming Wireshark reports its FCS correct. |
 | **V-7** | R12 (DA filter) has no test | Stretch requirement, not implemented. | Promote out of B.7's non-goals or leave explicitly unimplemented at release. |
-| **V-8** | The latency *measurement* has never measured a real number | The arithmetic is exercised only when a design delivers beats, and the stub delivers none. `tb_rgmii_bfm` verifies the `t0` timebase it rests on (1764 cycles checked), so the input is sound — but the subtraction itself is unproven. | It will be exercised by the first RTL that delivers a frame, in Stage 4. Sanity-check the first number reported against B.1b's predicted 13 rather than only against the 32-cycle ceiling. |
-| **V-9** | Two lint suppressions live in `rtl/gem_mac_stub.v` | `UNUSED` (every input is deliberately unconnected — that is what makes it a stub) and `DECLFILENAME` (the module must be named `gem_mac` for the testbenches while the file is named for what it is). Both are justified in the source, which is what R22 permits. | Both are deleted, not carried forward, when Stage 4 replaces the stub with `rtl/gem_mac.v`. If either survives into real RTL, that is a finding. |
+| **V-8** | ~~The latency measurement has never measured a real number~~ | **Closed.** It measures **13 cycles**, on every frame of every RX scenario including the 600-frame random sweep. The sanity check this item asked for — compare against B.1b's predicted 13, not merely against the 32-cycle ceiling — passes exactly, which is worth more than clearing the ceiling would have been: the pipeline has the depth the specification says it has, stage for stage. | — |
+| **V-9** | ~~Two lint suppressions live in `rtl/gem_mac_stub.v`~~ | **Closed.** The stub is deleted and both suppressions went with it; neither was carried forward. The design carries three of its own, each justified in the source as R22 requires, and each for a signal that exists to be *observed* rather than used: `frame_active` (which `gem_internal_sva` binds to), the unread bits of the MDIO shift register (a Clause 22 read shifts in all sixteen whether or not three of them are acted on), and one `COMBDLY` in the behavioural DDR output model, where the nonblocking assignment is precisely what keeps the captured wire stream independent of simulator scheduling order. | — |
 | **V-10** | ~~The Makefile has never been executed~~ | **Closed.** GNU Make 4.2.1 ships with Vivado (`$(VIVADO_ROOT)/gnuwin/bin/make.exe`), so no install was needed and it is guaranteed present wherever Vivado is. Running it found two defects that only appear on execution: `@echo "..."` printed its quotes literally under cmd.exe, and `clean`/`clean-sim` used `rm -rf`, which is not a cmd builtin — they worked only when make happened to be launched from Git Bash and failed from PowerShell or cmd. Help now uses `$(info)` (never reaches a shell) and the clean targets go through `scripts/clean.py`. `make check` runs end to end and exits nonzero on the failing regression, as a gate should. | — |
 | **V-15** | ~~Vector coverage was partly accidental~~ | **Closed.** Reviewing the committed vectors rather than the catalogue that claims to produce them found three gaps. All 17 scenarios shared one hard-coded seed, so two scenarios differing only in corruption kind drew **identical** offsets, and the random sweeps retraced the directed set's RNG trajectory — `gem.seedFor` now derives a distinct seed per scenario from its name (name-derived, so inserting a scenario does not churn every other vector file). `rx_trimmed_preamble` claims to sweep preamble lengths 0..7 and actually produced {0,1,2,3,5,6}, missing 4 and — in the one scenario whose entire purpose is preamble length — 7, the standard full preamble; `PreambleMode='random'` now covers all eight before repeating. The four classification boundaries were present but 63 and 1519 occurred once each, purely because seeded offsets happened to land there, so a seed change would have removed them silently; `rx_length_edges` now constructs all four and `tGenerator` asserts they survive. | — |
 | **V-14** | ~~A passing WNS was hiding an unconstrained design~~ | **Closed.** Vivado said it plainly and nobody was reading it: *"[Place 30-2953] Timing driven mode will be turned off because no critical terminals were found"* — the build reported WNS 17.2 ns while the placer had timing analysis switched off, because nothing in the design was constrained. WNS ≥ 0 is nearly free when no path is constrained enough to have negative slack. Added gate 3, a `check_timing` coverage gate that refuses on unclocked registers, unconstrained internal endpoints, multiple clocks and loops, and lists ports lacking I/O delay. Also declared the LEDs as false paths in `constrs/exceptions.xdc` so "unconstrained because it does not matter" is written down and distinguishable from "unconstrained because somebody forgot" — check_timing now reports them as *"no output delay but user has a false path constraint"*. Gate 2's diagnosis was wrong too: with no clock, `get_property SLACK` returns `""` and Tcl compares `"" < 0` as strings, so the build was refused with "negative setup slack (WNS =  ns)" — right outcome, misleading cause. | I/O-delay refusal deferred to Stage 6 |

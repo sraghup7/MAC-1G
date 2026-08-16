@@ -17,6 +17,8 @@ Usage:
     python scripts/build.py impl
     python scripts/build.py bitstream
     python scripts/build.py program build/skeleton_top.bit
+    python scripts/build.py oocsynth            # whole MAC, out of context
+    python scripts/build.py oocsynth gem_crc32  # one module
 """
 
 from __future__ import annotations
@@ -35,6 +37,10 @@ TARGETS = {
     "impl":      "scripts/build.tcl",
     "bitstream": "scripts/build.tcl",
     "program":   "scripts/program.tcl",
+    # Stage 4 step 6: one module, out of context, area and rough timing against
+    # the Stage 1 estimate. Takes the module name as an extra argument and
+    # defaults to gem_mac.
+    "oocsynth":  "scripts/synth_module.tcl",
 }
 
 
@@ -44,7 +50,10 @@ def main() -> int:
 
     target = sys.argv[1]
     script = TARGETS[target]
-    tclargs = sys.argv[2:] if target == "program" else [target]
+    if target in ("program", "oocsynth"):
+        tclargs = sys.argv[2:]
+    else:
+        tclargs = [target]
 
     vivado = vivado_bin("vivado")
     cmd = [vivado, "-mode", "batch", "-source", script, "-tclargs", *tclargs]

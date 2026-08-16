@@ -204,7 +204,23 @@ module tb_gem_mac_loopback;
     always @(posedge tx_clk) begin
         if (tx_rst_n && rx_axis_tvalid && rx_axis_tready && !desynced) begin
             if (!have_expected) begin
-                if (rx_frame >= u_drv.frames_sent) begin
+                // `>` and not `>=`, and the difference is the whole point of a
+                // cut-through MAC. The design begins transmitting before the
+                // frame is complete -- 22 MAC-generated octets go out before
+                // the first payload octet is needed (B.4b's head start) -- so
+                // for a short frame the loopback can hand the header back at
+                // the RX port before the driver has finished handing over the
+                // payload at the TX port and incremented frames_sent. The
+                // frame in flight is legitimate; its record was written by
+                // axis_tx_driver.play before send_frame was called, so
+                // expected_frame(frames_sent) is already valid.
+                //
+                // `>=` was right for a store-and-forward design and would have
+                // been right against a stub. Against this design it failed the
+                // very first frame of every loopback run, at the first beat,
+                // which is a testbench assumption presenting as a design bug --
+                // the third one of those this harness has produced.
+                if (rx_frame > u_drv.frames_sent) begin
                     note_check();
                     report_fail($sformatf("%s", scenario), $sformatf(
                         "design delivered a frame that was never transmitted (frame index %0d, only %0d sent)",

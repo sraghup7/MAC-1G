@@ -13,7 +13,11 @@ function s = genTxScenario(name, opts)
 %       ReadyMode    'always' | 'gaps' | 'random' -- the tready profile.
 %       MaxPayload   cap, default GEM_SIM_SCALE.
 %       IncludeOversize  add one payload of 1501 octets, which the MAC must
-%                        refuse to transmit (R6).
+%                        refuse (R6). It refuses the octet that would be the
+%                        1501st before transmitting it, so the wire carries a
+%                        1517-octet frame marked bad with TX_ER and an inverted
+%                        FCS rather than nothing at all -- see spec B.4d and
+%                        the long comment at the emitting code below.
 %       StallEvery   if > 0, every Nth frame stalls mid-payload and must be
 %                    aborted per B.4b. Default 0 (no mid-frame stalls).
 %       StallDepth   payload octet index at which the user stops supplying.
@@ -162,19 +166,47 @@ for k = 1:nFrames
 end
 
 if opts.IncludeOversize
-    % R6: presented to the MAC, refused, counted -- and crucially, nothing
-    % appears on the wire for it. The expected cycle stream below therefore
-    % does NOT contain a frame here, which is exactly what makes this a real
-    % test: a MAC that quietly truncates to 1500 and transmits would produce
-    % extra cycles and fail.
+    % R6, and the one place where the obvious expectation is unachievable.
+    %
+    % Until v0.8 this block put a frame on the stimulus and NOTHING on the
+    % wire: the MAC was expected to refuse a 1501-octet request silently. That
+    % is not implementable alongside B.4b, and Stage 4 proved it rather than
+    % argued it. The transmit interface carries no length -- a frame's length
+    % is known only when tlast arrives -- while B.4b's cut-through decision
+    % puts TX_EN up within 22 octets of the frame starting. To know the length
+    % before committing, the MAC would have to buffer the whole frame first,
+    % which is store-and-forward: 12.14 us of added latency and a BRAM the B.2
+    % table does not carry, rejected in B.4b on this project's own premise.
+    % The two requirements were jointly unsatisfiable and the vector encoded
+    % the impossible half.
+    %
+    % Resolved in spec B.4d as: refuse the octet that would be the 1501st,
+    % BEFORE transmitting it. What appears on the wire is therefore header +
+    % payload(1:1499) + an inverted FCS with TX_ER across it -- 1517 octets,
+    % inside maxBasicFrameSize, so R6's "never emit an oversize frame" still
+    % holds literally, and the frame is marked bad twice over so no receiver
+    % can mistake it for data.
+    %
+    % gem.abortedFrame already models exactly this: an abort after payload
+    % octet S. The only difference from an underrun is which counter moves
+    % (stat_tx_rejected, not stat_tx_underrun) and what caused it -- the user
+    % supplied too much rather than too little.
     k = nFrames + 1;
+    oversizePayload = uint8(mod(0:p.MAX_PAYLOAD_BYTES, 251));   % 1501 octets
+
+    f = gem.abortedFrame(oversizePayload, da, sa, etherType, ...
+                         p.MAX_PAYLOAD_BYTES - 1);
+
+    items(end+1) = struct('bytes', f.packetBytes, ...
+        'gapBefore', p.IFG_BYTES, 'er', f.er);
+
     stim(end+1) = struct('index', k, ...
-        'payload', uint8(mod(0:p.MAX_PAYLOAD_BYTES, 251)), ...
+        'payload', oversizePayload, ...
         'da', da, 'sa', sa, 'etherType', etherType, 'readyGap', 0, ...
         'stallAt', -1, 'stallCycles', 0);
     records(end+1) = struct('index', k, ...
         'payloadLen', p.MAX_PAYLOAD_BYTES + 1, 'padBytes', 0, ...
-        'expectRejected', true, 'expectAborted', false, 'stallAt', -1, ...
+        'expectRejected', true, 'expectAborted', true, 'stallAt', -1, ...
         'gapBefore', p.IFG_BYTES, 'readyGap', 0);
 end
 

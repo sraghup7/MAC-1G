@@ -1,8 +1,22 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.7 — Stage 1 complete, Stage 3 complete. Amended throughout by what
+Document status: v0.8 — Stage 1 complete, Stage 3 complete, Stage 4 complete. Amended throughout by what
 building the reference model and the verification layer actually forced. Versioned
 alongside the RTL.
+
+**Changelog v0.7 → v0.8 (what building the RTL forced):** added **B.4d**, the one
+question Stage 4 found that Stage 3 could not have: R6 as written and B.4b as written
+could not both be satisfied, and the frozen `tx_reject_oversize` vector was the place
+they collided. Resolved in R6's favour as B.4b would have resolved it — the octet that
+would be the 1501st is refused before it is transmitted, so the wire carries a
+1517-octet frame marked bad rather than an oversize one or nothing at all — and that
+one vector was regenerated. **B.2**'s
+resource table gains a measured column — 946 LUTs and 1316 FFs against budgets of 2000
+and 3000 — which closes the weakness B.7 states about those numbers being untraceable
+guesses, and corrects one of them in kind: the RX FIFO uses no block RAM at all.
+**B.1a** records the one addition to the interface the stub froze, an input carrying the
+phase-shifted GTX_CLK that R14's mechanism cannot be built without. **B.4**'s status
+paragraph reports Stage 4.
 
 **Changelog v0.6 → v0.7 (coherence pass across every document):** **B.1a**'s abort now
 also appears in [`block_diagram.md`](block_diagram.md), which still drew a transmit path
@@ -155,6 +169,17 @@ every simulation and fails on the bench.
 ## B.1a Top-level architecture
 
 `gem_mac` is nine modules across three clock domains. Dataflow diagram: [`spec/block_diagram.md`](block_diagram.md).
+Stage 4 implements them as thirteen files — the extra four are the two DDR I/O cells,
+the pulse synchroniser the counters cross on, and the CRC accumulator, which is one
+module instantiated twice rather than two implementations of the same arithmetic.
+
+**One port was added in Stage 4**, and it is the only change to the interface the
+Stage 3 stub froze: `gtx_clk_shifted`, an input carrying the MMCM's second output.
+R14's mechanism is that GTX_CLK leaves the chip a deliberate 1.6 ns after the data it
+clocks, so the cell that forwards it needs a clock the MAC does not otherwise have;
+the alternative is to move that cell outside `gem_mac`, which puts half of the RGMII
+output stage somewhere B.1a does not describe. The addition is backward compatible —
+every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 
 **Transmit path (tx_clk domain):**
 1. **AXI-S ingress register** — registers `tdata/tvalid/tready/tlast` plus the `tuser`
@@ -282,7 +307,13 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   in/out, init 0xFFFFFFFF, final complement, transmitted least-significant-byte-first.
 - **R5 [M]** Enforce inter-frame gap ≥ 96 bit-times (12 byte-times) between frames.
 - **R6 [M]** Reject (and flag via a status pulse + counter) requests with payload > 1500
-  bytes; never emit an oversize frame.
+  bytes; never emit an oversize frame. Because transmission is cut-through (B.4b), the
+  MAC learns the length only when the request exceeds it — so "reject" means: refuse the
+  octet that would be the 1501st *before* transmitting it, and terminate the frame the
+  way B.4b terminates an abort (`TX_ER` plus an inverted FCS), counted in
+  `stat_tx_rejected`. The frame that reaches the wire is 1517 octets and is marked bad;
+  no oversize frame is ever emitted. **B.4d** is where this wording comes from and why
+  the alternative — silence on the wire — is not available to any cut-through MAC.
 - **R7 [M]** Sustain back-to-back frames at full line rate indefinitely (no growing gap,
   no stall) when user logic supplies data every cycle. When it does *not* — a stall
   mid-payload — the frame is aborted per **B.4b**, marked with `TX_ER` and an inverted
@@ -343,13 +374,22 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 
 ### Resources (targets, to be checked per-module at Stage 4 step 6)
 
-| Resource | Budget | XC7A35T has | Headroom rationale |
-|---|---|---|---|
-| LUTs | ≤ 2,000 | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
-| FFs | ≤ 3,000 | 41,600 | pipeline + CDC + counters |
-| BRAM36 | ≤ 4 | 50 | 2 async FIFOs + ILA capture |
-| DSP | 0 | 90 | nothing multiplies here |
+| Resource | Budget | **Measured (Stage 4)** | XC7A35T has | Headroom rationale |
+|---|---|---|---|---|
+| LUTs | ≤ 2,000 | **946** | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
+| FFs | ≤ 3,000 | **1,316** | 41,600 | pipeline + CDC + counters |
+| BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
+| DSP | 0 | **0** | 90 | nothing multiplies here |
 | MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
+
+The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
+at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop
+being guesses. Two things came out of it. The estimates were right in order of
+magnitude and conservative in degree: 4.2% of the device's LUTs against a budget that
+was itself under 10%. And one was wrong in kind rather than degree — B.3a chose the
+64-entry FIFO partly on the basis that a BRAM18 holds far more than 64 octets anyway,
+and synthesis put it in distributed RAM, using no block RAM at all. That is cheaper
+than the derivation assumed and leaves the derivation intact.
 
 **Scarce resource: MMCM**, not LUTs. By percentage of what the device has, MMCM is the
 tightest line in this table (1 of 5 = 20%), ahead of LUTs (~10% even at the budget
@@ -442,6 +482,17 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
   corruption type crossed with {min, typical, max} length; regression green from one
   `make regress` command.
 - **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
+
+**Stage 4 status (complete):** the design is written and the regression it was built
+to answer to is green. All sixteen frozen scenarios pass bit-exactly, both 600-frame
+random sweeps pass, the loopback passes across an independent receive clock, and the
+three per-module testbenches Stage 4 step 4 calls for (CRC, async FIFO, MDIO) pass.
+`gem_internal_sva`, written in Stage 3 against modules that did not exist, was bound
+unchanged and immediately caught a real defect that every data comparison passed: a
+CRC accumulator re-seeded one cycle too late. One frozen vector was amended —
+`tx_reject_oversize`, for the reason set out in **B.4d** — and it is the only vector
+datum in the repository that changed during Stage 4. R21's measured worst-case RX
+latency is **13 cycles**, which is exactly what B.1b's bottom-up sum predicted.
 
 **Stage 3 status (complete):** all of the above is built and running. The golden model is
 MATLAB (`model/+gem/`), validated by 70 tests — the published CRC-32 check value, agreement
@@ -597,6 +648,59 @@ not pretend to. So the transmit comparison is split:
 Freezing an exact gap would have over-constrained R5 into "exactly 96 bit
 times" and failed every conforming design that was merely *later* than the
 model. A design is always free to be later; it is never free to be earlier.
+
+## B.4d R6 and B.4b collided (found in Stage 4, resolved by amending R6)
+
+Stage 3 closed every question it could see. This is the one it could not: **R6 and
+B.4b, both as originally written, could not both be satisfied**, and the frozen
+`tx_reject_oversize` vector was where they met.
+
+R6 requires that a payload over 1500 octets be rejected and that no oversize frame
+ever be emitted, and the vector freezes that as *nothing at all on the wire*.
+B.4b requires cut-through: transmission begins as soon as there is a frame to send,
+which is at latest 22 octets before the first payload octet is needed.
+
+The transmit interface carries no length. R15's port is a run of beats terminated by
+`tlast`, so a frame's length is known only when `tlast` arrives — by which time, under
+B.4b, TX_EN has been high for a long time. For the MAC to know the length before
+committing, it must hold the entire frame first. That is store-and-forward, which
+B.4b rejected on this project's own terms (12.14 µs of added transmit latency and a
+BRAM the B.2 table does not carry), and a threshold buffer does not avoid it: a buffer
+deep enough to decide *is* a whole-frame buffer. There is no third arrangement.
+
+**Decision: refuse the octet, not the frame.** The MAC refuses the payload octet that
+would be the 1501st *before* transmitting it. The frame on the wire is therefore
+14 + 1499 + 4 = **1517 octets** — inside maxBasicFrameSize, so R6's "never emit an
+oversize frame" holds literally, not approximately — marked bad twice over with
+`TX_ER` and an inverted FCS exactly as B.4b marks an abort, counted in
+`stat_tx_rejected` and not in `stat_tx_ok`, with the remainder of the request drained
+and discarded (B.4b item 5). R6's wording above now says this; `gem.abortedFrame`
+already modelled it, since an abort after payload octet *S* is the same object
+whatever caused it; and `tx_reject_oversize` was regenerated.
+
+**The alternative, and why it was rejected.** Keeping the old vector would have meant
+reopening B.4b's rejection of store-and-forward — buying literal silence on the wire
+for 12.14 µs of transmit latency and a BRAM the B.2 table does not carry, in a design
+whose opening paragraph is about being the last logic an order passes through. That is
+the same trade B.4b already refused, and refusing it twice for consistency is the
+whole point of having written B.4b down.
+
+**What the amendment cost, precisely:** one file. `tx_reject_oversize/tx_expected.hex`
+is the only vector datum that changed; every other frozen scenario regenerated
+byte-identically, which is the evidence that this was a contained specification error
+and not a design that had drifted from its model. The counters did not move at all —
+they were right before and after — which is why the failure showed up as five frames
+on the wire where four were expected, and not as a counter mismatch.
+
+A frame plainly marked bad is also the better engineering answer, quite apart from
+what is implementable. A receiver that sees TX_ER and a failing FCS discards the frame
+and counts it, so the error is visible at both ends of the link; silence is visible at
+neither. What R6 was really asking for — that a MAC never put a frame longer than
+maxBasicFrameSize on the wire — is what the design does.
+
+*Found by Stage 4 rather than by Stage 3, and it could not have been otherwise: the
+model had no reason to ask whether a MAC could know a length it is never told. That
+question only arises when something has to actually drive TX_EN.*
 
 ## B.5 Bring-up order (written before hardware is touched)
 

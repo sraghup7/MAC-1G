@@ -17,7 +17,7 @@ PYTHON    ?= python
 BUILD_DIR := build
 SIM_DIR   := sim
 
-.PHONY: help synth impl bitstream program clean \
+.PHONY: help synth oocsynth impl bitstream program clean \
         model vectors vectors-frozen vectors-check lint sim regress regress-all \
         check clean-sim
 
@@ -42,6 +42,10 @@ Verification (Stage 3):
 
 Build (Stage 2):
   make synth impl bitstream program
+
+Build (Stage 4 step 6):
+  make oocsynth         gem_mac out of context: area, timing, B.2 budget
+  make oocsynth M=gem_crc32   ... one module alone
 
   make clean            remove build outputs
   make clean-sim        remove simulation outputs
@@ -110,6 +114,12 @@ check: model vectors-check lint regress
 # run_sim.py's locator rather than carrying a second copy of it.
 synth:
 	$(PYTHON) scripts/build.py synth
+
+# Stage 4 step 6. M=<module> synthesises one module alone; the default is the
+# whole MAC, out of context, checked against B.2's resource budget.
+M ?=
+oocsynth:
+	$(PYTHON) scripts/build.py oocsynth $(M)
 
 impl:
 	$(PYTHON) scripts/build.py impl

@@ -6,12 +6,12 @@
 //     xsim tb_gem_mac_rx -testplusarg SCENARIO=rx_min_gap
 // or  xsim tb_gem_mac_rx -testplusarg VECDIR=/path/to/vectors
 //
-// Against rtl/gem_mac_stub.v this testbench FAILS, and that is the point of
-// running it in Stage 3. What is being checked here is not the design -- there
-// is none -- but that the vector plumbing works end to end and that the
-// failure message is worth reading. A scoreboard whose diagnostics are only
-// exercised for the first time during a real debugging session is a scoreboard
-// that will be rewritten during a real debugging session.
+// Written in Stage 3 against a port-only stub, where it FAILED by design: what
+// was being checked then was not the design -- there was none -- but that the
+// vector plumbing worked end to end and that the failure message was worth
+// reading. A scoreboard whose diagnostics are first exercised during a real
+// debugging session is a scoreboard that will be rewritten during a real
+// debugging session. It now runs against rtl/gem_mac.v, unchanged.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps

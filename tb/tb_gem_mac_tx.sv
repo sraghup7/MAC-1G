@@ -9,7 +9,8 @@
 // and fails on the bench. The captured stream carries gap and edge placement,
 // so R5 and R13 are checked by the same comparison that checks R1.
 //
-// Like the RX testbench, this FAILS against rtl/gem_mac_stub.v by design.
+// Like the RX testbench, this was written against a port-only stub and failed by
+// design; it now runs against rtl/gem_mac.v, unchanged.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
