@@ -8,8 +8,9 @@ alongside the RTL.
 question Stage 4 found that Stage 3 could not have: R6 as written and B.4b as written
 could not both be satisfied, and the frozen `tx_reject_oversize` vector was the place
 they collided. Resolved in R6's favour as B.4b would have resolved it — the octet that
-would be the 1501st is refused before it is transmitted, so the wire carries a
-1517-octet frame marked bad rather than an oversize one or nothing at all — and that
+would be the 1501st proves the payload is oversize, so the 1500th is refused
+before it is transmitted and the wire carries a 1517-octet frame marked bad
+rather than an oversize one or nothing at all — and that
 one vector was regenerated. **B.2**'s
 resource table gains a measured column — 993 LUTs and 1403 FFs against budgets of 2000
 and 3000 — which closes the weakness B.7 states about those numbers being untraceable
@@ -20,7 +21,15 @@ paragraph reports Stage 4. **R16** gained the ports it always required: the froz
 interface had no request channel and no PHY-ID output, which left "a register-level
 request interface" half-implemented and B.5 step 3 — read the PHY ID to prove the PHY
 is alive — impossible to perform. Both are additive and no testbench changed
-behaviour. Added `coding_standard.md`, the last Stage 4 deliverable the flow doc lists and the
+behaviour. An independent review of the finished stage found three defects that every gate had
+passed, and they are recorded as **V-17, V-18 and V-19**: the IDDR nibble mapping was
+inverted for a PHY that delays its receive clock (simulation cannot see it, and on
+hardware nothing would have been received); the RX FIFO's memory had dissolved into 648
+flip-flops because a RAM cannot have an asynchronous reset, while this table claimed
+distributed RAM; and MDIO could begin a frame mid-MDC-period and drive only 31 preamble
+ones. Each is fixed, and each now has something that would have caught it — a synthesis
+gate, a testbench check, and a derivation replacing an "unknowable" comment.
+Added `coding_standard.md`, the last Stage 4 deliverable the flow doc lists and the
 only one that had no file — written from the RTL rather than before it, so every
 rule in it is one the repository already follows and names what enforces it. **R12** is settled rather than left hanging: the DA filter is
 not implemented in v1, the receive path is promiscuous, and B.7 now lists it as a
@@ -210,8 +219,11 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 
 **Receive path (rx_clk domain, crossing to sys_clk at the FIFO):**
 6. **RGMII input stage** — IDDR primitives capture `RXD[3:0]`/`RX_CTL` on `rx_clk`.
-7. **SFD hunter / deframer** — scans for the SFD (R8/R11), strips preamble, extracts
-   DA/SA/EtherType, streams payload onward byte-by-byte.
+7. **SFD hunter / deframer** — scans for the SFD (R8/R11), strips preamble, and
+   streams the frame onward byte-by-byte. It does **not** extract DA/SA/EtherType:
+   B.4a item 1 resolved that `rx_axis_tdata` carries DA through pad and that there is
+   no RX header sideband, so user logic reads the header from the first 14 beats. This
+   wording said otherwise until Stage 4, which is the contradiction B.4a itself names.
 8. **Parallel CRC-32 checker + frame classifier** — running CRC check in parallel with
    the stream (R9's cut-through contract, detailed in `Documents/Bad bitstream handle.md`);
    classifies runt/oversize/bad-FCS/RX_ER (R10) with one counter per class (R17).
@@ -230,7 +242,13 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
   4 rather than the requirement trimmed.
 - **Register/status block** (sys_clk domain) — frame counters, link state, sticky error
   flags, all clearable, readable over UART/VIO (R17).
-- **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b).
+- **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b). **Not
+  implemented in Stage 4, and deliberately so:** it is board-level integration, not MAC
+  logic. `gem_mac` takes `tx_clk`, `gtx_clk_shifted` and two already-synchronised resets
+  as inputs and contains no reset synchroniser of its own. Until Stage 5 builds this
+  block there is no reset synchroniser anywhere in the repository, which matters for
+  anyone reading the RTL and expecting one — the testbenches supply resets that are
+  already clean.
 
 ## B.1b Clocking and reset
 
@@ -326,7 +344,8 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 - **R6 [M]** Reject (and flag via a status pulse + counter) requests with payload > 1500
   bytes; never emit an oversize frame. Because transmission is cut-through (B.4b), the
   MAC learns the length only when the request exceeds it — so "reject" means: refuse the
-  octet that would be the 1501st *before* transmitting it, and terminate the frame the
+  **1500th** payload octet on the cycle a 1501st is known to exist, *before* that octet
+  is transmitted, and terminate the frame the
   way B.4b terminates an abort (`TX_ER` plus an inverted FCS), counted in
   `stat_tx_rejected`. The frame that reaches the wire is 1517 octets and is marked bad;
   no oversize frame is ever emitted. **B.4d** is where this wording comes from and why
@@ -400,20 +419,31 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 
 | Resource | Budget | **Measured (Stage 4)** | XC7A35T has | Headroom rationale |
 |---|---|---|---|---|
-| LUTs | ≤ 2,000 | **993** | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
-| FFs | ≤ 3,000 | **1,403** | 41,600 | pipeline + CDC + counters |
+| LUTs | ≤ 2,000 | **745** | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
+| FFs | ≤ 3,000 | **788** | 41,600 | pipeline + CDC + counters |
 | BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
 | DSP | 0 | **0** | 90 | nothing multiplies here |
 | MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
 
 The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
 at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop
-being guesses. Two things came out of it. The estimates were right in order of
-magnitude and conservative in degree: 4.8% of the device's LUTs against a budget that
-was itself under 10%. And one was wrong in kind rather than degree — B.3a chose the
-64-entry FIFO partly on the basis that a BRAM18 holds far more than 64 octets anyway,
-and synthesis put it in distributed RAM, using no block RAM at all. That is cheaper
-than the derivation assumed and leaves the derivation intact.
+being guesses. LUTs and FFs are **cell counts** (`get_cells` by primitive group), not
+Vivado's "Slice LUTs" line, which packs and therefore reports lower: 669 slice LUTs for
+the same design. Cell counts are the conservative number and the one that compares
+against a budget written per block.
+
+The estimates were right in order of magnitude and conservative in degree: 3.6% of the
+device's LUTs against a budget that was itself under 10%. B.3a's 64-entry FIFO occupies
+14 LUTs of distributed RAM and no block RAM at all, which is cheaper than the derivation
+assumed and leaves the derivation intact.
+
+**That last sentence was false for two weeks and no gate caught it.** The FIFO's memory
+was written inside a block with an asynchronous reset, which a RAM cannot have, so
+Vivado built the array out of 648 flip-flops and a multiplexer tree — nearly half the
+design's registers — and said so in the log while every gate passed. The numbers above
+are the corrected ones (993 → 745 LUTs, 1403 → 788 FFs, WNS +2.135 → +2.262 ns), and
+`scripts/synth_module.tcl` now refuses a build on `Synth 8-4767` so that "printing a
+report" and "reading it" stop being different things.
 
 **Scarce resource: MMCM**, not LUTs. By percentage of what the device has, MMCM is the
 tightest line in this table (1 of 5 = 20%), ahead of LUTs (~10% even at the budget
@@ -527,9 +557,11 @@ Eighteen scenarios generate vector files, each cross-checked by reading its own 
 with the golden RX path. The SystemVerilog layer (`tb/`) runs against a port-only stub
 (`rtl/gem_mac_stub.v`) and fails informatively, which is the intended Stage 3 result.
 
-Seven gates guard the project, four from `make check` (model tests, committed-vector
-staleness, Verilator lint per R22, and the scenario regression) and three inside
-`scripts/build.tcl` (inferred latches, slack, and constraint coverage). **Every one has
+Eight gates guard the project: four from `make check` (model tests, committed-vector
+staleness, Verilator lint per R22, and the scenario regression), three inside
+`scripts/build.tcl` (inferred latches, slack, and constraint coverage), and one added in
+Stage 4 inside `scripts/synth_module.tcl` (a memory array that dissolved into
+flip-flops instead of becoming RAM). **Every one has
 been observed to fail**, not merely to pass — each was tested by planting the defect it
 exists to catch: an injected width mismatch trips the lint gate, one corrupted octet trips
 the vector gate, a planted assertion trips the regression, an inferred latch trips the
@@ -693,8 +725,10 @@ B.4b rejected on this project's own terms (12.14 µs of added transmit latency a
 BRAM the B.2 table does not carry), and a threshold buffer does not avoid it: a buffer
 deep enough to decide *is* a whole-frame buffer. There is no third arrangement.
 
-**Decision: refuse the octet, not the frame.** The MAC refuses the payload octet that
-would be the 1501st *before* transmitting it. The frame on the wire is therefore
+**Decision: refuse the octet, not the frame.** The MAC refuses the **1500th** payload
+octet, on the cycle a 1501st is known to exist — the beat is present and carries no
+`tlast`, so the payload cannot be 1500 or fewer — and refuses it *before* it is
+transmitted. The frame on the wire is therefore
 14 + 1499 + 4 = **1517 octets** — inside maxBasicFrameSize, so R6's "never emit an
 oversize frame" holds literally, not approximately — marked bad twice over with
 `TX_ER` and an inverted FCS exactly as B.4b marks an abort, counted in

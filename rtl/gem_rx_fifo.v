@@ -94,14 +94,36 @@ module gem_rx_fifo #(
     //------------------------------------------------------------------
     // Write side
     //------------------------------------------------------------------
+    // THE MEMORY HAS NO RESET, and that is the whole reason it is a separate
+    // block from the pointers. A RAM's contents cannot be reset -- there is no
+    // silicon that clears a whole array on a signal -- so an array written
+    // inside a block with an asynchronous reset cannot be a RAM, and Vivado
+    // says so plainly and then builds it out of flip-flops:
+    //
+    //   [Synth 8-4767] Trying to implement RAM 'mem_reg' in registers.
+    //                  RAM is sensitive to asynchronous reset signal.
+    //   RAM "mem_reg" dissolved into registers
+    //
+    // That is exactly what this module did until it was read: 64 x 10 bits
+    // became 648 flip-flops and a MUXF7/MUXF8 read tree, roughly half the
+    // design's registers, while the specification claimed distributed RAM. The
+    // pointers keep their reset, because pointers must start at zero; the
+    // contents do not need one, because `empty` makes them unreadable until
+    // something has been written.
+    //
+    // The warning was in the log from the first synthesis run. Printing a
+    // report is not reading it.
+    always @(posedge wr_clk) begin
+        if (wr_en && !full) begin
+            mem[wr_bin[AW-1:0]] <= wr_data;
+        end
+    end
+
     always @(posedge wr_clk or negedge wr_rst_n) begin
         if (!wr_rst_n) begin
             wr_bin  <= {(AW+1){1'b0}};
             wr_gray <= {(AW+1){1'b0}};
         end else begin
-            if (wr_en && !full) begin
-                mem[wr_bin[AW-1:0]] <= wr_data;
-            end
             wr_bin  <= wr_bin_next;
             wr_gray <= bin2gray(wr_bin_next);
         end

@@ -86,11 +86,27 @@ module gem_iddr (
 `else
 
     // SAME_EDGE_PIPELINED presents both halves of one cycle together on the
-    // rising edge, one cycle later, which is the alignment the behavioural
-    // model above produces. Which physical half arrives on Q1 and which on Q2
-    // depends on the pin's capture phase and is the one thing here that cannot
-    // be settled from a datasheet alone -- confirm it on the bench with an ILA
-    // on RXD before trusting a received frame (bring-up step 4, open item V-2).
+    // rising edge, one cycle later. Q1 is the rising-edge capture and Q2 the
+    // falling-edge one.
+    //
+    // WHICH HALF LANDS ON Q1, which an earlier revision of this file claimed
+    // could not be settled from a datasheet. It can, and the datasheet is
+    // B.1b's own citation: the KSZ9031RNX adds 1.2 ns to RX_CLK relative to
+    // RXD by default, which walks the clock into the middle of the data eye.
+    // The rising edge therefore samples the nibble the PHY launched on ITS
+    // rising edge -- the low nibble -- so Q1 is the low nibble and Q2 the high
+    // one. The same mapping is what reference/verilog-ethernet's
+    // rgmii_phy_if.v uses in the field (Q1 -> rxd[3:0], rx_dv = ctl_1).
+    //
+    // This was wrong once, and wrong in the direction that costs a bring-up
+    // session: the mapping was carried over from the behavioural model above,
+    // whose phase convention is correct for the testbench's clock-aligned
+    // launch and NOT for a PHY that delays the clock. Every received octet
+    // would have arrived nibble-swapped -- an SFD of 0xD5 reading as 0x5D, so
+    // the hunter would never find a frame -- and gm_dv would have been carrying
+    // DV ^ RX_ER. Simulation cannot see it, because simulation runs the branch
+    // above. What is genuinely left for the bench is confirming the PHY's delay
+    // is present at all (V-2), not deciding which wire goes where.
     wire q1, q2;
 
     IDDR #(
@@ -109,8 +125,8 @@ module gem_iddr (
     );
 
     always @(*) begin
-        q_rise = q2;    // captured on the falling edge: the high-phase value
-        q_fall = q1;    // captured on the rising edge: the low-phase value
+        q_rise = q1;    // rising-edge capture: the value across the high phase
+        q_fall = q2;    // falling-edge capture: the value across the low phase
     end
 
 `endif

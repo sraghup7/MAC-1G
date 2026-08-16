@@ -45,8 +45,10 @@
 // a whole-frame buffer.
 //
 // So this engine does the strongest thing physically available, which is
-// stronger than a plain abort: it refuses the payload octet that would be the
-// 1501st *before* transmitting it. The frame on the wire is then
+// stronger than a plain abort: it refuses the 1500th payload octet, on the
+// cycle a 1501st is known to exist -- the beat is present and carries no
+// tlast, so the payload cannot be 1500 or fewer. Refusing the octet BEFORE it
+// is transmitted is the whole trick. The frame on the wire is then
 // 14 + 1499 + 4 = 1517 octets -- inside maxBasicFrameSize, so R6's "never emit
 // an oversize frame" holds literally -- marked bad twice over with TX_ER and an
 // inverted FCS, counted in stat_tx_rejected, with the rest of the request

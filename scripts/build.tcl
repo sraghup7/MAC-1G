@@ -19,13 +19,10 @@
 
 # ---- 0. Config -------------------------------------------------------------
 
-# Single point of truth for the part string. xc7a35tifgg484-1L is what this
-# machine's Vivado install currently has for the FGG484/industrial-grade
-# combination. The board is XC7A35T-2FGG484I per ALINX (manual + product
-# page) and per distributor listings (DigiKey/Mouser/LCSC all stock it) -
-# swap this the instant the -2I device pack is installed via Vivado's "Add
-# Design Tools or Devices". See spec/PROJECT_SPEC.md changelog for the note.
-set PART       "xc7a35tifgg484-1L"
+# The part string lives in scripts/part.tcl, which both this script and
+# synth_module.tcl source. It used to be written here and again there, under a
+# comment in this file claiming to be its single point of truth.
+source scripts/part.tcl
 set TOP         skeleton_top
 set BUILD_DIR   "build"
 set RTL_SOURCES [list rtl/skeleton_top.v]

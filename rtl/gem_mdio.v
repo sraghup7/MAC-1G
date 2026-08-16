@@ -151,6 +151,14 @@ module gem_mdio #(
     reg  [2:0]  poll_step;
     reg  [15:0] poll_wait;
 
+    // A request is accepted immediately and started at the next MDC falling
+    // edge -- see the note on req_ready below.
+    reg         req_pending;
+    reg         pend_write;
+    reg  [4:0]  pend_phyad;
+    reg  [4:0]  pend_regad;
+    reg  [15:0] pend_wdata;
+
     // What the transaction in flight is doing, whichever source asked for it.
     reg         cur_write;
     reg         cur_is_req;      // came from the request port, not the poller
@@ -183,10 +191,10 @@ module gem_mdio #(
                     (cur_write && data_phase) ? wdata_bit :
                                                 1'b1;
 
-    // Requests are taken only between transactions. ready is a function of
-    // `active` alone, so nothing of the requester's reaches the pins in the
-    // same cycle.
-    assign req_ready = !active;
+    // Requests are taken only between transactions, and only when none is
+    // already waiting. ready is a function of registers alone, so nothing of
+    // the requester's reaches the pins in the same cycle.
+    assign req_ready = !active && !req_pending;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -195,6 +203,11 @@ module gem_mdio #(
             shift_in     <= 16'd0;
             poll_step    <= POLL_ID_HI;
             poll_wait    <= 16'd0;
+            req_pending  <= 1'b0;
+            pend_write   <= 1'b0;
+            pend_phyad   <= PHY_ADDR;
+            pend_regad   <= 5'd0;
+            pend_wdata   <= 16'd0;
             cur_write    <= 1'b0;
             cur_is_req   <= 1'b0;
             cur_phyad    <= PHY_ADDR;
@@ -210,32 +223,53 @@ module gem_mdio #(
             rsp_valid <= 1'b0;
 
             if (!active) begin
-                if (req_valid) begin
-                    // A waiting request goes first. The poll it displaces comes
-                    // round again on its own.
-                    bit_cnt    <= 6'd0;
-                    active     <= 1'b1;
-                    cur_write  <= req_write;
-                    cur_is_req <= 1'b1;
-                    cur_phyad  <= req_phyad;
-                    cur_regad  <= req_regad;
-                    cur_wdata  <= req_wdata;
-                end else if (poll_wait == POLL_GAP[15:0]) begin
-                    poll_wait  <= 16'd0;
-                    bit_cnt    <= 6'd0;
-                    active     <= 1'b1;
-                    cur_write  <= 1'b0;          // the sequencer only reads
-                    cur_is_req <= 1'b0;
-                    cur_phyad  <= PHY_ADDR;
-                    case (poll_step)
-                        POLL_ID_HI:             cur_regad <= REG_PHYIDR1;
-                        POLL_ID_LO:             cur_regad <= REG_PHYIDR2;
-                        POLL_BMSR1, POLL_BMSR2: cur_regad <= REG_BMSR;
-                        POLL_PHYC:              cur_regad <= REG_PHYC;
-                        default:                cur_regad <= REG_BMSR;
-                    endcase
-                end else begin
+                if (poll_wait < POLL_GAP[15:0]) begin
                     poll_wait <= poll_wait + 16'd1;
+                end
+
+                if (req_valid && req_ready) begin
+                    req_pending <= 1'b1;
+                    pend_write  <= req_write;
+                    pend_phyad  <= req_phyad;
+                    pend_regad  <= req_regad;
+                    pend_wdata  <= req_wdata;
+                end
+
+                // FRAMES START ON A FALLING EDGE, NOT ON AN ARBITRARY CYCLE.
+                // bit_cnt advances on fall_en, so a frame begun while MDC is
+                // high spends its first bit period with no rising edge in it --
+                // and the PHY samples on rising edges. It would see 31 preamble
+                // ones instead of 32. Most PHYs tolerate that; Clause 22 does
+                // not promise they will, and a marginal preamble is exactly the
+                // kind of thing a bring-up session loses a day to. Aligning
+                // costs at most one MDC half period of latency on a request.
+                if (fall_en) begin
+                    if (req_pending) begin
+                        // A waiting request goes first. The poll it displaces
+                        // comes round again on its own.
+                        bit_cnt     <= 6'd0;
+                        active      <= 1'b1;
+                        req_pending <= 1'b0;
+                        cur_write   <= pend_write;
+                        cur_is_req  <= 1'b1;
+                        cur_phyad   <= pend_phyad;
+                        cur_regad   <= pend_regad;
+                        cur_wdata   <= pend_wdata;
+                    end else if (poll_wait >= POLL_GAP[15:0]) begin
+                        poll_wait  <= 16'd0;
+                        bit_cnt    <= 6'd0;
+                        active     <= 1'b1;
+                        cur_write  <= 1'b0;      // the sequencer only reads
+                        cur_is_req <= 1'b0;
+                        cur_phyad  <= PHY_ADDR;
+                        case (poll_step)
+                            POLL_ID_HI:             cur_regad <= REG_PHYIDR1;
+                            POLL_ID_LO:             cur_regad <= REG_PHYIDR2;
+                            POLL_BMSR1, POLL_BMSR2: cur_regad <= REG_BMSR;
+                            POLL_PHYC:              cur_regad <= REG_PHYC;
+                            default:                cur_regad <= REG_BMSR;
+                        endcase
+                    end
                 end
             end else begin
                 if (rise_en && data_phase && !cur_write) begin

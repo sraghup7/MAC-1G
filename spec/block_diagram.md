@@ -25,7 +25,7 @@ flowchart LR
 
     subgraph RXCLK["rx_clk domain (async to tx_clk)"]
         IDDR_RX["IDDR: RXD[3:0], RX_CTL\n(PHY default 1.2ns delay,\nno FPGA IDELAY needed)"]
-        SFD["SFD hunter / deframer\n(strip preamble, extract\nDA/SA/EtherType)"]
+        SFD["SFD hunter / deframer\n(strip preamble, stream\nDA..pad onward -- B.4a)"]
         CRCRX["Parallel CRC-32 checker\n+ classifier\n(runt/oversize/bad-FCS/RX_ER)"]
         IDDR_RX --> SFD --> CRCRX
     end

@@ -150,12 +150,31 @@ module tb_gem_mdio;
     bit          addressed = 1'b0;
     bit          is_write  = 1'b0;
 
+    // Clause 22 wants 32 preamble ones before the start bit, and the station
+    // must have driven every one of them. Counted here because nothing else
+    // could: a BFM that hunts for the first zero never notices that only 31
+    // rising edges preceded it, which is what a frame begun mid-MDC-period
+    // produces. That defect existed and this is the check that would have
+    // caught it.
+    int preamble_ones = 0;
+
     always @(posedge mdc) begin
         if (rst_n) begin
             if (bit_idx < 0) begin
                 // Clause 22 preamble is all ones; the frame starts at the
                 // first zero the station drives.
-                if (!mdio_t && (mdio_o === 1'b0)) begin
+                if (mdio_t) begin
+                    preamble_ones = 0;          // bus idle, nothing driven yet
+                end else if (mdio_o === 1'b1) begin
+                    preamble_ones = preamble_ones + 1;
+                end else if (mdio_o === 1'b0) begin
+                    note_check();
+                    if (preamble_ones < 32) begin
+                        report_fail("gem_mdio", $sformatf(
+                            "only %0d preamble ones were driven before the start bit, Clause 22 requires 32",
+                            preamble_ones));
+                    end
+                    preamble_ones = 0;
                     bit_idx   = 32;
                     got_st[1] = 1'b0;
                 end

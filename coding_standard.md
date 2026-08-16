@@ -39,6 +39,12 @@ document that refuses builds.
 - Sequential blocks are `always @(posedge clk or negedge rst_n)` with
   **nonblocking** assignments only. Resets arrive already synchronised to their
   own domain (asynchronous assert, synchronous deassert, B.1b).
+- **Memory arrays are written in their own block, with no reset.** A RAM's
+  contents cannot be reset — no silicon clears an array on a signal — so an
+  array written inside a reset block is not a RAM, and the tool will say so and
+  build flip-flops instead. `gem_rx_fifo` did this: 64×10 bits became 648
+  registers and a multiplexer tree while the specification claimed distributed
+  RAM. Pointers keep their resets; contents do not get one.
 - Combinational blocks are `always @(*)` and **assign every output a default
   before the case**. An incomplete combinational assignment is an inferred latch,
   and R23 refuses the build over one whether or not it survives optimisation.
@@ -109,12 +115,14 @@ document that refuses builds.
 ## Deliberate deviations
 
 **Blanket reset.** The flow doc advises resetting control state and leaving
-pipeline registers alone. This design resets everything, including the FCS
-holdback and the RGMII datapath registers. The cost is real in principle and
-measured at zero here — 993 LUTs and 1403 FFs against budgets of 2000 and 3000,
-WNS +2.135 ns — and the benefit is that every register has a defined value at
-time zero, so a simulation that starts mid-frame cannot produce X-propagation
-that reads like a data bug. Revisit if timing ever gets tight; it is not tight.
+pipeline registers alone. This design resets everything in the datapath,
+including the FCS holdback — but not the FIFO's memory (see the rule above) and
+not the DDR cells, which carry `INIT` on the primitive and an `initial` in the
+model rather than a reset. The cost is real in principle and measured at zero
+here — 745 LUTs and 788 FFs against budgets of 2000 and 3000, WNS +2.262 ns —
+and the benefit is that every register has a defined value at time zero, so a
+simulation that starts mid-frame cannot produce X-propagation that reads like a
+data bug. Revisit if timing ever gets tight; it is not tight.
 
 **Per-module testbenches for three modules, not thirteen.** Stage 4's loop asks
 for one per module. `gem_crc32`, `gem_rx_fifo` and `gem_mdio` have them, because
@@ -133,6 +141,7 @@ Rules nobody checks are decoration. These do the checking:
 |---|---|---|
 | Verilator lint | `make lint` | widths, latches, unused signals, filename/module mismatch |
 | Latch inference | `make synth`, `make oocsynth` | latches, including ones optimisation removes |
+| Memory inference | `make oocsynth` | arrays that dissolved into flip-flops instead of becoming RAM |
 | Timing and area | `make oocsynth` | 125 MHz, and the B.2 resource budget |
 | Model, vectors, regression | `make check` | everything the design is supposed to do |
 

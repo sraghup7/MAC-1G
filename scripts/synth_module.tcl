@@ -25,7 +25,7 @@
 # where they live.
 #############################################################################
 
-set PART      "xc7a35tifgg484-1L"
+source scripts/part.tcl
 set BUILD_DIR "build"
 
 set TOP "gem_mac"
@@ -71,6 +71,40 @@ if {$latch_msgs > 0} {
     exit 1
 }
 puts "==> Latch check: PASS (0 inferred latches, 0 inference warnings)"
+
+# ---- Gate: no memory may dissolve into flip-flops -------------------------
+#
+# Vivado cannot build a RAM whose contents have an asynchronous reset, so an
+# array written inside a reset block silently becomes discrete registers plus a
+# multiplexer tree. It says so and carries on:
+#
+#   [Synth 8-4767] Trying to implement RAM 'mem_reg' in registers.
+#   RAM "mem_reg" dissolved into registers
+#
+# gem_rx_fifo did exactly this: 64 x 10 bits became 648 flip-flops and a
+# MUXF7/MUXF8 tree -- roughly half the design's registers -- while the
+# specification claimed distributed RAM. The build passed every gate, because
+# nothing was wrong except the shape of the result, and nobody read the log.
+#
+# This gate is the flow doc's "print resource inference counts, so unexpected
+# changes surface at synthesis" turned into a refusal. It has been demonstrated
+# to fail: it is the check that would have caught the defect that motivated it.
+if {[catch {set ram_msgs [get_msg_config -id "Synth 8-4767" -count]} err]} {
+    puts "FATAL: cannot query RAM-inference messages: $err"
+    puts "Build refused: the memory gate could not run."
+    exit 1
+}
+if {$ram_msgs > 0} {
+    puts "FATAL: $ram_msgs memory array(s) could not be implemented as RAM"
+    puts "(Synth 8-4767) and were built from registers instead. Search the log"
+    puts "for 'dissolved into registers'. The usual cause is a memory written"
+    puts "inside a block with an asynchronous reset -- RAM contents cannot be"
+    puts "reset, so move the write into its own reset-free always block and"
+    puts "leave the pointers' resets alone."
+    puts "Build refused: a memory dissolved into flip-flops."
+    exit 1
+}
+puts "==> Memory inference check: PASS (0 arrays dissolved into registers)"
 
 # ---- Area -----------------------------------------------------------------
 set util_rpt [report_utilization -return_string]
