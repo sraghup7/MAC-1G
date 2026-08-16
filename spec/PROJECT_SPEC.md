@@ -1,8 +1,18 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.10 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
+Document status: v0.11 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
 under way. Amended throughout by what building the reference model, the verification
 layer and the RTL actually forced. Versioned alongside the RTL.
+
+**Changelog v0.10 → v0.11 (R17's counters can leave the chip):** the UART readout
+**B.7 item 5** decided in v0.9 is built — `rtl/gem_uart_tx.v` and
+`rtl/gem_stat_report.v` — which closes **V-20**. B.7 item 5 now carries the record
+format itself, because `sw/host/` will parse it and a format nobody wrote down is a
+format that changes silently. The one design decision the obligations list did not
+anticipate is the **snapshot**: every field of a line is captured in the same cycle,
+since a record takes ~17 ms to clock out and fields sampled across that window would
+show divergence that never happened. Its cost is most of 373 flip-flops. The LUT
+estimate in B.7 item 5 held: 249 measured against 150–250 predicted.
 
 **Changelog v0.9 → v0.10 (Stage 5's first block exists):** the **clock/reset module**
 B.1a has described as absent since v0.1 is built — `rtl/gem_clk_rst.v`, with
@@ -427,9 +437,10 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   (TX ok, TX rejected, **TX underrun**, RX ok, RX bad-FCS, RX runt, RX oversize, RX_ER),
   link state, sticky error
   flags, all clearable. The "(or VIO)" this requirement carried until v0.9 is resolved
-  in favour of UART — **B.7 item 5** has the reasoning and what it obliges Stage 5 to
-  build. The counters themselves exist and are verified (Stage 4); what Stage 5 adds is
-  the way a human reads them.
+  in favour of UART — **B.7 item 5** has the reasoning, the record format, and the
+  measured cost. The counters themselves exist and are verified (Stage 4); the readout
+  that gets them out of the chip is built in Stage 5 (`gem_uart_tx`, `gem_stat_report`),
+  which closes V-20. What remains is a pin for the UART's TXD, which is V-21.
 
 ### Performance & clocking
 
@@ -889,6 +900,27 @@ deferred to RTL time):**
    `sw/host/` exists as a Stage 5 deliverable regardless, for the Scapy side of B.5
    steps 4–7 — the same host program can hold both ends of the test, sending frames and
    reading counters, instead of correlating Wireshark against a GUI by eye.
+
+   **Built in Stage 5** as `rtl/gem_uart_tx.v` (framing) and `rtl/gem_stat_report.v`
+   (the formatter and its snapshot). The obligations below are met as written; what
+   they did not pin down, and what is now a contract with `sw/host/`, is the record
+   itself:
+
+   ```
+   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001
+   ```
+
+   192 characters and a newline, once a second. Every field is named on every line and
+   every value is eight hex nibbles including the one-bit ones, so a parser has one rule
+   rather than a width per field. **Every field in a line is captured in the same cycle**
+   — a record takes ~17 ms to clock out at 115200 baud, and without that snapshot its
+   fields would each be true at a different instant, which is exactly the divergence a
+   soak exists to detect and would have manufactured.
+
+   **Measured cost: 249 LUTs and 373 flip-flops** (`gem_stat_report` 209 + 40 for
+   `gem_uart_tx`), against the 150–250 LUTs estimated below. The estimate held, at its
+   top end; the flip-flops are mostly the 12×32-bit snapshot, which the estimate did not
+   name because the coherence problem it solves had not been thought about yet.
 
    **What this obliges Stage 5 to build**, stated here so the decision is actionable and
    not just recorded:

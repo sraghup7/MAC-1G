@@ -61,6 +61,9 @@ RTL_SOURCES = [
     "rtl/gem_reset_sync.v",
     "rtl/gem_mmcm.v",
     "rtl/gem_clk_rst.v",
+    # R17's readout (V-20, spec B.7 item 5).
+    "rtl/gem_uart_tx.v",
+    "rtl/gem_stat_report.v",
 ]
 
 # Simulation gets the plain-Verilog models of the DDR I/O cells; synthesis gets
@@ -79,6 +82,8 @@ TB_SOURCES = [
     "tb/tb_gem_rx_fifo.sv",
     "tb/tb_gem_mdio.sv",
     "tb/tb_gem_clk_rst.sv",
+    "tb/tb_gem_uart_tx.sv",
+    "tb/tb_gem_stat_report.sv",
     "tb/tb_rgmii_bfm.sv",
     "tb/tb_axis_tx_driver.sv",
     "tb/tb_gem_mac_rx.sv",
@@ -120,9 +125,18 @@ SELFTESTS = [
 #                  two dependencies B.1b forbids. There is no data path here
 #                  for the scenario regression to compare, so if this module is
 #                  not checked here it is not checked at all.
+#   tb_gem_uart_tx framing and baud, decoded by a receiver whose bit period
+#                  comes from 115200 as a duration and never from the design's
+#                  divider -- the only arrangement in which a wrong divisor
+#                  cannot agree with itself.
+#   tb_gem_stat_report
+#                  the record R17's readout prints, compared against the whole
+#                  line it should have printed, with every input changed the
+#                  moment transmission starts so the snapshot has to hold.
 #
 # They run first, because a failure here explains a failure everywhere else.
-UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio", "tb_gem_clk_rst"]
+UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio", "tb_gem_clk_rst",
+            "tb_gem_uart_tx", "tb_gem_stat_report"]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.

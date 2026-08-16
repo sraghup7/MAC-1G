@@ -11,15 +11,27 @@ reference model that was finished before the first line of it existed — includ
 600-frame random sweeps in both directions and a loopback that feeds the design's
 own transmit pins back to its receive pins across an independent clock.
 
-Stage 5 is integration, and its first block is in: the **clock and reset module**
-(`rtl/gem_clk_rst.v`), which the specification has described as deliberately
-absent since v0.1. It owns the MMCM and its phase-shifted second output, one
+Stage 5 is integration, and two of its blocks are in. The **clock and reset
+module** (`rtl/gem_clk_rst.v`), which the specification had described as
+deliberately absent since v0.1: the MMCM and its phase-shifted second output, one
 reset synchroniser per domain — asynchronous assert, synchronous deassert, the
-first anywhere in this repository — and the PHY's 10 ms power-on reset hold.
-Still to come this stage: the UART readout R17's counters have no way out of the
-chip without ([V-20](verification_plan.md)), the board top level that instantiates
-the MAC beside this block, the RGMII and MDIO pin constraints, `sw/host/` and the
-bring-up checklist.
+first anywhere in this repository — and the PHY's 10 ms power-on reset hold. And
+**R17's readout** (`rtl/gem_uart_tx.v`, `rtl/gem_stat_report.v`), which closes
+V-20: the counters have been correct since Stage 4 and had no way out of the
+chip. They now leave it as one named-field line a second —
+
+```
+gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=00221622 phyok=00000001
+```
+
+— every field of which is captured in the same cycle, because a record takes 17 ms
+to clock out at 115200 baud and a soak that reads fields from twelve different
+instants finds divergence it caused itself.
+
+Still to come this stage: the board top level that ties the MAC, the clocking and
+the readout together, the RGMII and MDIO pin constraints, `sw/host/` and the
+bring-up checklist. And one thing that is not ours to finish — the reset key and
+the UART's own pin are in neither document we have ([V-21](verification_plan.md)).
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -79,7 +91,8 @@ Run `make help` for the full target list.
 spec/         the specification, versioned alongside the RTL
 model/        MATLAB golden model, stimulus generator, 70 tests, committed vectors
 rtl/          the design: 13 MAC modules, one per file, plus the shared
-              parameters — and, from Stage 5, the 3 that clock and reset it
+              parameters — and, from Stage 5, 3 that clock and reset it and
+              2 that read its counters out over a serial pin
 tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
@@ -132,6 +145,8 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | MDIO Clause 22 framing | a write sent with the read opcode, which leaves both ends driving the bus |
 | MDIO preamble length | a frame started mid-MDC-period, which drives 31 preamble ones instead of 32 |
 | Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (B.1b forbids it), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
+| UART framing and baud | a divisor 3.2% off, and a transmitter reversed to send MSB first. The first of those **passed** until the test was fixed: it had been measuring its own receiver's delay loop rather than the design's edges, and framing alone cannot catch a wrong baud because a receiver resynchronises on every start bit |
+| Status record | the snapshot removed, so the fields come from twelve different instants, and the value nibbles reversed |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |
 
 That habit is not decoration. Reviewing Stage 3 found a skewed comparison, a

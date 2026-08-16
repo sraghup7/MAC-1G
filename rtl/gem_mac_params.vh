@@ -133,6 +133,33 @@
 // unreliably, on some boards, at some temperatures.
 `define GEM_PHY_RESET_HOLD_US   10000
 
+// sys_clk is tx_clk (B.7 item 3), so the register block and the UART that
+// reads it out are clocked at 125 MHz. Named separately from tx_clk anyway,
+// because "the frequency the management side runs at" and "the frequency the
+// transmit datapath runs at" are the same number for one stated reason, not by
+// nature -- a v2 control plane at another frequency reopens exactly that.
+`define GEM_SYS_CLK_HZ          125000000
+
+//---------------------------------------------------------------------------
+// R17 status readout -- spec B.7 item 5
+//---------------------------------------------------------------------------
+
+// 115200 8N1. B.7 item 5 argues the baud: the whole counter set is a couple of
+// hundred octets and the soak reads it at human intervals, not at line rate, so
+// there is nothing to buy by going faster and a standard rate is one less thing
+// for the host script to get wrong.
+//
+// The divider lands at 125e6 / 115200 = 1085.07, truncated to 1085 -- 0.007%
+// fast, against the ~2% a UART receiver tolerates before the stop bit walks out
+// of its sampling window. Truncation is the right direction and the margin is
+// three orders of magnitude; gem_uart_tx carries the arithmetic.
+`define GEM_UART_BAUD           115200
+
+// One record per second: often enough that a four-hour soak (B.5 step 8) has
+// 14,400 samples to diff, rare enough that the log is a few megabytes rather
+// than a few hundred.
+`define GEM_STAT_REPORT_MS      1000
+
 //---------------------------------------------------------------------------
 // Simulation scaling
 //---------------------------------------------------------------------------
