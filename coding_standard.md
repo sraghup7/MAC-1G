@@ -72,8 +72,11 @@ document that refuses builds.
 ## Vendor primitives
 
 - Logic modules contain **no vendor primitives**. The DDR I/O cells are isolated
-  in `gem_oddr` and `gem_iddr`, each with a Xilinx primitive and a plain-Verilog
-  model behind `GEM_BEHAVIORAL_IO`.
+  in `gem_oddr` and `gem_iddr`, and the MMCM and its two global buffers in
+  `gem_mmcm` — each with a Xilinx primitive and a plain-Verilog model behind
+  `GEM_BEHAVIORAL_IO`. `gem_clk_rst` instantiates `gem_mmcm` and stays primitive-free
+  itself, which is what lets it be read as a reset policy rather than as a
+  clocking datasheet.
 - **The synthesisable path is the default**; simulation and lint must ask for the
   model. A forgotten define in a simulation flow fails loudly (`ODDR` is not a
   module anyone can find); the other way round, a forgotten define in synthesis
@@ -88,6 +91,13 @@ document that refuses builds.
 - A synchroniser's safety argument is written at the synchroniser, in terms of the
   event rate it is safe at. `gem_pulse_sync` is safe because B.3a's worst-case
   frame rate puts events 84 cycles apart against a requirement of three.
+- **Resets cross domains only through `gem_reset_sync`**, one instance per domain,
+  asynchronous assert and synchronous deassert (B.1b). Its flops carry
+  `ASYNC_REG` so the placer keeps the chain together; a synchroniser spread across
+  the die still simulates perfectly and buys none of the settling time it exists
+  for. Which asynchronous source feeds each instance is a design decision with a
+  stated reason, not a wiring detail — see `gem_clk_rst`, where `tx_rst_n` is
+  gated on MMCM lock and `rx_rst_n` deliberately is not.
 
 ## Comments
 
@@ -101,7 +111,14 @@ document that refuses builds.
 
 ## Lint
 
-- **Zero warnings** under `verilator --lint-only -Wall` (R22).
+- **Zero warnings** under `verilator --lint-only -Wall --timing` (R22). `--timing`
+  is not a relaxation: Verilator 5 refuses to read a file containing a delay at
+  all until told how to treat one, and `gem_mmcm`'s simulation model cannot avoid
+  delays, because generating a clock from nothing is what a clock source does.
+  No warning class is disabled by it. The alternative, `--no-timing`, ignores the
+  delays and then reports the clock generator as circular combinational logic —
+  a warning about a construct the tool has misunderstood, which is worse than no
+  warning at all.
 - Suppressions are inline, scoped to the narrowest region that needs them, and
   carry a stated reason. There are three: the nonblocking assignment in
   `gem_oddr`'s simulation model, `frame_active` in `gem_rx_deframe` (driven for a

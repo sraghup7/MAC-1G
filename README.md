@@ -5,11 +5,21 @@ an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's Micrel
 KSZ9031RNX PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
-**Status: Stage 4 complete.** The MAC is written. Thirteen modules across three
-clock domains, lint clean, and **every run green** against a reference model that
-was finished before the first line of it existed — including 600-frame random
-sweeps in both directions and a loopback that feeds the design's own transmit
-pins back to its receive pins across an independent clock.
+**Status: Stage 4 complete; Stage 5 under way.** The MAC is written. Thirteen
+modules across three clock domains, lint clean, and **every run green** against a
+reference model that was finished before the first line of it existed — including
+600-frame random sweeps in both directions and a loopback that feeds the design's
+own transmit pins back to its receive pins across an independent clock.
+
+Stage 5 is integration, and its first block is in: the **clock and reset module**
+(`rtl/gem_clk_rst.v`), which the specification has described as deliberately
+absent since v0.1. It owns the MMCM and its phase-shifted second output, one
+reset synchroniser per domain — asynchronous assert, synchronous deassert, the
+first anywhere in this repository — and the PHY's 10 ms power-on reset hold.
+Still to come this stage: the UART readout R17's counters have no way out of the
+chip without ([V-20](verification_plan.md)), the board top level that instantiates
+the MAC beside this block, the RGMII and MDIO pin constraints, `sw/host/` and the
+bring-up checklist.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -68,7 +78,8 @@ Run `make help` for the full target list.
 ```
 spec/         the specification, versioned alongside the RTL
 model/        MATLAB golden model, stimulus generator, 70 tests, committed vectors
-rtl/          the design: 13 modules, one per file, plus the shared parameters
+rtl/          the design: 13 MAC modules, one per file, plus the shared
+              parameters — and, from Stage 5, the 3 that clock and reset it
 tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
@@ -120,6 +131,7 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | FIFO overflow, FSM legality, CRC re-seed, R10 recovery | a CRC re-seeded one cycle late, and a receive path made to take 10 cycles to recover instead of 8 |
 | MDIO Clause 22 framing | a write sent with the read opcode, which leaves both ends driving the bus |
 | MDIO preamble length | a frame started mid-MDC-period, which drives 31 preamble ones instead of 32 |
+| Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (B.1b forbids it), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |
 
 That habit is not decoration. Reviewing Stage 3 found a skewed comparison, a

@@ -1,6 +1,8 @@
 # `gem_mac` — Verification Plan
 
-Document status: v1.1 — Stage 4 complete. Versioned alongside the RTL.
+Document status: v1.2 — Stage 4 complete, Stage 5 under way (the clock/reset block
+is built and tested; see V-20 and V-21 for what the stage still owes).
+Versioned alongside the RTL.
 
 This is how "are we done?" gets answered with evidence instead of opinion. Every
 requirement in [`spec/PROJECT_SPEC.md`](spec/PROJECT_SPEC.md) B.2 appears below
@@ -28,7 +30,7 @@ python scripts/run_sim.py
 | `make sim S=<scenario>` | one scenario | — |
 | `make regress` | per-module tests, harness self-tests, every frozen scenario, loopback | **the gate**: nonzero exit on any mismatch or assertion failure |
 | `make regress-all` | plus the large random sweeps | — |
-| `make lint` | Verilator `--lint-only -Wall` on every design top (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip |
+| `make lint` | Verilator `--lint-only -Wall --timing` on every design top — `gem_mac`, `skeleton_top`, `gem_clk_rst` (R22) | **the gate**: nonzero exit on any warning; a missing Verilator is an error, not a skip. `--timing` disables no warning class: it tells Verilator how to read the delays `gem_mmcm`'s clock model cannot avoid, which it otherwise refuses to parse at all |
 | `make check` | model, vectors-check, lint, regress | the whole thing, in the order that makes a failure diagnosable |
 
 Stage 2's build carries three more gates, inside `scripts/build.tcl`:
@@ -67,14 +69,18 @@ debug loops:
 3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
    still reflect the current model?
 4. **Per-module testbenches** (`tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio`,
-   ~2 s) — Stage 4 step 4, each module checked before it is judged through
-   everything else. `tb_gem_crc32` is the only layer whose reference does not
-   come from this project: the published CRC-32 check value and the residue
-   constant are properties of the standard, so a golden model that was wrong
-   about the CRC could not hide behind an RTL that was wrong the same way.
-   `tb_gem_rx_fifo` runs the async FIFO full, empty and against two unrelated
-   clock rates — none of which the scenarios reach, because R18's contract keeps
-   it nearly empty. `tb_gem_mdio` is V-3's PHY register-file BFM.
+   `tb_gem_clk_rst`, ~2 s) — Stage 4 step 4, each module checked before it is
+   judged through everything else. `tb_gem_crc32` is the only layer whose
+   reference does not come from this project: the published CRC-32 check value
+   and the residue constant are properties of the standard, so a golden model
+   that was wrong about the CRC could not hide behind an RTL that was wrong the
+   same way. `tb_gem_rx_fifo` runs the async FIFO full, empty and against two
+   unrelated clock rates — none of which the scenarios reach, because R18's
+   contract keeps it nearly empty. `tb_gem_mdio` is V-3's PHY register-file BFM.
+   `tb_gem_clk_rst` is Stage 5's, and it is here for a different reason than the
+   other three: the clock/reset block has no data path, so there is nothing for
+   the scenario regression to compare and no golden model to compare it against.
+   If its four properties are not checked here they are not checked anywhere.
 5. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
    functional model and the stimulus driver themselves right? Neither has a DUT
    in it, so they are the first thing to check when something downstream looks
@@ -133,7 +139,7 @@ debug loops:
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
 | R13 | RGMII v2.0, 4-bit DDR at 125 MHz | `tRgmii/*`, `rgmii_bfm` (drives real DDR), every sim scenario | model + sim | **green** (simulation) — the pins' electrical timing is V-2 |
-| R14 | Documented clock/data skew mechanism | — | bench + static timing | **open** · see **V-2** |
+| R14 | Documented clock/data skew mechanism | `gem_mmcm` asks the MMCM for the −72° (1.6 ns) second output B.1b derives; `tb_gem_clk_rst` confirms both outputs exist and start together | bench + static timing | **open** · see **V-2** — the mechanism is now implemented rather than only specified, but a phase shift is an I/O timing property and simulation passes at any phase. Note the achievable step: 45°/8 = 5.625°, so the request rounds to −73.125° (1.625 ns), still 0.375 ns inside the datasheet window |
 | R15 | Registered AXI-Stream, no combinational handshake paths | `gem_axis_sva` ×8 properties, bound to both ports | assertion | **green** |
 | R16 | MDIO/MDC master, ≤ 2.5 MHz, register-level requests | `tb_gem_mdio`: an on-demand read and a write confirmed by reading it back, the sequencer's poll order (PHY ID, BMSR ×2, vendor status), Clause 22 framing and turnaround on both opcodes, and a measured MDC period — against a PHY register-file BFM | unit | **green** — PHY address and the vendor speed encoding remain bring-up step 3 · see **V-3** |
 | R17 | Status/counter block, per error class, readable over UART | `counters_expected.txt` checked in all 16 frozen scenarios, including `tx_underrun` | sim | **green** (counters) — the UART readout is Stage 5 work, decided in spec B.7 item 5 · see **V-20** |
@@ -143,7 +149,7 @@ debug loops:
 | Req | What it requires | Test(s) | Level | Status |
 |---|---|---|---|---|
 | R18 | Line rate both directions, zero drops | `rx_min_gap`, `random_rx_sweep`, `random_tx_sweep`, `tb_gem_mac_loopback` (both directions at once) | sim | **green** |
-| R19 | Three clock domains, zero undeclared CDC | one async FIFO and five toggle synchronisers, and nothing else crossing; `tb_gem_rx_fifo` runs the FIFO across two unrelated clock rates; `tb_gem_mac_loopback` re-emits on an independent `rx_clk`; `report_cdc` at Stage 6 | sim + unit + tool | **green** (structural + sim) — `report_cdc` is Stage 6 |
+| R19 | Three clock domains, zero undeclared CDC | one async FIFO and five toggle synchronisers, and nothing else crossing; `tb_gem_rx_fifo` runs the FIFO across two unrelated clock rates; `tb_gem_mac_loopback` re-emits on an independent `rx_clk`; `gem_reset_sync` ×3 in `gem_clk_rst`, one per domain, checked by `tb_gem_clk_rst`; `report_cdc` at Stage 6 | sim + unit + tool | **green** (structural + sim) — `report_cdc` is Stage 6, and it now has the reset synchronisers to look at as well |
 | R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | `scripts/synth_module.tcl` (WNS +2.135 ns post-synthesis, out of context, refuses on negative), `scripts/build.tcl` gates 2 and 3 | tool | **partial** — the I/O-delay half lands with the RGMII constraints in Stage 6 |
 | R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** | sim | **green** — **13 cycles**, on every frame of every scenario, exactly B.1b's bottom-up prediction |
 | R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 2 tops, zero warnings, three justified suppressions |
@@ -207,10 +213,10 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Golden model test suite | **70 / 70 passing** |
 | Scenario generation | 18 / 18, every generator self-check agrees with the model |
 | Committed vectors vs the model | **48 / 48 files current** |
-| Per-module testbenches (Stage 4 step 4) | **3 / 3** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` |
+| Per-module testbenches | **4 / 4** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` (Stage 4 step 4), `tb_gem_clk_rst` (Stage 5, 1729 checks) |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
-| Verilator lint (R22) | **passing** — 2 tops, zero warnings, 3 justified suppressions |
+| Verilator lint (R22) | **passing** — 3 tops, zero warnings, 3 justified suppressions |
 | Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates green |
 | **Frozen regression vs `gem_mac`** | **16 / 16 passing** |
 | Random sweeps | **2 / 2** — 600 frames each |
@@ -299,6 +305,7 @@ something real has run through them.
 | **V-18** | ~~The RX FIFO's memory dissolved into 648 flip-flops~~ | **Closed — memory moved out of the reset block, and a gate added.** The array was written inside `always @(posedge wr_clk or negedge wr_rst_n)`. RAM contents cannot be reset, so Vivado could not build a RAM and said so — `[Synth 8-4767] … RAM "mem_reg" dissolved into registers` — then built 64×10 bits from flip-flops and a MUXF7/MUXF8 tree. That was nearly half the design's registers, and B.2 meanwhile claimed distributed RAM. Every gate passed: nothing was functionally wrong, only the shape of the result, and the warning sat unread in a log the build prints. | — Closed. Pointers keep their resets, the memory write is its own reset-free block, and the FIFO now occupies 14 LUTs of distributed RAM. 993 → 745 LUTs, 1403 → 788 FFs, WNS +2.135 → +2.262 ns; B.2 corrected. `scripts/synth_module.tcl` refuses the build on `Synth 8-4767`, which is the eighth gate and the only one whose canary is the defect that motivated it. |
 | **V-19** | ~~MDIO could drive only 31 preamble ones~~ | **Closed — frames start on an MDC falling edge.** A transaction began on whatever `tx_clk` cycle it was requested, unaligned to MDC. `bit_cnt` advances on `fall_en`, so a frame begun while MDC was high spent its first bit period with no rising edge in it — and the PHY samples on rising edges, so it would count 31 preamble ones before the start bit. Clause 22 asks for 32. Many PHYs tolerate short preamble and none of them promises to. | — Closed. Requests are now accepted immediately and started at the next falling edge, so acceptance stays decoupled from framing and costs at most half an MDC period. `tb_gem_mdio` counts driven preamble ones, which it did not before — a BFM that hunts for the first zero cannot notice a missing edge. Demonstrated: forcing a high-phase start makes it report exactly 31. |
 | **V-20** | R17's counters have no way out of the chip | The counters are correct and verified against the golden model in all sixteen frozen scenarios, but nothing reads them on hardware: they are output ports and no top level exists yet. R17 asked for "UART (or VIO)" and that choice is now made — **UART**, decided in spec B.7 item 5 before Stage 5 begins, because B.5 step 8's acceptance test is a four-hour soak and a readout that needs Vivado attached over JTAG cannot log, cannot be scripted, and produces no evidence afterwards. | Stage 5. Build a UART transmitter in the sys_clk domain (115200 8N1 unless something argues otherwise), dumping every R17 counter plus `link_up`, `link_speed` and `phy_id` as one named-field record per line so a host script can parse and diff it. No receive path in v1; `stat_clear` from a button or reset. Verification is narrow because the counters are already proven: a testbench that decodes its own transmitter's output confirms framing, baud and that the printed values match the ports. The same `sw/host/` program that drives Scapy for B.5 steps 4-7 consumes the log. |
+| **V-21** | Three board pins the clock/reset and UART work needs are not in any document we have | `gem_clk_rst` takes `ext_rst_n` from the board's reset key, and the UART V-20 calls for needs TXD -- and neither pin is in `Manuals/AX7035B_pinout_notes.md`. The manual confirms both exist (Part 20 for the reset and four user keys, Part 2's collateral list for the USB-UART) but their assignments live in schematic figures that ManualsLib's text extraction does not capture, which is the same gap that left the bank-16 voltage an assumption. RGMII, MDIO, the clock and the LEDs are all known, so this blocks constraints, not RTL. | Get the real PDF from ALINX (product page > Documentations, or the link they send after purchase) and extend the pinout notes. Until then: the RTL is written and simulated against nothing board-specific, and `gem_clk_rst`'s header records that tying `ext_rst_n` high still works on hardware, because the FPGA's global set/reset starts every synchroniser flop at zero and each chain releases itself. Simulation has no GSR, which is why `tb_gem_clk_rst` asserts reset explicitly. |
 | **V-16** | ~~R6 as written and B.4b as written cannot both be satisfied~~ | **Closed — R6 reworded, one vector regenerated (spec B.4d).** Found by writing the Stage 4 transmit path, and unfindable before it: R6 said reject payloads over 1500 octets and never emit an oversize frame, and `tx_reject_oversize` froze that as *nothing at all on the wire* for a 1501-octet request. But the transmit interface carries no length — a frame's length is known only when `tlast` arrives, and B.4b's cut-through decision means TX_EN went up long before that. Knowing the length before committing means holding the whole frame first: store-and-forward, which B.4b rejected for costing 12.14 µs and a BRAM the B.2 table does not carry, and which a threshold buffer does not rescue, because a buffer deep enough to decide *is* a whole-frame buffer. The two requirements were jointly unsatisfiable and the vector encoded the impossible half. Resolved the way B.4b would have resolved it: refuse the octet that would be the 1501st **before** transmitting it, leaving 14 + 1499 + 4 = 1517 octets on the wire — inside maxBasicFrameSize, so R6's "never emit an oversize frame" holds literally — marked bad with `TX_ER` and an inverted FCS, counted in `stat_tx_rejected`, remainder drained and discarded. `gem.abortedFrame` already modelled the object; only `gem.genTxScenario` needed to emit it. | — Closed. `tx_reject_oversize/tx_expected.hex` is the only vector datum that changed; all 47 other committed files regenerated byte-identically, which is the evidence that this was a contained specification error rather than a design that had drifted. The counters never moved: they were right before the amendment and after it. |
 | **V-2** | R14's RGMII skew cannot be simulated | The 1.6 ns `GTX_CLK` phase shift is an I/O timing property. Simulation will pass with any phase; only static timing analysis and a scope on the bench can confirm it. | Stage 6 `report_timing` on the constrained I/O paths, then bring-up step 5 with an ILA or scope on `GTX_CLK`/`TXD0`. |
 | **V-3** | ~~R16 MDIO has no test~~ | **Closed, and R16 completed along the way.** `tb/tb_gem_mdio.sv` runs the master against a PHY register-file BFM that decodes Clause 22 the way the standard specifies rather than the way this MAC happens to emit it, so a wrongly ordered field is answered by silence instead of accommodated. Writing it exposed that the module was only half of R16: there was a sequencer but no "register-level request interface", because the frozen port list had no channel for one — and with no way to read an arbitrary register, B.5 step 3 (read the PHY ID, prove MDIO and the PHY are alive) could not be performed at all. Ports were added rather than the requirement trimmed. The test now covers an on-demand read, a write confirmed by reading it back through the same port, the sequencer's poll order, framing and turnaround on **both** opcodes, and a measured MDC period against R16's ceiling. It was made to fail on purpose: sending a write with the read opcode trips the turnaround check on the first affected bit. What it cannot check is what the board straps `PHY_ADDR` to, and whether register 0x1F carries the speed bits where the KSZ9031RNX datasheet says — both stated in the module header, both bring-up step 3, and both now answerable from the bench without a rebuild by sweeping the address over the request port. | the remaining half is bring-up |

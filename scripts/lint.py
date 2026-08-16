@@ -47,13 +47,26 @@ REPO = Path(__file__).resolve().parent.parent
 TOPS = [
     "rtl/gem_mac.v",
     "rtl/skeleton_top.v",
+    # Stage 5's clock/reset block. It is not under gem_mac and never will be --
+    # it is what feeds gem_mac its clocks -- so until the Stage 5 top level
+    # instantiates both, it has to be named here to be linted at all.
+    "rtl/gem_clk_rst.v",
 ]
 
 # GEM_BEHAVIORAL_IO selects the plain-Verilog models of the DDR I/O cells. The
 # synthesis path instantiates Xilinx ODDR/IDDR primitives, which Verilator has
 # no source for; see the header of rtl/gem_ddr_io.v for why the primitive path
 # is the default and the model has to be asked for.
-FLAGS = ["--lint-only", "-Wall", "-Irtl", "-DGEM_BEHAVIORAL_IO"]
+#
+# --timing is not a relaxation of the gate. Verilator 5 refuses to read a file
+# containing a delay at all unless told how to treat one (NEEDTIMINGOPT), and
+# gem_mmcm's simulation model cannot avoid delays: generating a 125 MHz clock
+# from nothing is what a clock source does. The alternative, --no-timing, is
+# actively worse -- it ignores the delays and then reports the clock generator
+# as circular combinational logic, a warning about a construct it has
+# misunderstood. No warning class is disabled either way; every -Wall check
+# still runs on every file.
+FLAGS = ["--lint-only", "-Wall", "--timing", "-Irtl", "-DGEM_BEHAVIORAL_IO"]
 
 
 def verilator_command(explicit: str | None) -> list[str]:

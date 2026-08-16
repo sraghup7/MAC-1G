@@ -116,6 +116,24 @@
 `define GEM_RX_LATENCY_MAX_CYCLES 32
 
 //---------------------------------------------------------------------------
+// Board clocking and PHY reset -- spec B.1b, built by Stage 5's clock/reset
+// block (rtl/gem_clk_rst.v)
+//---------------------------------------------------------------------------
+
+// The board's only oscillator, and the MMCM's input (A.2 / ALINX AX7035B
+// manual Part 5, pin Y18). Everything the reset sequencer counts is counted
+// in these cycles, because it is the one clock running before the MMCM locks.
+`define GEM_CLK50_HZ            50000000
+
+// KSZ9031RNX tSR: RST_N must be held low at least 10 ms after the supplies are
+// stable, and MDIO is not to be trusted until it releases (B.1b's reset
+// strategy, bring-up step 2). Stated in microseconds rather than milliseconds
+// so that cycles = (CLK50_HZ / 1e6) * HOLD_US stays exact integer arithmetic
+// -- a reset hold that is short by a rounding error is a PHY that comes up
+// unreliably, on some boards, at some temperatures.
+`define GEM_PHY_RESET_HOLD_US   10000
+
+//---------------------------------------------------------------------------
 // Simulation scaling
 //---------------------------------------------------------------------------
 

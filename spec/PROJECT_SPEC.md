@@ -1,8 +1,24 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.9 — Stage 1 complete, Stage 3 complete, Stage 4 complete; one Stage 5
-decision recorded in advance. Amended throughout by what building the reference model,
-the verification layer and the RTL actually forced. Versioned alongside the RTL.
+Document status: v0.10 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
+under way. Amended throughout by what building the reference model, the verification
+layer and the RTL actually forced. Versioned alongside the RTL.
+
+**Changelog v0.9 → v0.10 (Stage 5's first block exists):** the **clock/reset module**
+B.1a has described as absent since v0.1 is built — `rtl/gem_clk_rst.v`, with
+`rtl/gem_mmcm.v` and `rtl/gem_reset_sync.v` under it — so the sentence saying there is no
+reset synchroniser anywhere in this repository is no longer true and no longer here.
+B.1a's bullet records what it owns, including the PHY's 10 ms reset hold, which had a
+requirement in B.1b and no module. Two constants join the parameter header, `GEM_CLK50_HZ`
+and `GEM_PHY_RESET_HOLD_US`, so the hold is derived rather than typed: 500,000 cycles, and
+the model parses both.
+
+**B.2's MMCM row is corrected**, and the correction is worth stating because the row was
+wrong in a way that reads as fine: it carried four cells against a five-column header, so
+the device's MMCM count had slid into the measured column and the table appeared to say
+`gem_mac` had instantiated **five** MMCMs against a budget of one. The out-of-context MAC
+contains none — the MMCM is the top level's, which is exactly what B.1a says — and the
+device has five. No measurement changed; a table did.
 
 **Changelog v0.8 → v0.9 (a decision taken before the stage that needs it):** **R17**'s
 status readout is **UART**, not VIO, and **B.7 item 5** records why and what it obliges
@@ -251,13 +267,18 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
   4 rather than the requirement trimmed.
 - **Register/status block** (sys_clk domain) — frame counters, link state, sticky error
   flags, all clearable, readable over UART/VIO (R17).
-- **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b). **Not
-  implemented in Stage 4, and deliberately so:** it is board-level integration, not MAC
-  logic. `gem_mac` takes `tx_clk`, `gtx_clk_shifted` and two already-synchronised resets
-  as inputs and contains no reset synchroniser of its own. Until Stage 5 builds this
-  block there is no reset synchroniser anywhere in the repository, which matters for
-  anyone reading the RTL and expecting one — the testbenches supply resets that are
-  already clean.
+- **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b). Deliberately
+  not part of Stage 4: it is board-level integration, not MAC logic, and `gem_mac`
+  accordingly takes `tx_clk`, `gtx_clk_shifted` and two already-synchronised resets as
+  inputs and contains no reset synchroniser of its own. **Built in Stage 5** as
+  `rtl/gem_clk_rst.v`, with the MMCM isolated in `rtl/gem_mmcm.v` (the coding standard's
+  rule that vendor primitives do not appear in logic modules) and the synchroniser
+  itself in `rtl/gem_reset_sync.v`, instantiated once per domain. It also owns the PHY's
+  power-on reset hold, counted on `clk50` because that is the only clock running before
+  the MMCM locks. `tb_gem_clk_rst` checks the four properties B.1b asserts and nothing
+  else can: reset asserting with no clock edge available, releasing only on its own
+  domain's edge, `tx_rst_n` never releasing onto an unlocked MMCM, and `rx_rst_n` not
+  depending on the MMCM at all.
 
 ## B.1b Clocking and reset
 
@@ -435,7 +456,7 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 | FFs | ≤ 3,000 | **788** | 41,600 | pipeline + CDC + counters |
 | BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
 | DSP | 0 | **0** | 90 | nothing multiplies here |
-| MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
+| MMCM | 1 | **0** (in `gem_mac`) · **1** (in `gem_clk_rst`) | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
 
 The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
 at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop

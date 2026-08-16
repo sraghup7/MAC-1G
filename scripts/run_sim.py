@@ -55,6 +55,12 @@ RTL_SOURCES = [
     "rtl/gem_stats.v",
     "rtl/gem_mdio.v",
     "rtl/gem_mac.v",
+    # Stage 5's clock/reset block. It sits beside gem_mac rather than inside
+    # it -- it is what feeds gem_mac its clocks and resets -- so it is listed
+    # here in its own right until the Stage 5 top level instantiates both.
+    "rtl/gem_reset_sync.v",
+    "rtl/gem_mmcm.v",
+    "rtl/gem_clk_rst.v",
 ]
 
 # Simulation gets the plain-Verilog models of the DDR I/O cells; synthesis gets
@@ -72,6 +78,7 @@ TB_SOURCES = [
     "tb/tb_gem_crc32.sv",
     "tb/tb_gem_rx_fifo.sv",
     "tb/tb_gem_mdio.sv",
+    "tb/tb_gem_clk_rst.sv",
     "tb/tb_rgmii_bfm.sv",
     "tb/tb_axis_tx_driver.sv",
     "tb/tb_gem_mac_rx.sv",
@@ -109,9 +116,13 @@ SELFTESTS = [
 #                  running at unrelated rates -- none of which the integrated
 #                  tests reach, because R18's contract keeps it nearly empty.
 #   tb_gem_mdio    Clause 22 framing against a PHY register-file model (V-3).
+#   tb_gem_clk_rst reset assert without a clock, release on an edge, and the
+#                  two dependencies B.1b forbids. There is no data path here
+#                  for the scenario regression to compare, so if this module is
+#                  not checked here it is not checked at all.
 #
 # They run first, because a failure here explains a failure everywhere else.
-UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio"]
+UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio", "tb_gem_clk_rst"]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.
