@@ -89,6 +89,18 @@ module tb_gem_mac_rx;
         .mdio_o           (),
         .mdio_t           (),
 
+        // R16's request port is unused by this testbench: tied off rather than
+        // left floating, so "nobody is asking for a register" is a statement in
+        // the source and not an X on a valid signal.
+        .mdio_req_valid   (1'b0),
+        .mdio_req_ready   (),
+        .mdio_req_write   (1'b0),
+        .mdio_req_phyad   (5'd0),
+        .mdio_req_regad   (5'd0),
+        .mdio_req_wdata   (16'd0),
+        .mdio_rsp_data    (),
+        .mdio_rsp_valid   (),
+
         .tx_axis_tdata    (8'b0),
         .tx_axis_tvalid   (1'b0),
         .tx_axis_tready   (),
@@ -109,6 +121,8 @@ module tb_gem_mac_rx;
         .stat_rx_oversize (stat_rx_oversize),
         .stat_rx_rxer     (stat_rx_rxer),
         .stat_clear       (1'b0),
+        .phy_id           (),
+        .phy_id_valid     (),
         .link_up          (),
         .link_speed       ()
     );

@@ -2,9 +2,23 @@
 // gem_mac -- a full-duplex 1000BASE-T Ethernet MAC, RGMII to the PHY and
 // AXI-Stream to user logic. Stage 4's design, replacing rtl/gem_mac_stub.v.
 //
-// The port list is the stub's, unchanged, because that was the stub's first
-// job: fixing the interface before the RTL could argue with it. One input is
-// added -- gtx_clk_shifted -- and the reason is in the clocking note below.
+// The port list is the stub's, plus two additions, and both were forced by a
+// requirement the frozen interface had no way to express. Fixing the interface
+// early was the stub's whole job and it did it -- every signal the datapath
+// needs was already there, and every Stage 3 testbench still elaborates
+// unchanged against this module. What it could not anticipate was the two
+// requirements that need a port to exist at all:
+//
+//   gtx_clk_shifted   R14's 1.6 ns skew mechanism has to clock the GTX_CLK
+//                     forwarding cell from somewhere. See the clocking note.
+//   mdio_req_* / phy_id
+//                     R16 asks for "a register-level request interface" and
+//                     for reading the PHY ID. With neither a request channel
+//                     nor an ID output, R16 was half-implementable and B.5
+//                     bring-up step 3 was not performable at all.
+//
+// Both are additive: existing testbenches leave them unconnected or tied off,
+// and no behaviour they check changes.
 //
 // STRUCTURE (spec B.1a's nine modules, and where each of them went):
 //
@@ -79,6 +93,19 @@ module gem_mac (
     output wire         mdio_o,
     output wire         mdio_t,             // 1 = release the bus
 
+    // R16's register-level request interface: any PHY register, read or write,
+    // on demand. Accepted when valid and ready are both high; one transaction
+    // at a time. Tie req_valid low and this side of the block disappears,
+    // which is what every Stage 3 testbench does.
+    input  wire         mdio_req_valid,
+    output wire         mdio_req_ready,
+    input  wire         mdio_req_write,
+    input  wire [4:0]   mdio_req_phyad,
+    input  wire [4:0]   mdio_req_regad,
+    input  wire [15:0]  mdio_req_wdata,
+    output wire [15:0]  mdio_rsp_data,
+    output wire         mdio_rsp_valid,     // one cycle, when a read lands
+
     // ---- TX user interface, AXI-Stream (R15), tx_clk domain ---------------
     input  wire [7:0]   tx_axis_tdata,
     input  wire         tx_axis_tvalid,
@@ -103,6 +130,11 @@ module gem_mac (
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_rxer,
     input  wire         stat_clear,
+    // What the MDIO sequencer found, live on pins so an ILA or VIO can read the
+    // link state with no software attached -- which is the situation B.5's
+    // bring-up steps 2 and 3 are actually conducted in.
+    output wire [31:0]  phy_id,             // {PHYIDR1, PHYIDR2}
+    output wire         phy_id_valid,       // ... and it was not all-ones/zeros
     output wire         link_up,
     output wire [1:0]   link_speed          // 00=10, 01=100, 10=1000 (Clause 22)
 );
@@ -311,14 +343,24 @@ module gem_mac (
     // Management (R16)
     //======================================================================
     gem_mdio u_mdio (
-        .clk        (tx_clk),
-        .rst_n      (tx_rst_n),
-        .mdc        (mdc),
-        .mdio_i     (mdio_i),
-        .mdio_o     (mdio_o),
-        .mdio_t     (mdio_t),
-        .link_up    (link_up),
-        .link_speed (link_speed)
+        .clk          (tx_clk),
+        .rst_n        (tx_rst_n),
+        .mdc          (mdc),
+        .mdio_i       (mdio_i),
+        .mdio_o       (mdio_o),
+        .mdio_t       (mdio_t),
+        .req_valid    (mdio_req_valid),
+        .req_ready    (mdio_req_ready),
+        .req_write    (mdio_req_write),
+        .req_phyad    (mdio_req_phyad),
+        .req_regad    (mdio_req_regad),
+        .req_wdata    (mdio_req_wdata),
+        .rsp_data     (mdio_rsp_data),
+        .rsp_valid    (mdio_rsp_valid),
+        .phy_id       (phy_id),
+        .phy_id_valid (phy_id_valid),
+        .link_up      (link_up),
+        .link_speed   (link_speed)
     );
 
     // Deliberately unread outputs, gathered in one place so that "nothing

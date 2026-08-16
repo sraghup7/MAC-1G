@@ -11,12 +11,16 @@ they collided. Resolved in R6's favour as B.4b would have resolved it — the oc
 would be the 1501st is refused before it is transmitted, so the wire carries a
 1517-octet frame marked bad rather than an oversize one or nothing at all — and that
 one vector was regenerated. **B.2**'s
-resource table gains a measured column — 946 LUTs and 1316 FFs against budgets of 2000
+resource table gains a measured column — 993 LUTs and 1403 FFs against budgets of 2000
 and 3000 — which closes the weakness B.7 states about those numbers being untraceable
 guesses, and corrects one of them in kind: the RX FIFO uses no block RAM at all.
 **B.1a** records the one addition to the interface the stub froze, an input carrying the
 phase-shifted GTX_CLK that R14's mechanism cannot be built without. **B.4**'s status
-paragraph reports Stage 4. **R12** is settled rather than left hanging: the DA filter is
+paragraph reports Stage 4. **R16** gained the ports it always required: the frozen
+interface had no request channel and no PHY-ID output, which left "a register-level
+request interface" half-implemented and B.5 step 3 — read the PHY ID to prove the PHY
+is alive — impossible to perform. Both are additive and no testbench changed
+behaviour. **R12** is settled rather than left hanging: the DA filter is
 not implemented in v1, the receive path is promiscuous, and B.7 now lists it as a
 non-goal instead of describing it as undecided — a stretch requirement nobody has ruled
 on is how a release ends up unable to say what it does.
@@ -213,7 +217,15 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
    register**, verdict on `tuser` at the `tlast` beat (R9).
 
 **Shared:**
-- **MDIO master** — register-level request interface, ≤ 2.5 MHz MDC (R16).
+- **MDIO master** — register-level request interface *and* a sequencer that polls
+  the PHY unprompted, ≤ 2.5 MHz MDC (R16). The request port is what "register-level"
+  means: any register, read or write, on demand — including the pad-skew registers
+  B.1b names as the RGMII timing fallback, which no fixed poll list could reach. The
+  sequencer reads PHY ID, BMSR twice (its link bit latches low) and the vendor speed
+  register, and publishes `phy_id`, `link_up` and `link_speed` on pins, so B.5's
+  bring-up steps 2 and 3 can be done with an ILA and no software attached. Neither
+  half was expressible on the port list Stage 3 froze; both ports were added in Stage
+  4 rather than the requirement trimmed.
 - **Register/status block** (sys_clk domain) — frame counters, link state, sticky error
   flags, all clearable, readable over UART/VIO (R17).
 - **Clock/reset module** — MMCM + per-domain reset synchronizers (B.1b).
@@ -386,8 +398,8 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 
 | Resource | Budget | **Measured (Stage 4)** | XC7A35T has | Headroom rationale |
 |---|---|---|---|---|
-| LUTs | ≤ 2,000 | **946** | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
-| FFs | ≤ 3,000 | **1,316** | 41,600 | pipeline + CDC + counters |
+| LUTs | ≤ 2,000 | **993** | 20,800 | TX ~400, RX ~500, CRC×2 ~300, MDIO ~150, regs/dbg ~300, margin |
+| FFs | ≤ 3,000 | **1,403** | 41,600 | pipeline + CDC + counters |
 | BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
 | DSP | 0 | **0** | 90 | nothing multiplies here |
 | MMCM | 1 | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
@@ -395,7 +407,7 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
 at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop
 being guesses. Two things came out of it. The estimates were right in order of
-magnitude and conservative in degree: 4.2% of the device's LUTs against a budget that
+magnitude and conservative in degree: 4.8% of the device's LUTs against a budget that
 was itself under 10%. And one was wrong in kind rather than degree — B.3a chose the
 64-entry FIFO partly on the basis that a BRAM18 holds far more than 64 octets anyway,
 and synthesis put it in distributed RAM, using no block RAM at all. That is cheaper
