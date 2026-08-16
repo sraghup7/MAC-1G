@@ -222,6 +222,7 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Random sweeps | **2 / 2** — 600 frames each |
 | Loopback, across an independent rx_clk | **2 / 2** |
 | `gem_mac` out of context (Stage 4 step 6) | 745 LUT · 788 FF · 0 BRAM · 0 DSP · WNS **+2.262 ns** at 125 MHz (cell counts; 669 slice LUTs) |
+| `gem_clk_rst` out of context (Stage 5) | 10 LUT · 27 FF · **1 MMCME2_ADV · 2 BUFG** · zero latches · zero critical warnings. Every one of the 27 registers synthesised with an *asynchronous* reset, which is the structure B.1b asks for read back out of the netlist rather than assumed from the source, and the 6 synchroniser flops kept their `ASYNC_REG`. This is the branch simulation never exercises — XSim and Verilator both run the behavioural model — so it is the only check that the real MMCM instantiation is legal at all. Repeatable as `make oocsynth M=gem_clk_rst` |
 | R21 measured worst-case RX latency | **13 cycles** against a 32-cycle ceiling — exactly B.1b's predicted 13 |
 
 Three things are worth pulling out of that table.
