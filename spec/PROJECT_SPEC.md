@@ -440,7 +440,8 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   in favour of UART — **B.7 item 5** has the reasoning, the record format, and the
   measured cost. The counters themselves exist and are verified (Stage 4); the readout
   that gets them out of the chip is built in Stage 5 (`gem_uart_tx`, `gem_stat_report`),
-  which closes V-20. What remains is a pin for the UART's TXD, which is V-21.
+  which closes V-20. Its pin is **G16** on this board (V-21, confirmed against the
+  schematic).
 
 ### Performance & clocking
 
