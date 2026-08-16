@@ -1,8 +1,17 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.8 — Stage 1 complete, Stage 3 complete, Stage 4 complete. Amended throughout by what
-building the reference model and the verification layer actually forced. Versioned
-alongside the RTL.
+Document status: v0.9 — Stage 1 complete, Stage 3 complete, Stage 4 complete; one Stage 5
+decision recorded in advance. Amended throughout by what building the reference model,
+the verification layer and the RTL actually forced. Versioned alongside the RTL.
+
+**Changelog v0.8 → v0.9 (a decision taken before the stage that needs it):** **R17**'s
+status readout is **UART**, not VIO, and **B.7 item 5** records why and what it obliges
+Stage 5 to build. The requirement had carried "(or VIO)" since v0.1, which is a choice
+left open, and an open choice discovered mid-integration is a choice made under
+schedule pressure. The reasoning is B.5 step 8: the acceptance test is a four-hour
+soak, and a readout that needs Vivado attached over JTAG cannot log, cannot be
+scripted, and cannot produce evidence after the fact. Nothing else in this revision
+changes — no RTL, no vectors, no gates.
 
 **Changelog v0.7 → v0.8 (what building the RTL forced):** added **B.4d**, the one
 question Stage 4 found that Stage 3 could not have: R6 as written and B.4b as written
@@ -393,10 +402,13 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 - **R16 [M]** MDIO/MDC master (≤ 2.5 MHz MDC) with a register-level request interface;
   bring-up software (or a hardware sequencer) uses it to read PHY ID, link status, and
   resolved speed/duplex.
-- **R17 [M]** Status/debug register block readable over UART (or VIO): frame counters
+- **R17 [M]** Status/debug register block readable over **UART**: frame counters
   (TX ok, TX rejected, **TX underrun**, RX ok, RX bad-FCS, RX runt, RX oversize, RX_ER),
   link state, sticky error
-  flags, all clearable.
+  flags, all clearable. The "(or VIO)" this requirement carried until v0.9 is resolved
+  in favour of UART — **B.7 item 5** has the reasoning and what it obliges Stage 5 to
+  build. The counters themselves exist and are verified (Stage 4); what Stage 5 adds is
+  the way a human reads them.
 
 ### Performance & clocking
 
@@ -775,7 +787,9 @@ question only arises when something has to actually drive TX_EN.*
 7. Corruption on the wire: Scapy sends bad-FCS/runt frames; bad counters advance, good
    traffic continues (R10 on real hardware).
 8. Soak: ≥ 4 hours full-rate bidirectional randomized traffic; zero counter divergence,
-   FIFO high-water marks stable.
+   FIFO high-water marks stable. Counters are read over the UART (R17, B.7 item 5) and
+   **logged**, so the result is a file that can be diffed rather than a recollection —
+   which is the whole reason that readout is a UART and not a JTAG probe.
 
 Step 8 passing = the acceptance test for "fully functional."
 
@@ -835,6 +849,49 @@ deferred to RTL time):**
    over one max-length frame (~0.3 B, negligible) plus CDC pointer-sync latency
    (~4 B) — roughly an order of magnitude below the chosen depth, which costs nothing
    extra since a single BRAM18 natively holds far more than 64 entries at 8-bit width.
+
+5. **How R17's counters are read: UART, not VIO.** Decided before Stage 5 starts, so
+   that the integration work has one answer rather than a choice to make mid-build.
+
+   VIO is the cheaper option and was the obvious default: no RTL, a probe in the Vivado
+   hardware manager, working the moment the bitstream loads. It was rejected on what
+   B.5 step 8 needs. **The acceptance test for "fully functional" is a four-hour soak**,
+   and a readout that requires Vivado attached over JTAG is a readout that cannot log,
+   cannot be scripted against, and cannot be left running overnight in a way that
+   produces evidence afterwards. A soak whose result is "I watched it for a while and
+   the numbers looked fine" is not the test B.5 asks for. UART gives a stream a host
+   script can timestamp and diff, which is what "zero counter divergence" over four
+   hours actually requires.
+
+   Two further reasons, both from this project's own constraints: the board has a
+   USB-UART already (A.2's collateral list), so the physical path costs nothing; and
+   `sw/host/` exists as a Stage 5 deliverable regardless, for the Scapy side of B.5
+   steps 4–7 — the same host program can hold both ends of the test, sending frames and
+   reading counters, instead of correlating Wireshark against a GUI by eye.
+
+   **What this obliges Stage 5 to build**, stated here so the decision is actionable and
+   not just recorded:
+   - a UART transmitter in the `sys_clk` (= `tx_clk`) domain, 125 MHz to a standard baud;
+     **115200 8N1** unless there is a reason to go faster, since the whole counter set is
+     a few dozen octets and the soak reads it at human intervals, not at line rate;
+   - a periodic dump of every R17 counter plus `link_up`, `link_speed`, `phy_id` and
+     `phy_id_valid`, in a format a script can parse without ambiguity — one record per
+     line, fields named, so a change to the set is visible in the log rather than
+     silently shifting a column;
+   - a receive path is **not** required for v1. `stat_clear` can be tied to a button or
+     asserted at reset; a command interface is a v2 nicety and would need its own
+     protocol decisions. If one is added, the natural pairing is with the MDIO request
+     port already built in Stage 4, which would make the pad-skew registers B.1b names
+     as the RGMII timing fallback reachable from the host as well;
+   - the counters are already correct and verified against the golden model in all
+     sixteen frozen scenarios, so the new verification obligation is narrow: that the
+     UART's framing and baud are right, and that what it prints is what the counter
+     ports hold. A loopback testbench that decodes its own transmitter's output is the
+     cheap way to get both.
+
+   Cost, stated plainly: a UART transmitter, a formatter and a divider are real RTL —
+   perhaps 150–250 LUTs against the 1,255 still free under B.2's budget — where VIO
+   would have been zero. That is the price of a soak test that produces a file.
 
 **Alternatives considered, restated for traceability:**
 - **Store-and-forward vs. cut-through (RX delivery):** cut-through with a trailing
