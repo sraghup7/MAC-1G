@@ -103,11 +103,15 @@ module tb_gem_top;
     // Stimulus and capture, both at the pins
     //----------------------------------------------------------------------
     logic drv_start = 1'b0;
+    // The driver's reset is deliberately NOT the board's. It stands in for the
+    // PHY, and a PHY does not stop driving because the FPGA was reset -- which
+    // is the entire point of the mid-operation reset check below.
+    logic drv_rst_n = 1'b0;
     wire  drv_busy, drv_done;
 
     rgmii_driver u_drv (
         .clk       (rx_clk),
-        .rst_n     (rst_key_n),
+        .rst_n     (drv_rst_n),
         .start     (drv_start),
         .busy      (drv_busy),
         .done      (drv_done),
@@ -247,7 +251,7 @@ module tb_gem_top;
     int echoes_seen = 0;
     int matched     = 0;
 
-    task automatic check_transmitted();
+    task automatic check_transmitted(input int from_word = 0);
         int b, i, len, pay_len;
         logic [7:0] octets [$];
         logic [7:0] body   [$];
@@ -261,6 +265,7 @@ module tb_gem_top;
         n_bursts = split_bursts(captured, u_mon.n_words, bursts);
 
         for (b = 0; b < n_bursts; b++) begin
+            if (bursts[b].startIdx < from_word) continue;   // captured before the mark
             octets = {};
             for (i = 0; i < bursts[b].len; i++) begin
                 octets.push_back(u_mon.words[bursts[b].startIdx + i][7:0]);
@@ -331,6 +336,8 @@ module tb_gem_top;
     // The run
     //----------------------------------------------------------------------
     int  rx_ok_reported;
+    int  mark_words, mark_records;
+    bit  reset_hit_tx;
     bit  ok;
     int  i;
 
@@ -356,6 +363,7 @@ module tb_gem_top;
         end
 
         rst_key_n = 1'b1;
+        drv_rst_n = 1'b1;
 
         wait (u_dut.mmcm_locked === 1'b1);
         repeat (20) @(posedge clk50);
@@ -414,6 +422,113 @@ module tb_gem_top;
                 "the readout reports rx_ok=%0d and %0d good frames were sent -- the counters and the record disagree, or frames were lost before being counted",
                 rx_ok_reported, n_good_in));
         end
+
+        //--------------------------------------------------------------
+        // 4. Reset asserted mid-frame, with the link partner still sending
+        //
+        //    The flow doc lists this under what system testing must reach and
+        //    unit testing structurally cannot, and it matters here more than it
+        //    would in most designs, because of what the reset architecture
+        //    deliberately does: tx_rst_n waits for MMCM lock and rx_rst_n does
+        //    not (B.1b -- rx_clk may not exist yet), so the two domains always
+        //    release at different moments. gem_rx_fifo straddles that boundary
+        //    with a reset from each side. Resetting one side of an async FIFO
+        //    while the other keeps its pointers is a classic way to corrupt the
+        //    level calculation, and this design's reset strategy guarantees a
+        //    window where exactly that is true.
+        //--------------------------------------------------------------
+        drv_start = 1'b0;
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+
+        // The strongest moment is with a frame arriving AND a frame leaving:
+        // both domains busy, the async FIFO in use, the echo buffer holding a
+        // frame it has not finished sending. Hunt for that, bounded, because
+        // it depends on where the echo path happens to be -- and fall back to
+        // mid-receive, which is the case that straddles the FIFO and is the
+        // one this check exists for. Which of the two happened is printed, so
+        // a run cannot quietly claim the stronger one.
+        for (i = 0; i < 4000 && !reset_hit_tx; i++) begin
+            @(posedge rx_clk);
+            if (rgmii_rx_ctl === 1'b1 && rgmii_tx_ctl === 1'b1) reset_hit_tx = 1'b1;
+        end
+
+        if (!reset_hit_tx) begin
+            wait (rgmii_rx_ctl === 1'b1);
+            repeat (30) @(posedge rx_clk);
+        end
+
+        note_check();
+        if (rgmii_rx_ctl !== 1'b1) begin
+            report_fail("gem_top",
+                "meant to reset mid-frame and the frame had already ended -- this run proved nothing about recovery");
+        end
+        rst_key_n = 1'b0;
+
+        // The PHY keeps sending into a chip in reset, which is what really
+        // happens. Then quiesce it, so that what the counters show afterwards
+        // is the replay and nothing else.
+        repeat (200) @(posedge rx_clk);
+        drv_start = 1'b0;
+        drv_rst_n = 1'b0;
+        repeat (50) @(posedge clk50);
+
+        note_check();
+        if (led[0] !== 1'b1) begin
+            report_fail("gem_top", "the lock LED is still lit while the board is held in reset");
+        end
+
+        //--------------------------------------------------------------
+        // 5. ... and it comes back
+        //--------------------------------------------------------------
+        rst_key_n = 1'b1;
+        wait (u_dut.mmcm_locked === 1'b1);
+        wait (phy_rst_n === 1'b1);
+        repeat (50) @(posedge clk50);
+
+        note_check();
+        if (led[0] !== 1'b0) begin
+            report_fail("gem_top", "the MMCM did not lock again after the reset was released");
+        end
+
+        // Everything from here is post-reset, judged on its own.
+        mark_words   = u_mon.n_words;
+        mark_records = uart_lines.size();
+        echoes_seen  = 0;
+        matched      = 0;
+
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+        wait (drv_done === 1'b1);
+        repeat (4000) @(posedge rx_clk);
+
+        check_transmitted(mark_words);
+
+        note_check();
+        if (echoes_seen == 0) begin
+            report_fail("gem_top",
+                "nothing was echoed after the reset -- the design received frames before it and none after, which is a recovery failure rather than a receive one");
+        end
+
+        // The counters restarted, so a record taken now must account for the
+        // replay exactly. Anything else means state survived the reset.
+        wait (uart_lines.size() > mark_records + 1);
+
+        rx_ok_reported = field_value(uart_lines[mark_records + 1], "rx_ok");
+
+        note_check();
+        if (rx_ok_reported != n_good_in) begin
+            report_fail("gem_top", $sformatf(
+                "after the reset the readout reports rx_ok=%0d for a replay of %0d good frames -- the counters did not restart from zero, or the receive path did not fully recover",
+                rx_ok_reported, n_good_in));
+        end
+
+        $display("[gem_tb] gem_top: reset asserted mid-frame%s, %0d frames echoed after recovery",
+                 reset_hit_tx ? " (and mid-transmission)" : "", echoes_seen);
 
         $display("[gem_tb] gem_top: %0d good frames in, %0d frames echoed back, %0d matched",
                  n_good_in, echoes_seen, matched);

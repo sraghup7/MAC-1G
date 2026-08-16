@@ -118,6 +118,9 @@ debug loops:
 8. **Loopback** (`tb_gem_mac_loopback`) — the design against itself, which is
    the only layer where a TX and RX error that cancel each other out cannot
    hide.
+8a. **Reset mid-operation** (`tb_gem_top`) — the one system-level case the flow
+   doc names that nothing else here reaches. Every other testbench asserts reset
+   at time zero and releases it; this one asserts it while both domains are busy.
 9. **Build gates** (`scripts/build.tcl`, `scripts/synth_module.tcl`) — the checks a simulation cannot make:
    inferred latches, slack, and whether timing analysis actually covered the
    design rather than passing because nothing was constrained.
@@ -227,7 +230,8 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Committed vectors vs the model | **48 / 48 files current** |
 | Per-module testbenches | **8 / 8** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` (Stage 4 step 4), `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report`, `tb_gem_echo`, `tb_gem_top` (Stage 5) |
 | Host record parser (`make hosttest`) | **15 / 15 passing** — including counter wrap modulo 2³², a truncated line, and an unknown field being an error rather than a skip |
-| **Board-level round trip** (`tb_gem_top`) | **passing** — 12 good frames in on RGMII, 6 echoed back with addresses exchanged and a valid FCS the testbench computed itself, 6 dropped by the echo buffer's stated policy. `rx_ok` in the UART record agrees with the frames sent, and the readout reports no link with no PHY on the bus |
+| **Board-level round trip** (`tb_gem_top`) | **passing**, 60 checks — 12 good frames in on RGMII, 6 echoed back with addresses exchanged and a valid FCS the testbench computed itself, 6 dropped by the echo buffer's stated policy. `rx_ok` in the UART record agrees with the frames sent, and the readout reports no link with no PHY on the bus |
+| **Reset asserted mid-operation** (`tb_gem_top`) | **passing** — the board's reset is asserted with a frame arriving *and* a frame leaving, while the link partner keeps sending, then released. The design must relock, restart its counters from zero and count a full replay exactly. This is the case the reset architecture creates: `tx_rst_n` waits for MMCM lock and `rx_rst_n` deliberately does not, so the two domains always release at different moments, and `gem_rx_fifo` straddles that boundary with a reset from each side |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
 | Verilator lint (R22) | **passing** — 7 tops, zero warnings, 4 justified suppressions |

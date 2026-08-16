@@ -167,6 +167,7 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (B.1b forbids it), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
 | UART framing and baud | a divisor 3.2% off, and a transmitter reversed to send MSB first. The first of those **passed** until the test was fixed: it had been measuring its own receiver's delay loop rather than the design's edges, and framing alone cannot catch a wrong baud because a receiver resynchronises on every start bit |
 | Status record | the snapshot removed, so the fields come from twelve different instants, and the value nibbles reversed |
+| Recovery from a mid-operation reset | a `pending` flag moved out of the echo path's reset, so it survives a reset that clears the length and header underneath it. It powers up correct, so a cold start works and every other test stays green — the same defect passes the previous testbench at 31 checks and fails this one |
 | Echo path | the header taken from the live capture register instead of the one latched at commit — the defect this module actually had, which corrupts a reply's destination only when a second frame arrives mid-transmission — and a bad frame echoed as though it were good |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |
 
