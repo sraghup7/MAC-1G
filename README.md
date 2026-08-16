@@ -30,6 +30,7 @@ exactly what B.1b's bottom-up pipeline sum predicted, stage for stage.
 | Specification | [`spec/PROJECT_SPEC.md`](spec/PROJECT_SPEC.md) — requirements R1–R24, architecture, budgets |
 | Block diagram | [`spec/block_diagram.md`](spec/block_diagram.md) |
 | Verification plan | [`verification_plan.md`](verification_plan.md) — every requirement traced to a named test |
+| Coding standard | [`coding_standard.md`](coding_standard.md) — the RTL conventions and what enforces each |
 | Transmit datapath | [`Documents/Golden Model Transmit Path.html`](Documents/Golden%20Model%20Transmit%20Path.html) |
 
 ---

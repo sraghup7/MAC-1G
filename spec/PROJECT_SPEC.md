@@ -20,7 +20,9 @@ paragraph reports Stage 4. **R16** gained the ports it always required: the froz
 interface had no request channel and no PHY-ID output, which left "a register-level
 request interface" half-implemented and B.5 step 3 — read the PHY ID to prove the PHY
 is alive — impossible to perform. Both are additive and no testbench changed
-behaviour. **R12** is settled rather than left hanging: the DA filter is
+behaviour. Added `coding_standard.md`, the last Stage 4 deliverable the flow doc lists and the
+only one that had no file — written from the RTL rather than before it, so every
+rule in it is one the repository already follows and names what enforces it. **R12** is settled rather than left hanging: the DA filter is
 not implemented in v1, the receive path is promiscuous, and B.7 now lists it as a
 non-goal instead of describing it as undecided — a stretch requirement nobody has ruled
 on is how a release ends up unable to say what it does.
@@ -749,7 +751,9 @@ Step 8 passing = the acceptance test for "fully functional."
 tests, and the committed vectors) · `rtl/` · `tb/` (testbenches, BFM, bound assertions) ·
 `constrs/` (clocks / pins / exceptions split) · `scripts/` (`build.tcl`, `program.tcl`,
 `run_sim.py`, `check_vectors.py`, `lint.py`, `clean.py`) · `Makefile` ·
-`verification_plan.md` · `Documents/` (derivations too long to inline here) ·
+`verification_plan.md` · `coding_standard.md` (the RTL conventions, written from the
+RTL at the close of Stage 4, with what enforces each one) · `Documents/` (derivations
+too long to inline here) ·
 `README.md` (the repository's front door: status, the B.3 arithmetic, the block
 diagram, and how to run the gates — it summarises and links rather than restating,
 so that no number lives in two places).

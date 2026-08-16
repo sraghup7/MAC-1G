@@ -12,9 +12,12 @@ that it fails, so this script is written to be hard to accidentally satisfy:
   * suppressions must be justified in the source. There are exactly three today,
     each explaining itself where it sits: the nonblocking assignment in the
     simulation model of the DDR output cell (rtl/gem_oddr.v), a signal driven
-    only for a bound assertion to watch (rtl/gem_rx_deframe.v), and the bits of
-    an MDIO read this design does not act on (rtl/gem_mdio.v). Stage 3's two
-    lived in the port-only stub and went with it, as V-9 required.
+    only for a bound assertion to watch (rtl/gem_rx_deframe.v), and the three
+    deliberately unread outputs gathered at the bottom of rtl/gem_mac.v. Stage
+    3's two lived in the port-only stub and went with it, as V-9 required.
+    rtl/gem_mdio.v had a fourth until the request interface landed and made
+    every bit of a read register meaningful -- a suppression that stopped being
+    needed, which is the only good way for one to end.
 
 WSL: on Windows the natural place for Verilator is inside WSL, so if it is not
 on PATH natively this falls back to `wsl -- verilator`. Relative paths survive
