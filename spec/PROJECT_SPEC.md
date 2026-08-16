@@ -1,8 +1,22 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.11 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
-under way. Amended throughout by what building the reference model, the verification
+Document status: v0.12 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
+under way (the board top level exists). Amended throughout by what building the reference model, the verification
 layer and the RTL actually forced. Versioned alongside the RTL.
+
+**Changelog v0.11 → v0.12 (there is a board):** `rtl/gem_top.v` ties the MAC, the
+clocking block and the readout together and gives them pins, and `rtl/gem_echo.v`
+gives the transmit path something to transmit — **B.5 step 6's echo mode**, good
+frames only, with DA and SA exchanged so a reply reaches the host that sent it.
+Echo is deliberately **store-and-forward**, which B.4b rejected inside the MAC and
+which is right here for the opposite reason: a frame's verdict arrives with its last
+octet, so an echo that streamed could not know whether the frame was worth echoing.
+It costs one BRAM18 of the four B.2 budgets and zero the design was using. B.2's
+measured column now has a whole-board row: **1123 LUTs, 1422 FFs, 1 BRAM18, 1 MMCM,
+WNS +1.546 ns** at 125 MHz post-synthesis with `constrs/` applied. `constrs/pins.xdc`
+carries every pin the board needs, all confirmed against the schematic (V-21), and
+`constrs/clocks.xdc` declares `rgmii_rx_clk` and states that it is asynchronous to
+everything the MMCM makes.
 
 **Changelog v0.10 → v0.11 (R17's counters can leave the chip):** the UART readout
 **B.7 item 5** decided in v0.9 is built — `rtl/gem_uart_tx.v` and
@@ -838,6 +852,11 @@ too long to inline here) ·
 `README.md` (the repository's front door: status, the B.3 arithmetic, the block
 diagram, and how to run the gates — it summarises and links rather than restating,
 so that no number lives in two places).
+
+**Added in Stage 5:** `rtl/gem_top.v` (the board), `rtl/gem_echo.v` (B.5 step 6),
+`rtl/gem_clk_rst.v` with `gem_mmcm` and `gem_reset_sync` (B.1b), `rtl/gem_uart_tx.v`
+and `rtl/gem_stat_report.v` (R17's readout, B.7 item 5), and the pin and clock
+constraints in `constrs/`.
 
 **Planned, and deliberately not yet present:** `sw/host/` (Scapy test harness — Stage 5,
 when there is something to talk to) · `bringup_checklist.md` (Stage 5, derived from B.5).

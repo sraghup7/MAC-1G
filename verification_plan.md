@@ -69,7 +69,8 @@ debug loops:
 3. **Vector staleness** (`scripts/check_vectors.py`) — do the committed vectors
    still reflect the current model?
 4. **Per-module testbenches** (`tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio`,
-   `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report`) — Stage 4 step 4, each module checked before it is
+   `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report`, `tb_gem_echo`,
+   `tb_gem_top`) — Stage 4 step 4, each module checked before it is
    judged through everything else. `tb_gem_crc32` is the only layer whose
    reference does not come from this project: the published CRC-32 check value
    and the residue constant are properties of the standard, so a golden model
@@ -83,7 +84,10 @@ debug loops:
    If its four properties are not checked here they are not checked anywhere. The same
    is true of `tb_gem_uart_tx` and `tb_gem_stat_report`, R17's readout: nothing
    downstream of a serial pin exists in this project to notice that the wrong
-   characters left it.
+   characters left it. `tb_gem_top` is the odd one out and the most important:
+   it is not a unit test at all but the integration test Stage 5 exists to
+   produce, driving the design only at the pins an ALINX AX7035B drives and
+   reading only what a PC could read.
 5. **Harness self-tests** (`tb_rgmii_bfm`, `tb_axis_tx_driver`) — are the bus
    functional model and the stimulus driver themselves right? Neither has a DUT
    in it, so they are the first thing to check when something downstream looks
@@ -216,16 +220,18 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Golden model test suite | **70 / 70 passing** |
 | Scenario generation | 18 / 18, every generator self-check agrees with the model |
 | Committed vectors vs the model | **48 / 48 files current** |
-| Per-module testbenches | **6 / 6** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` (Stage 4 step 4), `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report` (Stage 5) |
+| Per-module testbenches | **8 / 8** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` (Stage 4 step 4), `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report`, `tb_gem_echo`, `tb_gem_top` (Stage 5) |
+| **Board-level round trip** (`tb_gem_top`) | **passing** — 12 good frames in on RGMII, 6 echoed back with addresses exchanged and a valid FCS the testbench computed itself, 6 dropped by the echo buffer's stated policy. `rx_ok` in the UART record agrees with the frames sent, and the readout reports no link with no PHY on the bus |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
-| Verilator lint (R22) | **passing** — 5 tops, zero warnings, 3 justified suppressions |
+| Verilator lint (R22) | **passing** — 7 tops, zero warnings, 4 justified suppressions |
 | Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates green |
-| **Frozen regression vs `gem_mac`** | **16 / 16 passing** (26 / 26 runs in total, per-module and loopback included) |
+| **Frozen regression vs `gem_mac`** | **16 / 16 passing** (28 / 28 runs in total, per-module, board-level and loopback included) |
 | Random sweeps | **2 / 2** — 600 frames each |
 | Loopback, across an independent rx_clk | **2 / 2** |
 | `gem_mac` out of context (Stage 4 step 6) | 745 LUT · 788 FF · 0 BRAM · 0 DSP · WNS **+2.262 ns** at 125 MHz (cell counts; 669 slice LUTs) |
 | `gem_clk_rst` out of context (Stage 5) | 10 LUT · 27 FF · **1 MMCME2_ADV · 2 BUFG** · zero latches · zero critical warnings. Every one of the 27 registers synthesised with an *asynchronous* reset, which is the structure B.1b asks for read back out of the netlist rather than assumed from the source, and the 6 synchroniser flops kept their `ASYNC_REG`. This is the branch simulation never exercises — XSim and Verilator both run the behavioural model — so it is the only check that the real MMCM instantiation is legal at all. Repeatable as `make oocsynth M=gem_clk_rst` |
+| `gem_top` synthesised in context (Stage 5) | **1123 LUT · 1422 FF · 1 RAMB18 · 1 MMCM · 0 latches · 0 critical warnings**, against B.2 budgets of 2000 LUT, 3000 FF, 4 BRAM36 and 1 MMCM. **WNS +1.546 ns · WHS +0.045 ns** at 125 MHz post-synthesis with `constrs/` applied, and the MMCM's two output clocks derived automatically from `create_clock` on `clk50` rather than declared by hand. The echo buffer inferred the BRAM18 its header predicted rather than dissolving into flip-flops — the gate V-18 left behind, doing its job on a new memory |
 | R17's readout out of context (Stage 5) | `gem_stat_report` 209 LUT · 343 FF, `gem_uart_tx` 40 LUT · 30 FF — **249 LUT · 373 FF** together, zero latches, no inferred RAM. Against B.7 item 5's estimate of 150-250 LUTs, and against B.2's budget: the design now stands at roughly 1004 LUTs of 2000 and 1188 FFs of 3000, with the top level still to come |
 | R21 measured worst-case RX latency | **13 cycles** against a 32-cycle ceiling — exactly B.1b's predicted 13 |
 

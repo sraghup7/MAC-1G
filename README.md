@@ -28,10 +28,22 @@ gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=002
 to clock out at 115200 baud and a soak that reads fields from twelve different
 instants finds divergence it caused itself.
 
-Still to come this stage: the board top level that ties the MAC, the clocking and
-the readout together, the RGMII and MDIO pin constraints, `sw/host/` and the
-bring-up checklist. And one thing that is not ours to finish — the reset key and
-the UART's own pin are in neither document we have ([V-21](verification_plan.md)).
+And now **the board itself** (`rtl/gem_top.v`): the MAC, the clocking, the
+readout and an echo path, wired to real pins. A frame that arrives good goes
+back out with its addresses exchanged, which is what makes the board testable
+with nothing but a PC and Scapy — and what lets one observation prove the whole
+chain, since a frame only completes the round trip if every stage from the IDDR
+to the ODDR did its job. `tb_gem_top` drives the design at its pins and nowhere
+else: a 50 MHz oscillator, a reset key, RGMII, and it reads back LEDs, a serial
+line and frames on the wire.
+
+Measured on the whole board, in context, against real constraints: **1123 LUTs,
+1422 FFs, one BRAM18, one MMCM**, no latches, and **WNS +1.546 ns** at 125 MHz
+after synthesis.
+
+Still to come: `sw/host/` (the Scapy harness), `bringup_checklist.md`, and
+switching the build flow from the Stage 2 blinker to `gem_top` with the RGMII
+I/O delay constraints — the first task of Stage 6.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -91,16 +103,18 @@ Run `make help` for the full target list.
 spec/         the specification, versioned alongside the RTL
 model/        MATLAB golden model, stimulus generator, 70 tests, committed vectors
 rtl/          the design: 13 MAC modules, one per file, plus the shared
-              parameters — and, from Stage 5, 3 that clock and reset it and
-              2 that read its counters out over a serial pin
+              parameters — and, from Stage 5, 3 that clock and reset it, 2
+              that read its counters out over a serial pin, an echo path and
+              the board top level
 tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
 Documents/    derivations too long to inline in the spec
 ```
 
-`sw/host/` (a Scapy harness) and `bringup_checklist.md` are committed to but
-deliberately absent until Stage 5, when there is hardware to talk to.
+`sw/host/` (a Scapy harness) and `bringup_checklist.md` are committed to and
+still absent — they are what remains of Stage 5, and both are written against a
+board that now exists in simulation and will exist on a desk.
 
 The design is nine blocks the specification named before any of them existed:
 an AXI-Stream ingress register and a frame assembler on the transmit side, an
@@ -147,6 +161,7 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (B.1b forbids it), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
 | UART framing and baud | a divisor 3.2% off, and a transmitter reversed to send MSB first. The first of those **passed** until the test was fixed: it had been measuring its own receiver's delay loop rather than the design's edges, and framing alone cannot catch a wrong baud because a receiver resynchronises on every start bit |
 | Status record | the snapshot removed, so the fields come from twelve different instants, and the value nibbles reversed |
+| Echo path | the header taken from the live capture register instead of the one latched at commit — the defect this module actually had, which corrupts a reply's destination only when a second frame arrives mid-transmission — and a bad frame echoed as though it were good |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |
 
 That habit is not decoration. Reviewing Stage 3 found a skewed comparison, a

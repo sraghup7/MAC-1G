@@ -64,6 +64,9 @@ RTL_SOURCES = [
     # R17's readout (V-20, spec B.7 item 5).
     "rtl/gem_uart_tx.v",
     "rtl/gem_stat_report.v",
+    # Stage 5's echo path (B.5 step 6), application logic above the MAC.
+    "rtl/gem_echo.v",
+    "rtl/gem_top.v",
 ]
 
 # Simulation gets the plain-Verilog models of the DDR I/O cells; synthesis gets
@@ -84,6 +87,8 @@ TB_SOURCES = [
     "tb/tb_gem_clk_rst.sv",
     "tb/tb_gem_uart_tx.sv",
     "tb/tb_gem_stat_report.sv",
+    "tb/tb_gem_echo.sv",
+    "tb/tb_gem_top.sv",
     "tb/tb_rgmii_bfm.sv",
     "tb/tb_axis_tx_driver.sv",
     "tb/tb_gem_mac_rx.sv",
@@ -136,7 +141,8 @@ SELFTESTS = [
 #
 # They run first, because a failure here explains a failure everywhere else.
 UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio", "tb_gem_clk_rst",
-            "tb_gem_uart_tx", "tb_gem_stat_report"]
+            "tb_gem_uart_tx", "tb_gem_stat_report",
+            "tb_gem_echo", "tb_gem_top"]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.

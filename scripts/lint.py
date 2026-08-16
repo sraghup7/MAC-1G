@@ -51,11 +51,14 @@ TOPS = [
     # it is what feeds gem_mac its clocks -- so until the Stage 5 top level
     # instantiates both, it has to be named here to be linted at all.
     "rtl/gem_clk_rst.v",
-    # R17's readout, likewise: siblings of gem_mac rather than modules
-    # under it, and unreachable from any other top until Stage 5's top
-    # level ties the three together.
+    # gem_top now instantiates all of them, so linting it covers the whole
+    # board. The three below stay listed anyway: each is a module a future top
+    # could drop without anyone noticing it had stopped being linted, and the
+    # cost of naming them is one line each.
+    "rtl/gem_top.v",
     "rtl/gem_stat_report.v",
     "rtl/gem_uart_tx.v",
+    "rtl/gem_echo.v",
 ]
 
 # GEM_BEHAVIORAL_IO selects the plain-Verilog models of the DDR I/O cells. The
