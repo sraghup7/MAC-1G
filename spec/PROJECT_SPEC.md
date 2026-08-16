@@ -16,7 +16,10 @@ and 3000 — which closes the weakness B.7 states about those numbers being untr
 guesses, and corrects one of them in kind: the RX FIFO uses no block RAM at all.
 **B.1a** records the one addition to the interface the stub froze, an input carrying the
 phase-shifted GTX_CLK that R14's mechanism cannot be built without. **B.4**'s status
-paragraph reports Stage 4.
+paragraph reports Stage 4. **R12** is settled rather than left hanging: the DA filter is
+not implemented in v1, the receive path is promiscuous, and B.7 now lists it as a
+non-goal instead of describing it as undecided — a stretch requirement nobody has ruled
+on is how a release ends up unable to say what it does.
 
 **Changelog v0.6 → v0.7 (coherence pass across every document):** **B.1a**'s abort now
 also appears in [`block_diagram.md`](block_diagram.md), which still drew a transmit path
@@ -333,6 +336,13 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   the next good frame is received intact.
 - **R11 [M]** Ignore inter-frame garbage (anything before a valid SFD) silently.
 - **R12 [S]** Optional DA filter: promiscuous mode vs. match-my-MAC + broadcast.
+  **Not implemented in v1, by decision** (B.7, and V-7 in the verification plan). The
+  receive path is promiscuous: every frame is delivered with its verdict and user logic
+  decides what to do with it. That is not a shortfall dressed up as a choice — it is the
+  mode bring-up step 4 requires anyway, and address filtering in the MAC would hide
+  exactly the frames a bring-up session needs to see. Promoting it later is additive: a
+  comparator on the first six delivered octets and a mode bit in R17's register block,
+  with no change to any other contract.
 
 ### Interfaces
 
@@ -478,7 +488,8 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
   to RX input through an RGMII bus-functional model that inserts the DDR timing.
 - **Assertions** (separate bound files): valid/ready protocol legality, IFG never
   violated, FIFO never overflows, state machines never enter illegal states.
-- **Coverage criterion for "done"**: every requirement R1–R24 has ≥ 1 named test; every
+- **Coverage criterion for "done"**: every requirement R1–R24 has ≥ 1 named test, except
+  R12, which is a stated non-goal for v1 and has no logic to test (B.7); every
   corruption type crossed with {min, typical, max} length; regression green from one
   `make regress` command.
 - **Traceability table** (test ↔ requirement ↔ status) lives in [`verification_plan.md`](../verification_plan.md).
@@ -740,7 +751,14 @@ than one that does not.
 
 **Explicit non-goals (v1):** 10/100 fallback (R13) · jumbo frames · flow control
 (802.3x pause) · VLAN tag awareness · any layer-3+ (ARP/IP/UDP — natural v2, out of
-scope now) · half duplex/CSMA-CD · store-and-forward buffering.
+scope now) · half duplex/CSMA-CD · store-and-forward buffering · **destination-address
+filtering (R12 — the receive path is promiscuous)**.
+
+R12 was the last [S] item still described as undecided, and leaving a stretch
+requirement in that state past the point where the design exists is how a release ends
+up unable to say what it does. It is now a stated non-goal rather than an open
+question: v1 filters nothing, and R12's own wording lists promiscuous mode as one of
+the two acceptable behaviours.
 
 **Architecture decisions (the four items formerly left open — all resolved now, not
 deferred to RTL time):**

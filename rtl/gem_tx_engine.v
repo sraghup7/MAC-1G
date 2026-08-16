@@ -22,17 +22,17 @@
 //      rather than resumed, and stat_tx_underrun counts it. Not stat_tx_ok --
 //      an aborted frame is not a transmitted frame.
 //
-//   3. OVERSIZE (R6). See the long note below; this is the one place where
-//      what the frozen vectors expect and what a cut-through MAC can physically
-//      do are not the same thing.
+//   3. OVERSIZE (R6). The user offers more than 1500 octets of payload. See the
+//      long note below: the requirement as originally written could not be met
+//      by any cut-through MAC, and it is R6 that was amended, not this.
 //
 // -------------------------------------------------------------------------
-// R6, AND WHY THIS IMPLEMENTATION CANNOT MATCH THE tx_reject_oversize VECTOR
+// R6, AND THE REQUIREMENT STAGE 4 HAD TO AMEND (spec B.4d)
 // -------------------------------------------------------------------------
 // R6 says reject payloads over 1500 octets and never emit an oversize frame.
-// The frozen vector goes further: it expects *nothing at all* on the wire for
-// the 1501-octet request, and that expectation cannot be met by any design
-// that also satisfies B.4b.
+// Until v0.8 the frozen vector went further: it expected *nothing at all* on
+// the wire for a 1501-octet request, and that expectation cannot be met by any
+// design that also satisfies B.4b.
 //
 // The transmit interface carries no length. A frame's length is known only
 // when tlast arrives, and B.4b's cut-through decision means TX_EN went up long
@@ -40,25 +40,25 @@
 // before committing, the MAC would have to hold the whole frame first, which is
 // store-and-forward: 1518 cycles (12.14 us) of added transmit latency and a
 // BRAM the B.2 table does not carry, rejected in B.4b on this project's own
-// latency premise. The two requirements are jointly unsatisfiable, and no
-// arrangement of buffering resolves it -- a threshold buffer deep enough to
-// decide is exactly a whole-frame buffer.
+// latency premise. The two were jointly unsatisfiable, and no arrangement of
+// buffering resolves it -- a threshold buffer deep enough to decide is exactly
+// a whole-frame buffer.
 //
-// So this engine does the strongest thing that is physically available, which
-// is stronger than a plain abort: it refuses the payload octet that would be
-// the 1501st *before* transmitting it. The frame on the wire is then
+// So this engine does the strongest thing physically available, which is
+// stronger than a plain abort: it refuses the payload octet that would be the
+// 1501st *before* transmitting it. The frame on the wire is then
 // 14 + 1499 + 4 = 1517 octets -- inside maxBasicFrameSize, so R6's "never emit
 // an oversize frame" holds literally -- marked bad twice over with TX_ER and an
 // inverted FCS, counted in stat_tx_rejected, with the rest of the request
-// drained and discarded. All three R17 counters therefore match the frozen
-// expectation exactly; what does not match is that the wire carries a marked-
-// bad frame rather than silence.
+// drained and discarded.
 //
-// This is a specification finding, not an implementation shortcut. Closing it
-// means amending the model (a rejected frame's expected cycles), regenerating
-// tx_reject_oversize, and recording the decision in the spec -- deliberately
-// not done here, because changing a frozen Stage 3 vector to suit the RTL is
-// exactly backwards unless the decision is made explicitly first.
+// B.4d records the decision and R6 now says this; gem.genTxScenario emits it
+// via gem.abortedFrame, since an abort after payload octet S is the same object
+// whatever caused it, and only the counter that moves differs. Note the order
+// this happened in: the design was written to the requirement, the requirement
+// was found to be impossible, and the vector was regenerated only after the
+// specification was amended -- not before, because changing a frozen vector to
+// suit an RTL is exactly backwards.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
