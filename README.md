@@ -5,7 +5,7 @@ an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's Micrel
 KSZ9031RNX PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
-**Status: Stage 4 complete; Stage 5 under way.** The MAC is written. Thirteen
+**Status: Stage 5 complete.** The MAC is written. Thirteen
 modules across three clock domains, lint clean, and **every run green** against a
 reference model that was finished before the first line of it existed — including
 600-frame random sweeps in both directions and a loopback that feeds the design's
@@ -41,9 +41,14 @@ Measured on the whole board, in context, against real constraints: **1123 LUTs,
 1422 FFs, one BRAM18, one MMCM**, no latches, and **WNS +1.546 ns** at 125 MHz
 after synthesis.
 
-Still to come: `sw/host/` (the Scapy harness), `bringup_checklist.md`, and
-switching the build flow from the Stage 2 blinker to `gem_top` with the RGMII
-I/O delay constraints — the first task of Stage 6.
+And the PC side: [`sw/host/`](sw/host/README.md) drives B.5's steps from a
+terminal — frames in, round trips, corruption, and a four-hour soak that writes a
+file you can diff — while [`bringup_checklist.md`](bringup_checklist.md) is the
+order to do it all in, with what each failure would mean.
+
+What Stage 6 inherits: the build flow still targets the Stage 2 blinker, and the
+RGMII I/O delay constraints are not written. Those two go together and they are
+Stage 6's first task.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -77,8 +82,8 @@ Everything runs through one command:
 make check
 ```
 
-That is model tests → committed-vector staleness → Verilator lint → the
-regression, in that order because it is the order that makes a failure
+That is model tests → committed-vector staleness → Verilator lint → the host
+tooling's tests → the regression, in that order because it is the order that makes a failure
 diagnosable: a broken reference explains a broken comparison, and a lint error
 explains a lot of simulation nonsense. The regression itself runs cheapest-first
 too — per-module testbenches, then the harness self-tests, then the scenarios,
@@ -110,11 +115,12 @@ tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
 Documents/    derivations too long to inline in the spec
+sw/host/      the PC side of bring-up: Scapy, a serial reader, and its own tests
 ```
 
-`sw/host/` (a Scapy harness) and `bringup_checklist.md` are committed to and
-still absent — they are what remains of Stage 5, and both are written against a
-board that now exists in simulation and will exist on a desk.
+`bringup_checklist.md` is the order to bring the board up in, derived from B.5,
+written before the board is in hand — including what each failure would mean and
+the three questions only a bench can answer.
 
 The design is nine blocks the specification named before any of them existed:
 an AXI-Stream ingress register and a frame assembler on the transmit side, an

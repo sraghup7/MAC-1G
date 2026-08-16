@@ -38,7 +38,8 @@ Verification (Stage 3):
   make sim S=rx_min_gap run one scenario
   make regress          run every frozen scenario (the gate)
   make regress-all      ... including the large random sweeps
-  make check            model, vectors-check, lint, regress -- the whole thing
+  make hosttest         the host tooling's tests (no board, no hardware)
+  make check            model, vectors-check, lint, hosttest, regress -- everything
 
 Build (Stage 2):
   make synth impl bitstream program
@@ -85,6 +86,14 @@ vectors-check:
 lint:
 	$(PYTHON) scripts/lint.py
 
+# The host tooling's own tests. Pure standard library and about a millisecond,
+# so there is no reason for them not to be in `check`: they guard the record
+# format, which is a contract between rtl/gem_stat_report.v and
+# sw/host/gem_records.py that nothing else in this build looks at both sides of.
+# Their fixtures are lines the design actually printed in simulation.
+hosttest:
+	$(PYTHON) -m unittest discover -s sw/host -t sw/host
+
 S ?= rx_min_gap
 sim:
 	$(PYTHON) scripts/run_sim.py --scenario $(S)
@@ -100,7 +109,7 @@ regress-all:
 # and a lint error explains a lot of simulation nonsense), then the design
 # against the vectors. Running these the other way round means debugging a
 # design against a reference nobody has checked.
-check: model vectors-check lint regress
+check: model vectors-check lint hosttest regress
 
 # The order in `check` is the point, so never let -j shuffle it. Each gate's
 # output is also meant to be read in sequence when one fails.

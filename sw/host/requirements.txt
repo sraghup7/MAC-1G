@@ -1,0 +1,6 @@
+# Raw Ethernet send/receive for B.5 steps 4-7. Needs Npcap on Windows or root
+# on Linux; Scapy itself will say so if it cannot open the interface.
+scapy>=2.5.0
+
+# The board's USB-UART (CP2102GM), 115200 8N1, for R17's status readout.
+pyserial>=3.5

@@ -1,8 +1,20 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.12 — Stage 1 complete, Stage 3 complete, Stage 4 complete, Stage 5
-under way (the board top level exists). Amended throughout by what building the reference model, the verification
+Document status: v0.13 — Stage 1 complete, Stage 3 complete, Stage 4 complete, **Stage 5
+complete**. Amended throughout by what building the reference model, the verification
 layer and the RTL actually forced. Versioned alongside the RTL.
+
+**Changelog v0.12 → v0.13 (Stage 5 closes):** `sw/host/` and `bringup_checklist.md`,
+the two deliverables B.6 has listed as deliberately absent since v0.2, both exist. The
+host tooling has its own tests, which run with no board and no dependencies and are now
+a gate in `make check`, because the record format is a contract between
+`rtl/gem_stat_report.v` and `sw/host/gem_records.py` and nothing else in this build
+reads both halves. Their fixtures are lines the design actually printed in simulation.
+**One honest limitation is now written down rather than discovered at a bench:** a
+commodity NIC computes the FCS in hardware and pads runts before transmitting, so of
+R10's four receive error classes a PC can provoke exactly one — oversize. B.5 step 7 is
+scoped accordingly, the other three rest on simulation, and what a bench would need to
+add them is stated in `sw/host/README.md`.
 
 **Changelog v0.11 → v0.12 (there is a board):** `rtl/gem_top.v` ties the MAC, the
 clocking block and the readout together and gives them pins, and `rtl/gem_echo.v`
