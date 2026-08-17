@@ -1,9 +1,21 @@
+# Normal handling for everything; the RTL and scripts are edited by humans on
+# both platforms.
+#
+# This catch-all MUST come first. In gitattributes the *last* matching pattern
+# wins, so a broad `* text=auto` written below a narrow rule silently overrides
+# it -- which is what happened here: the vectors carried `-text` on the line
+# above this one and `git check-attr` still reported `text: auto` for them.
+* text=auto
+
 # The committed vectors are compared byte for byte against freshly generated
 # ones by scripts/check_vectors.py. If git normalised their line endings on
 # checkout, that comparison would fail on a clean tree and the failure would
 # read as a stale-model error -- the exact confusion the check exists to avoid.
+#
+# That is not hypothetical. With this rule ordered *before* the catch-all it
+# never took effect, so on any machine with core.autocrlf=true (the Git for
+# Windows default) checkout rewrote all 48 vector files to CRLF while the model
+# kept emitting LF, and `make vectors-check` failed every one of them with a
+# message accusing the golden model of having drifted. Content was identical in
+# all 48; only the line endings differed.
 model/vectors/** -text
-
-# Everything else keeps normal handling; the RTL and scripts are edited by
-# humans on both platforms.
-* text=auto
