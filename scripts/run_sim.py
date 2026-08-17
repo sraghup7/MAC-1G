@@ -150,6 +150,29 @@ LOOPBACK_TB = "tb_gem_mac_loopback"
 LOOPBACK_SCENARIOS = ["tx_clean_sweep", "tx_padding"]
 
 
+# Where Vivado gets installed, and the two shapes the install takes.
+#
+# The layout difference is not cosmetic. A standalone Vivado install puts the
+# executables at <root>/<version>/bin. AMD's *unified* installer -- which is
+# what 2025.1 ships as -- puts them at <root>/<version>/Vivado/bin, because
+# Vitis and Model Composer sit beside Vivado under the same version directory.
+#
+# Searching only the first layout is a failure worth naming, because the error
+# it produced pointed at the wrong thing: on a machine with a perfectly good
+# C:/Xilinx/2025.1/Vivado install, every target died with "could not find
+# vivado ... put Vivado's bin/ on PATH", and the reader went off to audit PATH
+# for a tool that was never missing. A locator that cannot see a stock install
+# is worse than no locator, because it accuses the environment.
+SEARCH_ROOTS = (
+    Path("D:/Vivado"),
+    Path("C:/Xilinx"),
+    Path("C:/Xilinx/Vivado"),
+    Path("/opt/Xilinx"),
+    Path("/opt/Xilinx/Vivado"),
+    Path("/tools/Xilinx/Vivado"),
+)
+
+
 def vivado_bin(name: str) -> str:
     """Locate an XSim executable, preferring PATH, then the usual installs."""
     found = shutil.which(name) or shutil.which(name + ".bat")
@@ -160,16 +183,26 @@ def vivado_bin(name: str) -> str:
     if env and (Path(env) / f"{name}.bat").exists():
         return str(Path(env) / f"{name}.bat")
 
-    for root in (Path("D:/Vivado"), Path("C:/Xilinx/Vivado"), Path("/opt/Xilinx/Vivado")):
-        if root.is_dir():
-            for version in sorted(root.iterdir(), reverse=True):
-                for candidate in (version / "bin" / f"{name}.bat", version / "bin" / name):
+    # Reverse lexical order, so the newest version wins when several are
+    # installed. That is a convenience, not a policy: the tool version a
+    # bitstream was built with is part of its provenance (flow-doc Stage 9), so
+    # pin it with VIVADO_BIN rather than trusting this to keep picking the same
+    # one after the next install.
+    for root in SEARCH_ROOTS:
+        if not root.is_dir():
+            continue
+        for version in sorted(root.iterdir(), reverse=True):
+            if not version.is_dir():
+                continue
+            for bindir in (version / "bin", version / "Vivado" / "bin"):
+                for candidate in (bindir / f"{name}.bat", bindir / name):
                     if candidate.exists():
                         return str(candidate)
 
     sys.exit(
         f"error: could not find {name}. Put Vivado's bin/ on PATH or set "
-        f"VIVADO_BIN to it."
+        f"VIVADO_BIN to it.\n"
+        f"  `python scripts/setup_env.py` reports what is found and what is not."
     )
 
 
