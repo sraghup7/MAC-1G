@@ -18,7 +18,9 @@ Day to day:
 Merging into `main`, once the user confirms:
 
 ```
-git checkout main && git merge <branch> && git push
+git checkout main
+git merge <branch>
+git push
 ```
 
 Before any merge into `main`, and periodically during long stretches of work, pull
@@ -26,8 +28,13 @@ Before any merge into `main`, and periodically during long stretches of work, pu
 than at the merge:
 
 ```
-git checkout <branch> && git merge main
+git checkout <branch>
+git merge main
 ```
+
+The primary shell here is Windows PowerShell 5.1, which does not accept `&&` as a
+statement separator. Give shell commands one per line rather than chained, so they
+work as written on either platform.
 
 ## Verifying before a merge
 
