@@ -13,10 +13,9 @@ install path, and the symptom would be `make regress` working while
 `make synth` claimed Vivado was missing.
 
 Usage:
-    python scripts/build.py synth
-    python scripts/build.py impl
-    python scripts/build.py bitstream
-    python scripts/build.py program build/skeleton_top.bit
+    python scripts/build.py synth              # gem_top, the board
+    python scripts/build.py bitstream skeleton_top
+    python scripts/build.py program build/gem_top.bit
     python scripts/build.py oocsynth            # whole MAC, out of context
     python scripts/build.py oocsynth gem_crc32  # one module
 """
@@ -53,7 +52,28 @@ def main() -> int:
     if target in ("program", "oocsynth"):
         tclargs = sys.argv[2:]
     else:
-        tclargs = [target]
+        # <target> [<top>] -- build.tcl defaults the top to gem_top.
+        tclargs = [target, *sys.argv[2:]]
+
+    # CLAUDE.md: do not point the reader at a file without confirming it
+    # exists. `make program` used to hand program.tcl a hardcoded
+    # build/skeleton_top.bit; after Stage 6 the default build writes
+    # build/gem_top.bit, and the JTAG failure that follows a missing file is a
+    # long way from its cause.
+    if target == "program":
+        if not tclargs:
+            sys.exit("usage: build.py program <path/to/bitstream.bit>")
+        bit = Path(tclargs[0])
+        if not bit.is_absolute():
+            bit = REPO / bit
+        if not bit.exists():
+            available = sorted(p.name for p in (REPO / "build").glob("*.bit"))
+            found = ", ".join(available) if available else "none"
+            sys.exit(
+                f"error: {tclargs[0]} does not exist.\n"
+                f"  bitstreams in build/: {found}\n"
+                f"  build one with: make bitstream TOP=<top>"
+            )
 
     vivado = vivado_bin("vivado")
     cmd = [vivado, "-mode", "batch", "-source", script, "-tclargs", *tclargs]

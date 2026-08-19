@@ -41,8 +41,9 @@ Verification (Stage 3):
   make hosttest         the host tooling's tests (no board, no hardware)
   make check            model, vectors-check, lint, hosttest, regress -- everything
 
-Build (Stage 2):
-  make synth impl bitstream program
+Build (Stage 2 / Stage 6):
+  make synth impl bitstream program      the board (gem_top)
+  make bitstream TOP=skeleton_top        the Stage 2 blinker, for B.5 step 1
 
 Build (Stage 4 step 6):
   make oocsynth         gem_mac out of context: area, timing, B.2 budget
@@ -115,14 +116,21 @@ check: model vectors-check lint hosttest regress
 # output is also meant to be read in sequence when one fails.
 .NOTPARALLEL:
 
-# ---- Stage 2: build -------------------------------------------------------
+# ---- Stage 2 / Stage 6: build ----------------------------------------------
 
 # Through Python for the same reason lint and clean are: `vivado` is not on
 # PATH here, so a bare invocation died with "cannot find the file specified"
 # and these four targets had never been runnable. scripts/build.py reuses
 # run_sim.py's locator rather than carrying a second copy of it.
+#
+# TOP selects which module build.tcl builds. gem_top is the board and the
+# default; skeleton_top is the Stage 2 blinker B.5 step 1 loads. Constraints
+# follow the top -- see constrs/skeleton.xdc for why the blinker cannot
+# borrow the board's pins.
+TOP ?= gem_top
+
 synth:
-	$(PYTHON) scripts/build.py synth
+	$(PYTHON) scripts/build.py synth $(TOP)
 
 # Stage 4 step 6. M=<module> synthesises one module alone; the default is the
 # whole MAC, out of context, checked against B.2's resource budget.
@@ -131,13 +139,13 @@ oocsynth:
 	$(PYTHON) scripts/build.py oocsynth $(M)
 
 impl:
-	$(PYTHON) scripts/build.py impl
+	$(PYTHON) scripts/build.py impl $(TOP)
 
 bitstream:
-	$(PYTHON) scripts/build.py bitstream
+	$(PYTHON) scripts/build.py bitstream $(TOP)
 
 program: bitstream
-	$(PYTHON) scripts/build.py program $(BUILD_DIR)/skeleton_top.bit
+	$(PYTHON) scripts/build.py program $(BUILD_DIR)/$(TOP).bit
 
 # Via Python rather than `rm -rf`, which is not portable to the shell make
 # actually gets here. See the note in scripts/clean.py: these targets only ever
