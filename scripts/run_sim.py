@@ -201,8 +201,7 @@ def vivado_bin(name: str) -> str:
 
     sys.exit(
         f"error: could not find {name}. Put Vivado's bin/ on PATH or set "
-        f"VIVADO_BIN to it.\n"
-        f"  `python scripts/setup_env.py` reports what is found and what is not."
+        f"VIVADO_BIN to it."
     )
 
 
