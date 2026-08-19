@@ -27,4 +27,20 @@ set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -rise_to [get_clocks rg
 set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -rise_to [get_clocks rgmii_rx_clk] -hold
 set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -fall_to [get_clocks rgmii_rx_clk] -hold
 
-# (TX section added in Task 2, same file.)
+#############################################################################
+# TX: rgmii_txd[3:0], rgmii_tx_ctl, rgmii_gtx_clk, launched by
+# gtx_clk_shifted (the MMCM's CLKOUT1, forwarded through its own ODDR --
+# gem_rgmii_tx.u_oddr_gtx).
+#############################################################################
+
+create_generated_clock -name rgmii_gtx_clk_gen \
+    -source [get_pins u_mac/*u_rgmii_tx/u_oddr_gtx/*/C] \
+    -divide_by 1 \
+    [get_ports rgmii_gtx_clk]
+
+set tx_data_ports [get_ports {rgmii_txd[*] rgmii_tx_ctl}]
+
+set_output_delay -clock rgmii_gtx_clk_gen -max 2.000 $tx_data_ports
+set_output_delay -clock rgmii_gtx_clk_gen -min 1.200 $tx_data_ports -add_delay
+set_output_delay -clock rgmii_gtx_clk_gen -max 2.000 -clock_fall $tx_data_ports -add_delay
+set_output_delay -clock rgmii_gtx_clk_gen -min 1.200 -clock_fall $tx_data_ports -add_delay
