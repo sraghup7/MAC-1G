@@ -35,14 +35,18 @@
 //   the shift = 1.6 ns of an 8 ns period is 72 degrees, and the MMCM delays
 //               rather than advances at a negative phase, hence -72.
 //
-//   BUT -72 IS NOT ACHIEVABLE AND THE TOOL WILL NOT SAY SO LOUDLY. Static
-//   phase resolution is 45/CLKOUT_DIVIDE = 45/8 = 5.625 degrees, so -72
-//   (12.8 steps) is rounded to -73.125 (13 steps) = 1.625 ns. That is 25 ps
-//   from the intent and still 0.375 ns clear of both edges of the 1.2-2.0 ns
-//   window, so the rounding is harmless -- but it is a real difference between
-//   what this file asks for and what the silicon does, and Stage 6's timing
-//   report is where the achieved number gets confirmed rather than assumed.
-//   V-2 is the open item that closes with a scope on GTX_CLK/TXD0.
+//   BUT -72 IS NOT ACHIEVABLE. Static phase resolution is 45/CLKOUT_DIVIDE =
+//   45/8 = 5.625 degrees, so -72 (12.8 steps) rounds to -73.125 (13 steps) =
+//   1.625 ns -- which is the value CLKOUT1_PHASE actually carries below, not
+//   -72. That is 25 ps from the intent and still 0.375 ns clear of both edges
+//   of the 1.2-2.0 ns window, so the rounding is harmless. It is not silent,
+//   either: write_bitstream's DRC (AVAL-139) refuses outright on a
+//   CLKOUT1_PHASE that is not an exact multiple of 5.625 with
+//   CLKOUT1_USE_FINE_PS false, which is how the -72 literal that used to sit
+//   below was found -- nothing had run write_bitstream against gem_top before
+//   Stage 6 retargeted the build onto it. Stage 6's timing report is where
+//   the achieved number gets confirmed rather than assumed; V-2 is the open
+//   item that closes with a scope on GTX_CLK/TXD0.
 //
 // FEEDBACK IS INTERNAL: CLKFBOUT wires straight back to CLKFBIN with no BUFG.
 // A BUFG in the feedback path exists to align the output clocks to the *input*
@@ -155,7 +159,7 @@ module gem_mmcm (
         .CLKOUT0_PHASE      (0.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .CLKOUT1_DIVIDE     (8),         // 125 MHz, GTX_CLK copy
-        .CLKOUT1_PHASE      (-72.000),   // 1.6 ns later; rounded to -73.125
+        .CLKOUT1_PHASE      (-73.125),   // 1.625 ns; -72 rounded to the nearest achievable step
         .CLKOUT1_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),
         .STARTUP_WAIT       ("FALSE")

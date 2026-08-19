@@ -1,5 +1,6 @@
 #############################################################################
-# Non-project-mode build script - gem_mac Stage-2 skeleton (skeleton_top).
+# Non-project-mode build script. Builds rtl/gem_top.v -- the board -- by
+# default, or rtl/skeleton_top.v for B.5 step 1.
 #
 # Why non-project mode (fpga_project_flow.md Stage 2, "Project mode vs
 # non-project mode"): no .xpr project file, no GUI-tracked state that can't
@@ -7,8 +8,9 @@
 # exactly what Vivado did, on any machine, every time.
 #
 # Usage (from repo root):
-#   vivado -mode batch -source scripts/build.tcl -tclargs <target>
+#   vivado -mode batch -source scripts/build.tcl -tclargs <target> [<top>]
 #   target: synth | impl | bitstream   (default: bitstream)
+#   top:    gem_top | skeleton_top     (default: gem_top)
 #
 # Each target reuses the checkpoint from the previous stage's work within
 # this same run - there is no cross-invocation checkpoint reuse (every
@@ -23,13 +25,42 @@
 # synth_module.tcl source. It used to be written here and again there, under a
 # comment in this file claiming to be its single point of truth.
 source scripts/part.tcl
-set TOP         skeleton_top
-set BUILD_DIR   "build"
-set RTL_SOURCES [list rtl/skeleton_top.v]
-set XDC_SOURCES [list constrs/clocks.xdc constrs/pins.xdc constrs/exceptions.xdc]
+set BUILD_DIR "build"
 
+# Which top to build. Stage 6 makes gem_top the default: the board is the
+# thing being built now, and a default that still pointed at the blinker is
+# how `make bitstream` produced a Stage 2 artefact for a whole stage after the
+# design existed.
+set TOP    "gem_top"
 set TARGET "bitstream"
 if {[llength $argv] > 0} { set TARGET [lindex $argv 0] }
+if {[llength $argv] > 1} { set TOP    [lindex $argv 1] }
+
+# Sources AND constraints both follow the top -- see constrs/skeleton.xdc for
+# why the blinker cannot simply borrow the board's.
+switch -exact -- $TOP {
+    gem_top {
+        # Every design file except the Stage 2 skeleton, which is a different
+        # top with nothing to do with the MAC. Same rule as
+        # scripts/synth_module.tcl, so the two cannot drift about what the
+        # design consists of.
+        set RTL_SOURCES {}
+        foreach f [lsort [glob rtl/*.v]] {
+            if {[file tail $f] ne "skeleton_top.v"} { lappend RTL_SOURCES $f }
+        }
+        set XDC_SOURCES [list constrs/clocks.xdc constrs/pins.xdc \
+                              constrs/exceptions.xdc]
+    }
+    skeleton_top {
+        set RTL_SOURCES [list rtl/skeleton_top.v]
+        set XDC_SOURCES [list constrs/skeleton.xdc]
+    }
+    default {
+        puts "FATAL: unknown top '$TOP'."
+        puts "Known tops: gem_top (the board), skeleton_top (the Stage 2 blinker)."
+        exit 1
+    }
+}
 
 file mkdir $BUILD_DIR
 
