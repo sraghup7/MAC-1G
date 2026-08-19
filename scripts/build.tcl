@@ -48,6 +48,37 @@ synth_design -top $TOP -part $PART
 
 write_checkpoint -force "$BUILD_DIR/post_synth.dcp"
 
+# Gate 0: zero CRITICAL WARNINGs, and it comes first because it catches the
+# one class of failure every other gate here structurally cannot -- a
+# constraint that matched nothing.
+#
+# When get_ports finds no port, Vivado says "'set_property' expects at least
+# one object", raises a CRITICAL WARNING, and carries on to a clean exit 0.
+# The design is then unpinned, or unclocked, or both, and gates 1, 1b and 2
+# pass on it exactly as they pass on a correct build -- gate 2 especially,
+# because WNS >= 0 is nearly free when no path is constrained enough to have
+# negative slack (V-14 found precisely that, the hard way).
+#
+# Measured on this repository at the close of Stage 5: `make synth` emitted 68
+# CRITICAL WARNINGs and exited 0, because constrs/ described gem_top while
+# this script still built skeleton_top. That is the defect this gate was
+# written against; it did not need planting.
+if {[catch {set crit [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
+    puts "FATAL: cannot query critical-warning count: $err"
+    puts "Build refused: gate 0 could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+if {$crit > 0} {
+    puts "FATAL: $crit CRITICAL WARNING(s) during read and synthesis."
+    puts "Search vivado.log for 'CRITICAL WARNING'. The usual cause is a"
+    puts "constraint whose get_ports/get_clocks matched nothing, which leaves"
+    puts "the design unconstrained while every later gate still passes."
+    puts "Build refused: the build is not clean."
+    exit 1
+}
+puts "==> Critical-warning check: PASS (0 critical warnings)"
+
 # Gate 1: zero inferred latches, no exceptions. (Stage 2: "fail on inferred
 # latches"; Stage 4 sidebar: "any inferred latch is a bug, no exceptions.")
 set latches [get_cells -hierarchical -filter {PRIMITIVE_SUBGROUP == "latch"}]
