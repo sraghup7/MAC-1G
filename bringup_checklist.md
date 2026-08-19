@@ -19,15 +19,19 @@ obtained third-hand (V-21).
 ## Before power
 
 - [ ] **Add the `-2I` device pack to Vivado.** `scripts/part.tcl` targets
-      `xc7a35tifgg484-1L`, which is what this machine's install has; the board is
-      an **XC7A35T-2FGG484I**. The package pinout is identical across speed
-      grades, so everything built so far is valid — but timing signed off against
-      the wrong speed grade is not sign-off. Vivado's *Add Design Tools or
-      Devices*, then change the one line in `part.tcl`.
-- [ ] **Point the build at the board.** `scripts/build.tcl` still targets
-      `skeleton_top`, the Stage 2 blinker. Stage 6's first task is to build
-      `gem_top` with the RGMII I/O delay constraints; until then there is no
-      bitstream of the real design.
+      `xc7a35tifgg484-1L` — confirmed live against this install
+      (`get_parts -filter {DEVICE =~ "xc7a35t*" && PACKAGE == "fgg484"}` returns
+      only that speed grade for the industrial temp range) — while the board is
+      an **XC7A35T-2FGG484I**. The mismatch is safe in only one direction, and
+      that direction is the one this repository is in: `-1L` is *slower* than
+      the board's `-2I`, so every slack number measured so far is pessimistic,
+      and timing that closes on `-1L` closes on the real part. Do not "fix" this
+      by pointing `part.tcl` at the commercial `xc7a35tfgg484-2` this install
+      also has — that part is *faster* than the board and would let a design
+      that cannot make 125 MHz report a pass. Vivado's *Add Design Tools or
+      Devices*, then change the one line in `part.tcl`, then re-run
+      `make oocsynth` and record whatever WNS it prints in place of the current
+      `-1L` number.
 - [ ] Have ready: a USB cable for the JTAG programmer, a second for the UART, a
       Cat-5e or better cable, and a PC with a spare Ethernet port.
 - [ ] `pip install -r sw/host/requirements.txt`, and **Npcap** on Windows.
@@ -36,7 +40,15 @@ obtained third-hand (V-21).
 
 ## Step 1 — the board is alive
 
-Load the Stage 2 blinker (`make bitstream && make program` as it stands today).
+Load the Stage 2 blinker:
+
+```
+make program TOP=skeleton_top
+```
+
+(`program` depends on `bitstream`, so this one command builds and loads it.
+`make program` alone now builds and loads `gem_top`, the board, since Stage 6
+retargeted the default — `TOP=skeleton_top` is what this step needs instead.)
 
 - [ ] Power LED lights.
 - [ ] JTAG enumerates and Vivado's hardware manager sees the part.

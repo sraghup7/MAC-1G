@@ -46,9 +46,16 @@ terminal — frames in, round trips, corruption, and a four-hour soak that write
 file you can diff — while [`bringup_checklist.md`](bringup_checklist.md) is the
 order to do it all in, with what each failure would mean.
 
-What Stage 6 inherits: the build flow still targets the Stage 2 blinker, and the
-RGMII I/O delay constraints are not written. Those two go together and they are
-Stage 6's first task.
+**Stage 6 is under way.** `make synth`/`impl`/`bitstream` now build `gem_top`
+against `constrs/` by default (`TOP=skeleton_top` still builds the Stage 2
+blinker, for B.5 step 1) — `build/gem_top.bit` writes clean, WNS +1.249 ns /
+WHS +0.052 ns post-route. A new gate refuses the build outright on any
+`CRITICAL WARNING`, which a constraint matching no port produces; it caught the
+tree's own defect on the first run, 68 of them, from `constrs/` already
+describing the board while the build still targeted the blinker. What is still
+open: the RGMII I/O delay constraints (V-2) are not written, and until they are,
+gate 3 only *reports* the RGMII pins as unconstrained rather than refusing on
+them — that refusal is what turning V-14's deferred half on requires.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -197,7 +204,9 @@ Other useful entry points:
 - `make model` — the golden model's own suite, ~5 s, the fastest signal there is
 - `make vectors` — regenerate every scenario from its seed
 - `make regress-all` — includes the two large random sweeps (~760k cycles)
-- `make synth` / `impl` / `bitstream` — the Stage 2 build and its three gates
+- `make synth` / `impl` / `bitstream` — `gem_top` against real constraints, five
+  gates (critical-warning cleanliness, two latch checks, slack, constraint
+  coverage). `TOP=skeleton_top` builds the Stage 2 blinker instead.
 - `make oocsynth` — the whole MAC synthesised alone: area, slack, and the B.2
   budget checked rather than assumed (Stage 4 step 6). `M=gem_crc32` does one
   module.
