@@ -48,6 +48,32 @@
 //   the achieved number gets confirmed rather than assumed; V-2 is the open
 //   item that closes with a scope on GTX_CLK/TXD0.
 //
+//   STAGE 6 PART 2 FOUND THE ROUNDING IS NOT HARMLESS, AND THE VALUE BELOW
+//   IS KNOWN NOT TO MEET TIMING. Post-route, against constrs/rgmii_timing.xdc,
+//   -73.125 violates the TX setup check on all five data outputs by about
+//   0.35 ns (task-2-report.md). Sweeping the whole 5.625 grid inside the PHY's
+//   window found exactly one point that is not violated -- 1.250 ns, clearing
+//   by 24 ps (task-2b-report.md) -- and placement cannot help, because 99.939%
+//   of the path is ODDR C-to-Q and OBUF I-to-O cell delay in sites those cells
+//   cannot leave (task-2c-report.md). The value below is left as it is pending
+//   a decision, not because it passes.
+//
+//   DO NOT REACH FOR CLKOUT1_USE_FINE_PS TO BUY FINER RESOLUTION. Fine phase
+//   shift is a runtime interface, not a static one: Xilinx's own MMCME2_ADV
+//   model starts its fine-shift counter at zero and moves it only on PSEN, and
+//   the Clocking Wizard reaches an awkward phase by retuning the VCO rather
+//   than by setting this parameter. What the parameter does do here is switch
+//   AVAL-139 off -- so an unachievable CLKOUT1_PHASE stops being refused and
+//   starts being silently analysed as though the silicon produced it, which is
+//   worse than the error it replaces (task-2d-report.md). MMCME2_BASE, the
+//   primitive below, does not accept the parameter at all.
+//
+//   What does move the grid is the VCO: achievable shifts are k * VCO_period/8,
+//   so 1.200 ns needs a 625 MHz VCO and CLKOUT1_DIVIDE 5. Measured, that buys
+//   58 ps of setup at best across the whole PHY window -- better than 24 ps,
+//   still not the hundreds this direction was hoped to yield. The numbers and
+//   the remaining options are in Documents/RGMII I-O Timing Derivation.md.
+//
 // FEEDBACK IS INTERNAL: CLKFBOUT wires straight back to CLKFBIN with no BUFG.
 // A BUFG in the feedback path exists to align the output clocks to the *input*
 // clock, and nothing here needs that -- no external device is timed against
