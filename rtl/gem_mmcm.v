@@ -17,46 +17,95 @@
 //
 //   clk_out0  125 MHz, phase 0. This is tx_clk -- the TX datapath, the
 //             register block, and sys_clk (= tx_clk, B.7 item 3).
-//   clk_out1  125 MHz, the same clock deliberately delayed ~1.6 ns. It drives
-//             exactly one thing: the ODDR that forwards GTX_CLK to the PHY.
+//   clk_out1  125 MHz, the same clock deliberately delayed 1.2222 ns. It
+//             drives exactly one thing: the ODDR that forwards GTX_CLK to the
+//             PHY.
 //
 // The KSZ9031RNX does not delay its own GTX_CLK input and expects the MAC to
-// provide the skew (B.1b quotes the datasheet). 1.6 ns is the numeric centre
-// of the datasheet's 1.2-2.0 ns TsetupT/TholdT window, chosen over the obvious
-// 90 degrees / 2.0 ns precisely because 2.0 ns is the window's edge and would
-// leave zero margin before place-and-route had even run.
+// provide the skew (B.1b quotes the datasheet). Whatever delay this file
+// chooses has to land inside the datasheet's 1.2-2.0 ns TsetupT/TholdT window.
+// B.1b's original pick was 1.6 ns, the numeric centre of that window, on the
+// reasoning that the centre leaves the most margin against both of the PHY's
+// edges. That reasoning is still sound about the PHY and turned out to be
+// incomplete about the FPGA: Stage 6 part 2 measured this design's own TX
+// setup check and found its slack improves monotonically as the shift shrinks.
+// So the value below sits near the window's 1.2 ns floor rather than at its
+// centre. The window is still honoured; the choice inside it is no longer the
+// middle. The ordered history is further down.
 //
 // THE ARITHMETIC, spelled out because it is the kind that is easy to get
 // plausibly wrong:
 //
-//   VCO       = 50 MHz x CLKFBOUT_MULT_F(20) / DIVCLK_DIVIDE(1) = 1000 MHz,
-//               inside the Artix-7 MMCM's 600-1200 MHz range.
-//   outputs   = 1000 MHz / 8 = 125 MHz on both CLKOUT0 and CLKOUT1.
-//   the shift = 1.6 ns of an 8 ns period is 72 degrees, and the MMCM delays
-//               rather than advances at a negative phase, hence -72.
+//   VCO       = 50 MHz x CLKFBOUT_MULT_F(22.500) / DIVCLK_DIVIDE(1)
+//             = 1125 MHz, inside the Artix-7 MMCM's 600-1200 MHz range.
+//   clk_out0  = 1125 MHz / CLKOUT0_DIVIDE_F(9.000) = 125 MHz.
+//   clk_out1  = 1125 MHz / CLKOUT1_DIVIDE(9)       = 125 MHz.
+//   the shift = 1.2222 ns of the 8 ns output period is 55 degrees, and the
+//               MMCM delays rather than advances at a negative phase, hence
+//               the -55.000 below.
 //
-//   BUT -72 IS NOT ACHIEVABLE. Static phase resolution is 45/CLKOUT_DIVIDE =
-//   45/8 = 5.625 degrees, so -72 (12.8 steps) rounds to -73.125 (13 steps) =
-//   1.625 ns -- which is the value CLKOUT1_PHASE actually carries below, not
-//   -72. That is 25 ps from the intent and still 0.375 ns clear of both edges
-//   of the 1.2-2.0 ns window, so the rounding is harmless. It is not silent,
-//   either: write_bitstream's DRC (AVAL-139) refuses outright on a
-//   CLKOUT1_PHASE that is not an exact multiple of 5.625 with
-//   CLKOUT1_USE_FINE_PS false, which is how the -72 literal that used to sit
-//   below was found -- nothing had run write_bitstream against gem_top before
-//   Stage 6 retargeted the build onto it. Stage 6's timing report is where
-//   the achieved number gets confirmed rather than assumed; V-2 is the open
-//   item that closes with a scope on GTX_CLK/TXD0.
+//   -55.000 IS EXACTLY ACHIEVABLE, NOT ROUNDED. Static phase resolution is
+//   45/CLKOUT1_DIVIDE = 45/9 = 5 degrees, and -55 is 11 whole steps of it.
+//   Equivalently, achievable shift magnitudes are k * VCO_period/8 =
+//   k * 0.11111 ns, and 1.2222 ns is k = 11. write_bitstream's DRC (AVAL-139)
+//   is silent on this value because the value is legal -- which is a different
+//   thing from the check having been switched off, see the warning below.
 //
-//   STAGE 6 PART 2 FOUND THE ROUNDING IS NOT HARMLESS, AND THE VALUE BELOW
-//   IS KNOWN NOT TO MEET TIMING. Post-route, against constrs/rgmii_timing.xdc,
-//   -73.125 violates the TX setup check on all five data outputs by about
-//   0.35 ns (task-2-report.md). Sweeping the whole 5.625 grid inside the PHY's
-//   window found exactly one point that is not violated -- 1.250 ns, clearing
-//   by 24 ps (task-2b-report.md) -- and placement cannot help, because 99.939%
-//   of the path is ODDR C-to-Q and OBUF I-to-O cell delay in sites those cells
-//   cannot leave (task-2c-report.md). The value below is left as it is pending
-//   a decision, not because it passes.
+//   BOTH OUTPUT FREQUENCIES ARE UNCHANGED from the configuration this replaced
+//   (1000 MHz VCO, both dividers 8). The VCO and both dividers moved together,
+//   which is the standard way to move the phase grid without moving the
+//   outputs. tx_clk and gtx_clk_shifted are 125 MHz here exactly as they were,
+//   so nothing downstream sees any change -- not the TX datapath, not sys_clk,
+//   not the UART's baud divisor, not MDC's. Only the MMCM's internal VCO
+//   frequency and the grid it implies are different.
+//
+// HOW THIS VALUE WAS ARRIVED AT, in order, because three values have now sat
+// in this parameter and each was replaced for a reason worth not having to
+// rediscover:
+//
+//   -72.000 -- B.1b's intent. 1.6 ns, the centre of the PHY window. Never
+//   achievable: on the then-current 1000 MHz VCO the grid was 45/8 = 5.625
+//   degrees, and -72 is 12.8 steps of it. Stage 6 part 1 found it, because
+//   write_bitstream's DRC (AVAL-139) refuses outright on a CLKOUT1_PHASE that
+//   is not an exact multiple of the step with CLKOUT1_USE_FINE_PS false --
+//   and nothing had run write_bitstream against gem_top before Stage 6
+//   retargeted the build onto it.
+//
+//   -73.125 -- Stage 6 part 1's fix. 1.625 ns, -72 rounded to the nearest of
+//   those 5.625 degree steps, believed harmless at the time: 25 ps from the
+//   intent and still 0.375 ns clear of both window edges. Stage 6 part 2
+//   measured it and it is not harmless. Post-route against
+//   constrs/rgmii_timing.xdc it violates TX setup on all five data outputs by
+//   about 0.35 ns (task-2-report.md). Sweeping the whole 5.625 degree grid
+//   inside the PHY window found exactly one point that is not violated --
+//   1.250 ns, clearing by 24 ps (task-2b-report.md) -- and placement cannot
+//   help, because 99.939% of the path is ODDR C-to-Q and OBUF I-to-O cell
+//   delay in sites those cells cannot leave (task-2c-report.md).
+//
+//   -55.000 -- the value below. The grid itself was the problem, so the grid
+//   was moved rather than the phase alone: achievable shifts are
+//   k * VCO_period/8, so choosing the VCO chooses which shifts exist at all.
+//   task-2d-report.md built and post-route-measured every configuration the
+//   PHY's window allows and found this one best; task-2e-report.md committed
+//   it and re-measured it on the committed tree rather than inheriting that
+//   number. Per-configuration numbers live in the table in
+//   Documents/RGMII I-O Timing Derivation.md. Add to that table rather than
+//   restating its numbers here -- restating them here is exactly how an
+//   earlier revision of this header got a configuration and a margin attached
+//   to each other wrongly.
+//
+//   WHAT IT BUYS IS THIN, AND IS NOT CLAIMED TO BE MORE. Worst-case TX setup
+//   margin goes from violated to positive, and positive by tens of ps, not by
+//   the few hundred this chain of tasks went looking for. It is a real,
+//   measured, Vivado-verifiable improvement on a check that previously failed
+//   outright, and it is the ceiling of what phase shift alone reaches here:
+//   the remaining deficit is the irreducible cell delay above plus a 0.264 ns
+//   clock-network insertion asymmetry between the launch and forwarded clocks,
+//   and neither of those is a phase choice. If the bench shows it is not
+//   enough, the next lever is the PHY's own GTX_CLK pad-skew register over
+//   MDIO, not this parameter -- the procedure is written out in
+//   Documents/RGMII I-O Timing Derivation.md and is gated on V-2 / B.5 step 5,
+//   because it can only be validated with a board in hand.
 //
 //   DO NOT REACH FOR CLKOUT1_USE_FINE_PS TO BUY FINER RESOLUTION. Fine phase
 //   shift is a runtime interface, not a static one: Xilinx's own MMCME2_ADV
@@ -67,19 +116,6 @@
 //   starts being silently analysed as though the silicon produced it, which is
 //   worse than the error it replaces (task-2d-report.md). MMCME2_BASE, the
 //   primitive below, does not accept the parameter at all.
-//
-//   What does move the grid is the VCO: achievable shifts are k * VCO_period/8,
-//   so putting a wanted shift on the grid means picking the VCO to suit it.
-//   Measured post-route across every configuration the PHY's window allows,
-//   the best that buys is 58 ps of setup -- at 1.2222 ns, a 1125 MHz VCO and
-//   CLKOUT1_DIVIDE 9. Better than the grid's 24 ps, still not the hundreds
-//   this direction was hoped to yield, and not free: CLKOUT0's divider moves
-//   with it. Note that the smallest shift is NOT the best one -- 1.200 ns
-//   needs a 625 MHz VCO, whose extra clock uncertainty costs more than the
-//   shorter shift returns. Per-configuration numbers live in the table in
-//   Documents/RGMII I-O Timing Derivation.md; add to that table rather than
-//   restating its numbers here, which is how this paragraph first got the
-//   1.200 ns configuration and the 58 ps figure attached to each other.
 //
 // FEEDBACK IS INTERNAL: CLKFBOUT wires straight back to CLKFBIN with no BUFG.
 // A BUFG in the feedback path exists to align the output clocks to the *input*
@@ -95,7 +131,7 @@ module gem_mmcm (
     input  wire clk_in,     // 50 MHz board oscillator
     input  wire rst,        // active high, asynchronous
     output wire clk_out0,   // 125 MHz, phase 0        -> tx_clk
-    output wire clk_out1,   // 125 MHz, ~1.6 ns later  -> GTX_CLK forwarding
+    output wire clk_out1,   // 125 MHz, 1.2222 ns later -> GTX_CLK forwarding
     output wire locked
 );
 
@@ -105,7 +141,7 @@ module gem_mmcm (
     // Simulation model.
     //
     // WHAT IT REPRODUCES: two 125 MHz clocks whose phase relationship is the
-    // 1.6 ns the real MMCM is asked for, held low while RST is asserted, and a
+    // 1.2222 ns the real MMCM is asked for, held low while RST is asserted, and a
     // LOCKED that arrives some time after RST releases rather than instantly.
     //
     // WHAT IT DOES NOT: jitter, the real ~100 us lock time, the input clock's
@@ -122,7 +158,7 @@ module gem_mmcm (
     // would let that logic pass without ever having been exercised.
     //
     // The two forever loops are one construct, offset. Both toggle on a fixed
-    // 4 ns grid; clk1's grid starts 1.6 ns later and stays there for the whole
+    // 4 ns grid; clk1's grid starts 1.2222 ns later and stays there for the whole
     // simulation, so the phase relationship survives RST gating the toggles
     // off and on again. Deriving clk1 from clk0 with a delayed assignment
     // would have been the obvious alternative and is worse: it makes the
@@ -148,7 +184,7 @@ module gem_mmcm (
 
     initial begin
         clk1 = 1'b0;
-        #1.6;                           // the phase shift, applied once
+        #1.2222;                        // the phase shift, applied once
         forever begin
             #4.0;
             clk1 = rst ? 1'b0 : ~clk1;
@@ -186,13 +222,13 @@ module gem_mmcm (
         .BANDWIDTH          ("OPTIMIZED"),
         .CLKIN1_PERIOD      (20.000),    // 50 MHz
         .DIVCLK_DIVIDE      (1),
-        .CLKFBOUT_MULT_F    (20.000),    // VCO = 1000 MHz
+        .CLKFBOUT_MULT_F    (22.500),    // VCO = 1125 MHz
         .CLKFBOUT_PHASE     (0.000),
-        .CLKOUT0_DIVIDE_F   (8.000),     // 125 MHz, tx_clk
+        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz, tx_clk
         .CLKOUT0_PHASE      (0.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
-        .CLKOUT1_DIVIDE     (8),         // 125 MHz, GTX_CLK copy
-        .CLKOUT1_PHASE      (-73.125),   // 1.625 ns; -72 rounded to the nearest achievable step
+        .CLKOUT1_DIVIDE     (9),         // 125 MHz, GTX_CLK copy
+        .CLKOUT1_PHASE      (-55.000),   // 1.2222 ns; 11 whole steps of the 5 deg grid
         .CLKOUT1_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),
         .STARTUP_WAIT       ("FALSE")

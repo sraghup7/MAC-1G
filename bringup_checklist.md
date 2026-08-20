@@ -148,12 +148,26 @@ comes back.
 - [ ] Compare a frame byte for byte against what was sent.
 
 **If nothing is transmitted:** check `GTX_CLK` and `TXD0` on a scope. R14's
-mechanism puts a deliberate ~1.6 ns delay on `GTX_CLK` relative to the data, and
-**no simulation in this project can confirm it** — that is open item **V-2**, and
-this is where it closes. The MMCM asks for −72° and the achievable step rounds it
-to −73.125° (1.625 ns), which should sit in the middle of the datasheet's
-1.2–2.0 ns window. If it does not, the PHY's `GTX_CLK` pad-skew register (MMD
-`2h`, reg `8h`, bits `[9:5]`) adds up to +1.38 ns.
+mechanism puts a deliberate 1.2222 ns delay on `GTX_CLK` relative to the data,
+and **no simulation in this project can confirm it** — that is open item
+**V-2**, and this is where it closes. The MMCM is asked for −55.000° of the 8 ns
+period, which its 1125 MHz VCO can produce exactly, and which lands near the
+bottom of the datasheet's 1.2–2.0 ns window rather than in its middle — Stage 6
+part 2 measured the design and found its own TX setup check improves as the
+shift shrinks, so the centre is not the best point inside the window. Post-route
+the worst TX output clears setup by **58 ps**: a pass, and a thin one.
+
+**If the scope says setup timing is not being met, there is a next step and it
+is already written down.** Do not start re-deriving the phase shift — 58 ps is
+the ceiling of what phase shift alone reaches on this design, and that was
+established by measurement across every configuration the PHY's window allows,
+not by estimate. Go to `Documents/RGMII I-O Timing Derivation.md`, section
+**“If 58 ps proves insufficient on the bench”**. It carries the procedure for the
+PHY's own `GTX_CLK` pad-skew register (MMD `2h`, register `8h`, bits `[9:5]`)
+reached over MDIO, the arithmetic for turning a measured shortfall into a step
+count, and — read this part first — the list of datasheet numbers that have to be
+confirmed before executing any of it, because B.1b's summary of them does not
+close arithmetically.
 
 ---
 

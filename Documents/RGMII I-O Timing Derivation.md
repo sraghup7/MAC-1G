@@ -32,8 +32,9 @@ represent a real capture event.
 ## TX: rgmii_txd[3:0], rgmii_tx_ctl, rgmii_gtx_clk, launched by gtx_clk_shifted
 
 rgmii_gtx_clk is a *generated* clock: gem_rgmii_tx.v's u_oddr_gtx forwards
-gtx_clk_shifted (the MMCM's phase-shifted CLKOUT1, corrected to -73.125 deg /
-1.625 ns in Stage 6 part 1) straight to the pin through an ODDR. The output
+gtx_clk_shifted (the MMCM's phase-shifted CLKOUT1, -55.000 deg / 1.2222 ns as
+committed in Stage 6 part 2 -- see the history section below for the two values
+that preceded it) straight to the pin through an ODDR. The output
 delay is bounded by the PHY's required TsetupT/TholdT window, 1.2-2.0 ns, at
 the PHY's pins -- i.e. it is a receiver requirement on this design's output,
 not a margin this design measures on itself:
@@ -57,10 +58,11 @@ PHY's stated requirements before anything is placed on a real board.
 
 ## TX phase shift: the decision history, and the ceiling it ran into
 
-The -73.125 deg / 1.625 ns figure above is the value Stage 6 part 1 arrived at
-and the value still in `rtl/gem_mmcm.v`. Stage 6 part 2 measured it and found
-it does not hold. This section is the record of that, so a future reader does
-not have to reassemble it from four task reports.
+Stage 6 part 1 arrived at -73.125 deg / 1.625 ns. Stage 6 part 2 measured it,
+found it does not hold, and ultimately replaced it with the -55.000 deg /
+1.2222 ns now in `rtl/gem_mmcm.v` and quoted above. This section is the record
+of how, so a future reader does not have to reassemble it from five task
+reports.
 
 ### 1. The value in the file does not meet the constraint (Task 2)
 
@@ -165,3 +167,159 @@ Buying materially more margin than 58 ps requires changing something outside
 the phase shift -- the I/O standard or drive on the TX pins, the PHY's own
 RGMII delay configuration via MDIO, or the 1.2-2.0 ns window itself -- none of
 which is a phase-shift decision.
+
+### 6. What was committed, and what it measures (Task 2e)
+
+`rtl/gem_mmcm.v` now carries the 1125 MHz VCO configuration from row 2 of the
+table above:
+
+| Parameter | Was | Is |
+|---|---|---|
+| `CLKFBOUT_MULT_F` | 20.000 | **22.500** |
+| `DIVCLK_DIVIDE` | 1 | 1 (unchanged) |
+| `CLKOUT0_DIVIDE_F` | 8.000 | **9.000** |
+| `CLKOUT1_DIVIDE` | 8 | **9** |
+| `CLKOUT1_PHASE` | -73.125 | **-55.000** |
+
+VCO = 50 MHz x 22.500 / 1 = **1125 MHz**, inside the Artix-7 MMCM's
+600-1200 MHz range. Both outputs stay at **125 MHz** (1125/9), so `tx_clk`,
+`sys_clk` and `gtx_clk_shifted` are all exactly the frequency they were and
+nothing downstream is affected -- only the VCO and the phase grid it implies
+moved. The grid is now 45/9 = 5 deg, and -55.000 is 11 whole steps of it, so
+the value is exactly achievable rather than rounded; `report_drc -checks
+AVAL-139` is silent on the routed checkpoint with `CLKOUT1_USE_FINE_PS = 0`,
+i.e. legitimately rather than because the check was switched off.
+
+Measured post-route on the committed tree (`build/post_route.dcp` with
+`constrs/rgmii_timing.xdc` applied), all five TX outputs:
+
+| Port | Setup (`-max`) | Hold (`-min`) |
+|---|---|---|
+| `rgmii_txd[0]` | **+0.058 ns** | +1.660 ns |
+| `rgmii_txd[1]` | +0.065 ns | +1.651 ns |
+| `rgmii_txd[2]` | +0.072 ns | +1.645 ns |
+| `rgmii_txd[3]` | +0.068 ns | +1.650 ns |
+| `rgmii_tx_ctl` | +0.068 ns | +1.649 ns |
+
+`report_clocks` on the same checkpoint shows `clk0_raw` at 8.000 ns
+`{0.000 4.000}` and `clk1_raw` at 8.000 ns `{-1.222 2.778}` -- the frequency
+preservation and the 1.2222 ns shift, both read off the tool rather than
+asserted.
+
+**Worst case is `rgmii_txd[0]` at +58 ps**, the same port and the same number
+Task 2d measured for this configuration on its own build. Setup was previously
+violated by -0.351 ns, so this is the check going from failing to passing. It
+is also thin, and nothing here claims otherwise: 58 ps is well inside what a
+real board's trace skew and a real PHY's input characteristics can move, and
+the numbers above are Vivado's `-1L` speed model on a `7a35ti-fgg484`, not
+silicon. The bench is still the final word, which is V-2's remaining half.
+
+## If 58 ps proves insufficient on the bench
+
+This is the fallback B.1b already names as R14's escape hatch. **It is
+documented here, not implemented.** Nothing in the design drives it today, and
+nothing should until a real shortfall has been measured on real hardware --
+see "what is deliberately not built" at the end of this section.
+
+**Step 1 -- measure the actual shortfall.** Scope or ILA on `GTX_CLK` and
+`TXD0` at the PHY's pins, which is `bringup_checklist.md` B.5 step 5. What is
+wanted is the real setup margin at the PHY, not the FPGA-side number above. If
+it is positive with room, stop -- nothing below is needed.
+
+**Step 2 -- convert the shortfall to steps.** The `GTX_CLK` pad-skew field
+advertises 0.06 ns per step (B.1b), so the count is `ceil(shortfall_ns / 0.06)`
+-- a 0.1 ns shortfall is 2 steps, 0.12 ns. Round up, never down: a step short
+leaves the same failure with the fallback spent.
+
+> **Confirm the step size and the field's usable range against the datasheet
+> before computing anything.** B.1b's own numbers do not close arithmetically,
+> and this document is not going to restate them as though they do. B.1b gives
+> the `GTX_CLK` field as bits `[9:5]` -- five bits, 32 codes, so 31 steps of
+> 0.06 ns is a 1.86 ns span -- but states the maximum as **+1.38 ns**, which is
+> 23 steps. Worse, it gives the neighbouring `RX_CLK` field as bits `[4:0]`,
+> also five bits, with a maximum of **2.58 ns**, which is 43 steps and does not
+> fit in the field at all. At least one of {field width, step size, stated
+> maximum} in B.1b is wrong, or the encoding is offset or signed in a way B.1b
+> does not record. A.2 already flags the KSZ9031RNX datasheet as read online
+> and unverified against the physical part. **Resolve this from the datasheet's
+> own pad-skew table before writing a value.** Confirm the *direction* too:
+> that increasing this field delays `GTX_CLK` relative to `TXD` rather than
+> advancing it. Getting the sign wrong doubles the error instead of removing
+> it, and nothing on the FPGA side of this project can detect that.
+
+**Step 3 -- reach the register.** The pad-skew register is not in the Clause 22
+address space. It is an MMD register (device `2h`, register `8h`, B.1b),
+reached by indirect access through two standard Clause 22 registers:
+
+| Clause 22 addr | Register name |
+|---|---|
+| **13** (`0x0D`) | MMD Access Control |
+| **14** (`0x0E`) | MMD Access Address/Data |
+
+**Those two addresses are confirmed** -- not from memory, and not from B.1b,
+which does not mention them. They are IEEE Std 802.3-2022 Table 22-6, the
+MII/GMII management register set, reproduced in this repository at
+`Documents/IEEE802.3-2022_notes_for_1G_MAC.md:308-309`. Both are 5-bit Clause
+22 addresses, so `gem_mdio.v`'s `req_regad` reaches them as-is.
+
+The access is a four-transaction sequence: point register 13 at the MMD
+register, then use register 14 as a data window onto it.
+
+1. Write **13** with {function = *address*, device address = `2h`}.
+2. Write **14** with `0x0008` -- the MMD register number, `8h`.
+3. Write **13** with {function = *data, no post-increment*, device address =
+   `2h`}. Register 14 is now a window onto MMD `2h` register `8h`.
+4. Read **14** for the current value; modify bits `[9:5]` to the Step 2 count,
+   leaving bits `[4:0]` (the `RX_CLK` skew) and every other bit exactly as
+   read; write **14** back.
+
+Read-modify-write in step 4 rather than a blind write, because the same
+register holds the `RX_CLK` skew that B.1b relies on being left at its default.
+
+> **What is NOT confirmed: the bit layout of register 13.** The two register
+> *addresses* above are confirmed; the *contents* of register 13 are not. The
+> IEEE extract in this repository gives Table 22-6's register names only, not
+> their bit fields, and no KSZ9031RNX datasheet is in this repository. So the
+> two braced fields in the sequence above are named by function and left
+> unencoded on purpose. Before executing, confirm from the KSZ9031RNX
+> datasheet's MDIO / MMD register-access section:
+>
+> - which bits of register 13 carry the function select, and which carry the
+>   5-bit MMD device address;
+> - the function-code values for "address" and for "data, no post-increment"
+>   (there are post-increment variants that must *not* be used here, since this
+>   sequence touches a single register);
+> - that the KSZ9031RNX implements this convention rather than a vendor
+>   variant, and what register `8h` reads as out of reset.
+>
+> A guessed encoding here does not fail loudly. It points the window at some
+> other MMD register, and the write in step 4 lands somewhere unintended. This
+> is the one part of the procedure with no in-repo source behind it, and it is
+> called out rather than filled in with a plausible-looking number.
+
+**Step 4 -- what would have to be built, and why it is not.** `gem_mdio.v`
+already has the primitive this rides on: the R16 register-level request port,
+`req_valid`/`req_ready`/`req_write`/`req_phyad`/`req_regad`/`req_wdata` with
+`rsp_data`/`rsp_valid` coming back -- any register, read or write, on demand,
+which is exactly the four transactions above. It is deliberately unconnected:
+`rtl/gem_top.v:158-163` ties `mdio_req_valid` to `1'b0` and the rest to zero,
+so nothing drives it today.
+
+**Wiring something to it is a bring-up-time decision, not a committed part of
+this design.** When the time comes the sensible shapes are a JTAG VIO driving
+the request port, or a temporary RTL edit for the duration of the bring-up
+session -- either way driven by a human who has just measured the shortfall on
+a scope and can measure again afterwards.
+
+**What is deliberately not built: an automatic power-on sequence.** The
+tempting version of this is a small state machine that pokes the computed value
+into MMD `2h`/`8h` every time the design leaves reset. That would be strictly
+worse than the current state. The step size, the field's usable range and the
+sign are all unconfirmed (see the two boxes above); the design has no way to
+observe whether the write helped, hurt, or landed in the wrong register; and it
+would apply on every boot, on every board, forever. A wrong constant here
+degrades RGMII TX timing silently, with no gate in this project able to catch
+it -- unlike the MMCM change above, which `make bitstream` and `report_timing`
+check completely before any hardware exists. So the correction stays a
+measured, human-gated bench action until there is a board to validate it
+against (`MEMORY.md`: the AX7035B is not in hand).
