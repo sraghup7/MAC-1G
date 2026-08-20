@@ -26,3 +26,20 @@
 # The build was reporting WNS = 17.2 ns while the placer had timing switched
 # off entirely.
 set_false_path -to [get_ports {led[*]}]
+
+#-----------------------------------------------------------------------------
+# Asynchronous board I/O -- buttons, PHY reset, MDIO, UART. None of these has
+# a setup/hold relationship external timing analysis can usefully check; see
+# the table in docs/superpowers/plans/2026-08-19-stage6-part2-rgmii-timing.md
+# Task 3 for why each one specifically qualifies, following the same
+# "unconstrained because it does not matter, and said so" principle the LED
+# false path above already established.
+#-----------------------------------------------------------------------------
+
+set_false_path -from [get_ports rst_key_n]
+set_false_path -from [get_ports key_clear_n]
+set_false_path -from [get_ports mdio]
+set_false_path -to   [get_ports mdio]
+set_false_path -to   [get_ports mdc]
+set_false_path -to   [get_ports phy_rst_n]
+set_false_path -to   [get_ports uart_tx]
