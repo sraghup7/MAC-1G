@@ -69,10 +69,17 @@
 //   primitive below, does not accept the parameter at all.
 //
 //   What does move the grid is the VCO: achievable shifts are k * VCO_period/8,
-//   so 1.200 ns needs a 625 MHz VCO and CLKOUT1_DIVIDE 5. Measured, that buys
-//   58 ps of setup at best across the whole PHY window -- better than 24 ps,
-//   still not the hundreds this direction was hoped to yield. The numbers and
-//   the remaining options are in Documents/RGMII I-O Timing Derivation.md.
+//   so putting a wanted shift on the grid means picking the VCO to suit it.
+//   Measured post-route across every configuration the PHY's window allows,
+//   the best that buys is 58 ps of setup -- at 1.2222 ns, a 1125 MHz VCO and
+//   CLKOUT1_DIVIDE 9. Better than the grid's 24 ps, still not the hundreds
+//   this direction was hoped to yield, and not free: CLKOUT0's divider moves
+//   with it. Note that the smallest shift is NOT the best one -- 1.200 ns
+//   needs a 625 MHz VCO, whose extra clock uncertainty costs more than the
+//   shorter shift returns. Per-configuration numbers live in the table in
+//   Documents/RGMII I-O Timing Derivation.md; add to that table rather than
+//   restating its numbers here, which is how this paragraph first got the
+//   1.200 ns configuration and the 58 ps figure attached to each other.
 //
 // FEEDBACK IS INTERNAL: CLKFBOUT wires straight back to CLKFBIN with no BUFG.
 // A BUFG in the feedback path exists to align the output clocks to the *input*
