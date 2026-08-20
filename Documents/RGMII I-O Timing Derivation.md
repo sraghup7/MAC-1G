@@ -153,7 +153,7 @@ more than the 22 ps of shift it buys back. And 1.2222 ns keeps 22 ps of
 distance from the window's own 1.2 ns floor, where 1.2000 ns sits exactly on
 it.
 
-**The ceiling.** At the design's present 1000 MHz VCO, setup slack runs
+**The ceiling.** At the 1000 MHz VCO the design carried at the time, setup slack runs
 `1.274 ns - shift` across the whole measured range -- so within one VCO choice
 it is maximised by the smallest shift the PHY permits, and across VCO choices
 the jitter term above competes with it. With the grid

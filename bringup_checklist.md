@@ -245,6 +245,6 @@ Three things are settled only by the bench, and each is tracked as an open item:
 
 | Item | What is unresolved | Closes at |
 |---|---|---|
-| **V-2** | R14's 1.6 ns `GTX_CLK` skew is an I/O timing property; simulation passes at any phase | step 5, with a scope |
+| **V-2** | R14's 1.2222 ns `GTX_CLK` skew is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by only 58 ps | step 5, with a scope |
 | **V-6** | The golden CRC has never been checked against a real capture | step 5, in Wireshark |
 | Bank 16 VCCIO | Assumed 3.3 V from the manual's general rule; the schematic labels the bank but supplies it from the power tree | step 1, if the LEDs behave |
