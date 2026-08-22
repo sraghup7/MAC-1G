@@ -15,8 +15,11 @@ which to suspect:
   * the model changed deliberately  -> run `make vectors` and commit the result
   * the model changed accidentally  -> that is the bug, go and find it
 
-manifest.json is excluded because it carries a generation timestamp. Every file
-a testbench actually reads is compared byte for byte.
+manifest.json is excluded because it carries a generation timestamp. Everything
+else in each scenario directory is compared byte for byte -- the comparison is
+a directory diff, not a name whitelist, so a sixth artifact the model starts
+emitting is compared rather than silently ignored, and a file the model stops
+emitting is reported as the fossil it has become.
 
 Usage:
     python scripts/check_vectors.py
@@ -36,14 +39,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 VECTORS = REPO / "model" / "vectors"
 
-# manifest.json is deliberately absent: it records when it was generated.
-COMPARED = [
-    "rx_rgmii.hex",
-    "rx_expected.txt",
-    "tx_expected.hex",
-    "tx_stim.txt",
-    "counters_expected.txt",
-]
+# The one file never compared, and the only one: manifest.json records when it
+# was generated. Everything else in a scenario directory is diffed, by name and
+# then byte for byte -- a whitelist of expected filenames here would silently
+# exempt whatever the model starts emitting next from both halves of this
+# gate's job (staleness detection and committed-set completeness).
 
 
 def find_matlab(explicit: str | None) -> str:
@@ -88,6 +88,7 @@ def main() -> int:
 
         stale: list[str] = []
         missing: list[str] = []
+        fossils: list[str] = []
         checked = 0
 
         for scenario_dir in sorted(tmp_path.iterdir()):
@@ -95,18 +96,29 @@ def main() -> int:
                 continue
             committed = VECTORS / scenario_dir.name
 
-            for filename in COMPARED:
-                fresh = scenario_dir / filename
-                if not fresh.exists():
-                    continue          # not every scenario emits every file
-                old = committed / filename
+            # Directory diff, not a whitelist: whatever the generator emitted
+            # is exactly what must be committed, under the same name.
+            fresh_files = {p.name for p in scenario_dir.iterdir()
+                           if p.is_file() and p.name != "manifest.json"}
 
-                if not old.exists():
-                    missing.append(f"{scenario_dir.name}/{filename}")
-                    continue
+            if not committed.is_dir():
+                missing.extend(f"{scenario_dir.name}/{f}"
+                               for f in sorted(fresh_files))
+                continue
 
+            committed_files = {p.name for p in committed.iterdir()
+                               if p.is_file() and p.name != "manifest.json"}
+
+            for filename in sorted(fresh_files - committed_files):
+                missing.append(f"{scenario_dir.name}/{filename}")
+
+            for filename in sorted(committed_files - fresh_files):
+                fossils.append(f"{scenario_dir.name}/{filename}")
+
+            for filename in sorted(fresh_files & committed_files):
                 checked += 1
-                if not filecmp.cmp(fresh, old, shallow=False):
+                if not filecmp.cmp(scenario_dir / filename,
+                                   committed / filename, shallow=False):
                     stale.append(f"{scenario_dir.name}/{filename}")
 
         # A scenario directory that is committed but no longer generated is a
@@ -129,9 +141,14 @@ def main() -> int:
             print("Delete them, or put the scenario back.")
             return 1
 
-        if not stale and not missing:
+        if not stale and not missing and not fossils:
             print("\nCommitted vectors are up to date with the model.")
             return 0
+
+        if fossils:
+            print(f"\n{len(fossils)} committed file(s) are no longer generated:")
+            for name in fossils:
+                print(f"    {name}")
 
         if missing:
             print(f"\n{len(missing)} generated file(s) are not committed:")

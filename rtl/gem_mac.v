@@ -130,6 +130,11 @@ module gem_mac (
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_rxer,
     input  wire         stat_clear,
+    // One rx_clk cycle per receive octet refused because the async FIFO was
+    // full (B.3a says this cannot happen; R2's whole point is that a premise
+    // nobody can observe is a premise nobody checks). Additive port -- every
+    // existing testbench leaves it unconnected.
+    output wire         rx_fifo_drop,
     // What the MDIO sequencer found, live on pins so an ILA or VIO can read the
     // link state with no software attached -- which is the situation B.5's
     // bring-up steps 2 and 3 are actually conducted in.
@@ -229,7 +234,7 @@ module gem_mac (
     wire [31:0] rx_crc_unused;
     wire       rx_crc_init, rx_crc_en, rx_crc_residue_ok;
     wire [7:0] rx_crc_data;
-    wire       fifo_wr, fifo_full, fifo_empty, fifo_rd;
+    wire       fifo_wr, fifo_full, fifo_empty, fifo_rd, fifo_drop;
     wire [9:0] fifo_din, fifo_dout;
     wire       ev_rx_ok_r, ev_rx_badfcs_r, ev_rx_runt_r;
     wire       ev_rx_oversize_r, ev_rx_rxer_r;
@@ -271,6 +276,7 @@ module gem_mac (
         .wr_en    (fifo_wr),
         .wr_data  (fifo_din),
         .full     (fifo_full),
+        .drop     (fifo_drop),
         .rd_clk   (tx_clk),
         .rd_rst_n (tx_rst_n),
         .rd_en    (fifo_rd),
@@ -376,5 +382,9 @@ module gem_mac (
     /* verilator lint_off UNUSED */
     wire _unused_ok = &{1'b0, fifo_full, tx_residue_unused, rx_crc_unused};
     /* verilator lint_on UNUSED */
+
+    // The FIFO's drop pulse leaves as a port rather than dying here: B.3a
+    // says it can never fire, which is why it must be observable if it does.
+    assign rx_fifo_drop = fifo_drop;
 
 endmodule

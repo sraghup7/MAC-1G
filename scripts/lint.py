@@ -7,17 +7,29 @@ that it fails, so this script is written to be hard to accidentally satisfy:
   * a missing Verilator is an ERROR, not a skip. A lint that silently does not
     run reports the same "nothing to see here" as a lint that passed, which is
     the worst possible behaviour for a quality gate.
+  * a missing TOP is an ERROR, not a skip. The list below names files this
+    repository is supposed to contain; one going absent is exactly the layout
+    drift the rest of this project writes gates against, and a lint that
+    skipped everything it was asked to lint would still have printed green.
   * warnings are failures. Verilator's own `-Wall` already exits nonzero on a
     warning; this script does not soften that.
-  * suppressions must be justified in the source. There are exactly three today,
-    each explaining itself where it sits: the nonblocking assignment in the
-    simulation model of the DDR output cell (rtl/gem_oddr.v), a signal driven
-    only for a bound assertion to watch (rtl/gem_rx_deframe.v), and the three
-    deliberately unread outputs gathered at the bottom of rtl/gem_mac.v. Stage
-    3's two lived in the port-only stub and went with it, as V-9 required.
-    rtl/gem_mdio.v had a fourth until the request interface landed and made
-    every bit of a read register meaningful -- a suppression that stopped being
-    needed, which is the only good way for one to end.
+  * suppressions must be justified in the source, where they sit. The current
+    set, each explaining itself at its own site:
+      rtl/gem_oddr.v       COMBDLY       nonblocking assignment in the
+                                         behavioural DDR output cell, which
+                                         exists to make capture scheduling-
+                                         independent
+      rtl/gem_rx_deframe.v UNUSEDSIGNAL  frame_active driven so a bound
+                                         assertion can watch it
+      rtl/gem_mac.v        UNUSED        three deliberately unread outputs,
+                                         gathered and named
+      rtl/gem_top.v        UNUSED         same pattern, board level
+      rtl/gem_rx_fifo.v    SYNCASYNCNET  reset synchronisers sampling the raw
+                                         domain resets as data -- the
+                                         definition of the structure, not an
+                                         accident
+    Verify against reality rather than trusting this list: grep -rn lint_off
+    rtl/ should show exactly these.
 
 WSL: on Windows the natural place for Verilator is inside WSL, so if it is not
 on PATH natively this falls back to `wsl -- verilator`. Relative paths survive
@@ -111,9 +123,12 @@ def main() -> int:
     verilator = verilator_command(args.verilator)
 
     failures = []
+    missing = []
+    linted = 0
     for top in TOPS:
         if not (REPO / top).exists():
-            print(f"  SKIP  {top} (not present)")
+            missing.append(top)
+            print(f"  MISSING  {top}")
             continue
 
         print(f"==> Linting {top}")
@@ -125,16 +140,22 @@ def main() -> int:
             failures.append(top)
             print(output)
         else:
+            linted += 1
             print("    clean")
 
     print()
+    if missing:
+        print(f"LINT FAILED: {', '.join(missing)} not found.")
+        print("A named top going absent is layout drift, not a smaller gate:")
+        print("linting nothing must not be able to look like a clean lint.")
+        return 1
     if failures:
         print(f"LINT FAILED: {', '.join(failures)}")
         print("R22 requires zero warnings. Fix them, or add a lint_off with a")
         print("stated reason in the source -- not a flag that hides the class.")
         return 1
 
-    print(f"Lint clean: {len(TOPS)} top(s), zero warnings (R22).")
+    print(f"Lint clean: {linted} of {len(TOPS)} top(s) linted, zero warnings (R22).")
     return 0
 
 

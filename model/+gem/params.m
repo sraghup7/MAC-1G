@@ -49,7 +49,11 @@ end
 
 text = fileread(headerFile);
 
-% Strip // comments so a `define mentioned in prose cannot be picked up.
+% Strip comments so prose cannot be picked up as constants. Block comments
+% go first: a /* ... */ containing // or a `define must contribute nothing,
+% and stripping line comments first could expose a `define inside a block
+% comment to the match below.
+text = regexprep(text, '/\*[\s\S]*?\*/', '');
 text = regexprep(text, '//[^\n]*', '');
 
 % Match:  `define GEM_NAME  VALUE
@@ -67,6 +71,17 @@ end
 p = struct();
 for k = 1:numel(tokens)
     name = tokens{k}{1};
+    % The Verilog preprocessor resolves duplicates last-one-wins; here a
+    % duplicate is far more likely to be a merge accident or an #ifdef-style
+    % pairing whose both branches this parser cannot evaluate. Silently
+    % taking either branch is exactly the silent drift this parser exists to
+    % make impossible, so refuse loudly instead.
+    if isfield(p, name)
+        error('gem:paramsDuplicate', ...
+            ['GEM_%s is defined more than once in %s. The RTL preprocessor ', ...
+             'would quietly take the last one; this parser will not guess.'], ...
+            name, headerFile);
+    end
     p.(name) = tokens{k}{2};   % keep raw for now; resolved below
 end
 
@@ -108,11 +123,31 @@ if ~isempty(sized)
         case 'd', value = uint64(str2double(digits));
         case 'b', value = uint64(bin2dec(digits));
     end
-    % Widths up to 32 bits land in uint32, which is what the CRC math wants;
-    % anything wider stays uint64 rather than silently truncating.
     width = str2double(sized{1});
-    if isnan(width) || width <= 32
-        value = uint32(value);
+    if isnan(width)
+        % Unsized literal ('h55): nothing to enforce the digits against; the
+        % uint32-or-wider choice below still applies.
+        if double(value) < 4294967296
+            value = uint32(value);
+        end
+    else
+        % ENFORCE THE DECLARED WIDTH. The RTL truncates oversized digits to
+        % the declared width without complaint -- 8'h1D5 is 8'hD5 to every
+        % Verilog tool -- and a model that kept all three nibbles would
+        % disagree with the hardware silently, which is the one failure this
+        % parser exists to make impossible. Refuse instead of truncating.
+        if width < 1 || width > 64 || double(value) >= 2^width
+            error('gem:paramsWidth', ...
+                ['GEM_%s declares width %d but its digits carry a value that ', ...
+                 'does not fit (%s). The RTL would truncate silently; fix the ', ...
+                 'header rather than letting the model and the design diverge.'], ...
+                name, width, raw);
+        end
+        % Widths up to 32 bits land in uint32, which is what the CRC math
+        % wants; anything wider stays uint64 rather than silently truncating.
+        if width <= 32
+            value = uint32(value);
+        end
     end
     return
 end

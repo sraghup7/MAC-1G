@@ -95,6 +95,55 @@ module gem_internal_sva (
         (rx_state == 3'd0) |-> (rx_crc_reg == `GEM_CRC32_INIT))
         else $error("rx_crc: accumulator not re-seeded while hunting -- the next frame is poisoned");
 
+    //------------------------------------------------------------------
+    // Vacuity, measured rather than assumed
+    //------------------------------------------------------------------
+    //
+    // Same discipline as gem_axis_sva: a green assertion nobody knows is
+    // vacuous reads as coverage it does not have. Two of these properties are
+    // structurally dead under R18's no-stall contract -- the FIFO provably
+    // never fills, so a_fifo_never_overflows watches a condition that cannot
+    // occur -- and that is correct, not a bug to fix by inventing stalls. What
+    // would be wrong is silence about it.
+    //
+    // So the activity each property depends on is counted and reported:
+    //   n_fifo_writes  a_fifo_never_overflows / a_fifo_within_depth mean
+    //                  nothing if the FIFO never takes a write at all
+    //   n_frame_ends   a_rx_recovers_in_budget triggers once per frame end;
+    //                  zero ends means it never fired
+    //   n_hunt_cycles  a_crc_reseeded is checked on hunting cycles; zero means
+    //                  the accumulator's re-seed was never once observed
+    //
+    // Counted in a plain always block for the reason gem_axis_sva documents:
+    // XSim 2024.2 accepts cover-property action blocks and then does not run
+    // them. A vacuity report that is itself silently broken is worse than none.
+    int n_fifo_writes = 0;
+    int n_frame_ends  = 0;
+    int n_hunt_cycles = 0;
+    reg frame_active_prev = 1'b0;
+
+    always @(posedge rx_clk) begin
+        if (rx_rst_n) begin
+            if (fifo_wr_en) n_fifo_writes++;
+            if (!rx_frame_active && frame_active_prev) n_frame_ends++;
+            if (rx_state == 3'd0) n_hunt_cycles++;
+        end
+        frame_active_prev <= rx_rst_n && rx_frame_active;
+    end
+
+    final begin
+        if (n_frame_ends == 0 || n_hunt_cycles == 0) begin
+            $display("[gem_tb] SVA internal: %0d fifo writes, %0d frame ends, %0d hunt cycles -- recovery/reseed checks were vacuous",
+                     n_fifo_writes, n_frame_ends, n_hunt_cycles);
+        end else if (n_fifo_writes == 0) begin
+            $display("[gem_tb] SVA internal: %0d frame ends but 0 fifo writes -- the FIFO checks were vacuous",
+                     n_frame_ends);
+        end else begin
+            $display("[gem_tb] SVA internal: %0d fifo writes, %0d frame ends, %0d hunt cycles -- all properties exercised",
+                     n_fifo_writes, n_frame_ends, n_hunt_cycles);
+        end
+    end
+
 endmodule
 
 

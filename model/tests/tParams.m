@@ -101,6 +101,38 @@ classdef tParams < matlab.unittest.TestCase
             tc.verifyClass(p.SIM_SCALE, 'double');
         end
 
+        function duplicateDefineIsRefused(tc)
+            % The Verilog preprocessor resolves a duplicated `define
+            % last-one-wins; this parser must refuse rather than guess,
+            % because "which one did the author mean" is exactly the silent
+            % disagreement between model and RTL that gem.params exists to
+            % prevent. Same mutate-and-restore pattern as the cache test.
+            headerFile = fullfile(gem.repoRoot(), 'rtl', 'gem_mac_params.vh');
+            original = fileread(headerFile);
+            restore = onCleanup(@() writeText(headerFile, original));
+
+            writeText(headerFile, [original newline ...
+                '`define GEM_IFG_BYTES 12' newline]);
+
+            tc.verifyError(@() gem.params(), 'gem:paramsDuplicate');
+        end
+
+        function oversizedLiteralIsRefused(tc)
+            % The RTL truncates an oversized literal to its declared width
+            % without complaint -- 8'h1D5 is 8'hD5 to every Verilog tool --
+            % so a parser that kept all three nibbles would disagree with
+            % the hardware silently. The parser refuses instead; this pins
+            % that refusal down.
+            headerFile = fullfile(gem.repoRoot(), 'rtl', 'gem_mac_params.vh');
+            original = fileread(headerFile);
+            restore = onCleanup(@() writeText(headerFile, original));
+
+            writeText(headerFile, [original newline ...
+                '`define GEM_WIDTH_PROBE 8''h1D5' newline]);
+
+            tc.verifyError(@() gem.params(), 'gem:paramsWidth');
+        end
+
         function residueMatchesTheAlgorithm(tc)
             % The residue in the header is a claim about the CRC. Verify it
             % against the CRC itself rather than trusting the comment.

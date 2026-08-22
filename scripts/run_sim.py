@@ -112,6 +112,18 @@ SELFTESTS = [
     ("tb_axis_tx_driver", "tx_underrun", "axis_tx_driver_selftest"),
 ]
 
+# The DDR primitive self-test, and why it is not just another unit testbench:
+# every simulation above compiles rtl/ with GEM_BEHAVIORAL_IO, so the Xilinx
+# IDDR/ODDR branches -- the code synthesis actually builds -- were elaborated
+# by out-of-context synthesis and never executed by anything. tb_gem_ddr_io.sv
+# runs them for real, including the PHY's RX_CLK skew that decides which half
+# of each octet lands on IDDR's Q1 (the mapping V-17 got wrong). It therefore
+# needs its own compile pass WITHOUT the define, its own work library, and the
+# vendor's unisim libraries at elaboration.
+PRIM_WORK     = "prim"
+PRIM_SOURCES  = ["rtl/gem_iddr.v", "rtl/gem_oddr.v", "tb/tb_gem_ddr_io.sv"]
+PRIM_SNAPSHOT = "ddr_prim_selftest"
+
 # Per-module testbenches (Stage 4 step 4: "write its self-checking testbench",
 # before the module is integrated). None of them reads a vector file -- each
 # builds its own stimulus and checks a property the integrated regression
@@ -205,8 +217,62 @@ def vivado_bin(name: str) -> str:
     )
 
 
-def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess | None:
+    """Run a tool, returning None on timeout rather than blocking forever.
+
+    A hung xsim used to block `make check` indefinitely; now the invocation is
+    killed and the caller reports the run as failed with why. The ceiling is
+    generous -- seconds per run today -- and overridable with GEM_SIM_TIMEOUT
+    for whoever runs on a machine slow enough to need it.
+    """
+    timeout = float(os.environ.get("GEM_SIM_TIMEOUT", "900"))
+    try:
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"    TIMEOUT after {timeout:.0f}s: {' '.join(cmd[:2])} ...")
+        return None
+
+
+# Shared adjudication of simulator output. The PASS line a testbench prints is
+# evidence, not verdict: it is believed only when everything around it agrees.
+#   * the printed tally must say zero failures -- trusting "[gem_tb] PASS" alone
+#     would make the gate's correctness depend on gem_tb_pkg's printing discipline;
+#   * any "FAIL ..." line fails, even beside a PASS line (a testbench that
+#     reports both has a bug, and the safe reading of a contradiction is "bad");
+#   * any bound-assertion "Error:" line fails, PASS or not (see run_scenario).
+PASS_MARK = "[gem_tb] PASS "
+CHECKS_RE = re.compile(r"(\d+) checks, (\d+) failures")
+
+
+def adjudicate(output: str) -> tuple[bool, str]:
+    """Return (passed, one-line summary) for one simulator run."""
+    lines = output.splitlines()
+    sva = [l for l in lines if l.startswith("Error:")]
+    fails = [l for l in lines if l.startswith("FAIL ")]
+    checks = CHECKS_RE.search(output)
+
+    tally_bad = checks is not None and int(checks.group(2)) != 0
+
+    if not sva and not fails and not tally_bad and PASS_MARK in output:
+        if checks:
+            return True, f"{checks.group(1)} checks"
+        return True, "passed"
+
+    if sva and PASS_MARK in output and not fails and not tally_bad:
+        # Data comparison passed but an assertion fired. This gets its own
+        # message because it means the assertion layer earned its keep exactly
+        # where a data-only checker would have reported green.
+        return False, (f"data comparison passed but {len(sva)} assertion "
+                       f"failure(s) fired -- first: {sva[0][7:].strip()[:100]}")
+
+    if tally_bad:
+        return False, f"tally says {checks.group(2)} failure(s): {checks.group(0)}"
+    if fails:
+        return False, fails[0][:150]
+    if sva:
+        return False, f"{len(sva)} assertion failure(s) -- first: {sva[0][7:].strip()[:100]}"
+    return False, "no PASS line -- see the log"
 
 
 def scenarios_from_catalogue(include_random: bool) -> list[tuple[str, str]]:
@@ -215,15 +281,57 @@ def scenarios_from_catalogue(include_random: bool) -> list[tuple[str, str]]:
     Parsed rather than duplicated: the catalogue is the single source of truth
     for what the regression covers, and a second copy here would drift the
     first time a scenario is added.
-    """
-    text = (REPO / "model" / "+gem" / "scenarios.m").read_text(encoding="utf-8")
-    pattern = re.compile(r"add\('([\w]+)',\s*'(rx|tx)',\s*(true|false)")
 
-    out = []
-    for name, direction, frozen in pattern.findall(text):
-        if frozen == "true" or include_random:
-            out.append((name, direction))
-    return out
+    Parsed catalogues fail in one specific silent way: the regex stops
+    matching and the regression shrinks -- possibly to nothing -- while every
+    layer around it stays green. So three refusals guard it:
+
+      * catalogue file missing,
+      * catalogue present but parsing to zero entries (formatting change),
+      * asymmetry between the parsed frozen set and the directories of
+        committed vectors, which catches the partial case -- one add() line
+        renamed or reformatted leaves its vectors behind with no entry to
+        claim them.
+    """
+    catalogue = REPO / "model" / "+gem" / "scenarios.m"
+    if not catalogue.is_file():
+        sys.exit(f"error: scenario catalogue not found: {catalogue}")
+
+    text = catalogue.read_text(encoding="utf-8")
+    pattern = re.compile(r"add\('([\w]+)',\s*'(rx|tx)',\s*(true|false)")
+    found = pattern.findall(text)
+
+    if not found:
+        sys.exit(
+            f"error: {catalogue} parsed to zero entries.\n"
+            "  The file exists, so this is a parse failure (its add(...) lines\n"
+            "  changed shape), not an empty catalogue. A regression that ran no\n"
+            "  golden-vector scenario must not be able to report green.")
+
+    vecroot = REPO / "model" / "vectors"
+    on_disk = {d.name for d in vecroot.iterdir()
+               if d.is_dir() and (d / "manifest.json").is_file()} \
+        if vecroot.is_dir() else set()
+    parsed_frozen = {n for n, _, frozen in found if frozen == "true"}
+    parsed_random = {n for n, _, frozen in found if frozen != "true"}
+
+    missing_vectors = sorted(parsed_frozen - on_disk)
+    if missing_vectors:
+        sys.exit("error: frozen scenario(s) with no committed vectors: "
+                 + ", ".join(missing_vectors))
+
+    unaccounted = sorted(on_disk - parsed_frozen - parsed_random)
+    if unaccounted:
+        sys.exit(
+            "error: committed vector director(ies) that no catalogue entry "
+            "claims: " + ", ".join(unaccounted)
+            + "\n  Either scenarios.m changed shape and the parser missed an"
+            "\n  entry, or vectors were committed without a catalogue row."
+            "\n  Either way the regression would quietly shrink. Refusing to"
+            "\n  guess which entries were lost.")
+
+    return [(name, direction) for name, direction, frozen in found
+            if frozen == "true" or include_random]
 
 
 def compile_sources(xvlog: str) -> bool:
@@ -234,6 +342,67 @@ def compile_sources(xvlog: str) -> bool:
     cmd += [str(REPO / s) for s in RTL_SOURCES + TB_SOURCES]
 
     result = run(cmd, SIM)
+    if result is None:
+        return False
+    errors = [l for l in result.stdout.splitlines() if "ERROR" in l]
+    if errors or result.returncode != 0:
+        print("\n".join(errors) or result.stdout[-4000:])
+        return False
+    print("    ok")
+    return True
+
+
+def compile_primitive_branch(xvlog: str) -> bool:
+    """Compile the Xilinx IDDR/ODDR branches into their own work library.
+
+    No GEM_BEHAVIORAL_IO here -- that is the entire point: every other
+    compilation in this repository defines it, so the primitive code path
+    synthesis actually builds is never the one simulation executes. The
+    vendor's glbl.v is compiled alongside so the primitives' global signals
+    resolve, and the install's xsim.ini is copied beside the run so xelab can
+    find unisims_ver.
+    """
+    viv_root = Path(xvlog).resolve().parents[1]
+
+    ini_src = viv_root / "data" / "xsim" / "xsim.ini"
+    ini_dst = SIM / "xsim.ini"
+    if not ini_dst.exists():
+        if not ini_src.is_file():
+            print(f"error: {ini_src} not found; cannot set up unisim libraries.")
+            return False
+        shutil.copyfile(ini_src, ini_dst)
+
+    glbl = viv_root / "data" / "verilog" / "src" / "glbl.v"
+    files = [str(REPO / s) for s in PRIM_SOURCES]
+    if glbl.is_file():
+        files.append(str(glbl))
+    else:
+        print(f"note: {glbl} not found -- elaborating without glbl.")
+
+    print("==> Compiling DDR primitive branch (no GEM_BEHAVIORAL_IO)")
+    cmd = [xvlog, "-sv", "-work", PRIM_WORK] + files
+    result = run(cmd, SIM)
+    if result is None:
+        return False
+    errors = [l for l in result.stdout.splitlines() if "ERROR" in l]
+    if errors or result.returncode != 0:
+        print("\n".join(errors) or result.stdout[-4000:])
+        return False
+    print("    ok")
+    return True
+
+
+def elaborate_primitives(xelab: str) -> bool:
+    print(f"==> Elaborating {PRIM_SNAPSHOT} (unisims_ver)")
+    # -L unisims_ver resolves the IDDR/ODDR definitions from the vendor's
+    # precompiled simulation libraries (mapped by the xsim.ini copied above).
+    cmd = [xelab, "-debug", "typical", "-relax",
+           f"{PRIM_WORK}.tb_gem_ddr_io", f"{PRIM_WORK}.glbl",
+           "-L", "unisims_ver",
+           "-s", PRIM_SNAPSHOT]
+    result = run(cmd, SIM)
+    if result is None:
+        return False
     errors = [l for l in result.stdout.splitlines() if "ERROR" in l]
     if errors or result.returncode != 0:
         print("\n".join(errors) or result.stdout[-4000:])
@@ -275,55 +444,30 @@ def run_scenario(xsim: str, snapshot: str, name: str,
 
     tag = label or name
     result = run([xsim, snapshot, "-R", "-log", f"{tag}.log"], SIM)
+    if result is None:
+        (SIM / f"{tag}.out").write_text(
+            f"[run_sim] killed: xsim exceeded the time limit on {tag}\n",
+            encoding="utf-8")
+        return False, "timed out -- see the .out file"
     output = result.stdout
 
     (SIM / f"{tag}.out").write_text(output, encoding="utf-8")
 
-    # Bound SVA failures do NOT route through gem_tb_pkg's fail_count -- an
-    # assert's $error goes straight to the simulator log. So a scenario whose
-    # data comparison passed while an assertion fired would print
-    # "[gem_tb] PASS" and, without this, be reported as passing. That would
-    # make the whole assertion layer decorative exactly when it starts
-    # mattering: today every scenario fails anyway, so the hole is invisible,
-    # and it would have debuted in Stage 4 on the first scenario that went
-    # green.
-    sva = [l for l in output.splitlines() if l.startswith("Error:")]
-
-    if "[gem_tb] PASS " in output and not sva:
-        checks = re.search(r"(\d+) checks, (\d+) failures", output)
-        return True, f"{checks.group(1)} checks" if checks else "passed"
-
-    if sva and "[gem_tb] PASS " in output:
-        return False, (f"data comparison passed but {len(sva)} assertion failure(s) fired -- "
-                       f"first: {sva[0][7:].strip()[:100]}")
-
-    fails = [l for l in output.splitlines() if l.startswith("FAIL ")]
-    if fails:
-        summary = fails[0][:150]
-    elif sva:
-        summary = f"{len(sva)} assertion failure(s) -- first: {sva[0][7:].strip()[:100]}"
-    else:
-        summary = "no PASS line -- see the log"
-    return False, summary
+    return adjudicate(output)
 
 
 def run_unit(xsim: str, tb: str) -> tuple[bool, str]:
     """Run a per-module testbench. No vectors, so no run.cfg to hand over."""
     result = run([xsim, tb, "-R", "-log", f"{tb}.log"], SIM)
+    if result is None:
+        (SIM / f"{tb}.out").write_text(
+            f"[run_sim] killed: xsim exceeded the time limit on {tb}\n",
+            encoding="utf-8")
+        return False, "timed out -- see the .out file"
     output = result.stdout
     (SIM / f"{tb}.out").write_text(output, encoding="utf-8")
 
-    sva = [l for l in output.splitlines() if l.startswith("Error:")]
-    if "[gem_tb] PASS " in output and not sva:
-        checks = re.search(r"(\d+) checks, (\d+) failures", output)
-        return True, f"{checks.group(1)} checks" if checks else "passed"
-
-    fails = [l for l in output.splitlines() if l.startswith("FAIL ")]
-    if fails:
-        return False, fails[0][:150]
-    if sva:
-        return False, f"{len(sva)} assertion failure(s) -- first: {sva[0][7:].strip()[:100]}"
-    return False, "no PASS line -- see the log"
+    return adjudicate(output)
 
 
 def main() -> int:
@@ -354,7 +498,8 @@ def main() -> int:
         todo = [s for s in todo if TB_FOR_DIRECTION.get(s[1]) == args.tb]
 
     # The BFM self-test and the loopback are extra runs layered on top of the
-    # scenario list, not scenarios themselves.
+    # scenario list, not scenarios themselves. The DDR primitive self-test
+    # belongs to the same full-run layer.
     run_units = not args.scenario and not args.tb
     run_bfm = not args.scenario and not args.tb
     run_loopback = not args.scenario and (not args.tb or args.tb == LOOPBACK_TB)
@@ -372,6 +517,14 @@ def main() -> int:
             needed.add(LOOPBACK_TB)
         for tb in sorted(needed):
             if not elaborate(xelab, tb, tb):
+                return 1
+        if run_units:
+            # The primitive branch compiles into its own library from its own
+            # pass (no GEM_BEHAVIORAL_IO), so it is built after the main flow,
+            # not instead of it.
+            if not compile_primitive_branch(xvlog):
+                return 1
+            if not elaborate_primitives(xelab):
                 return 1
 
     results = []
@@ -395,6 +548,13 @@ def main() -> int:
             passed, detail = run_scenario(xsim, tb, vectors, label=label)
             results.append((label, passed))
             print(f"  {'PASS' if passed else 'FAIL'}  {label:<24} {detail}")
+
+        # The primitive branch runs beside them: like the harness self-tests,
+        # it covers something every other run structurally skips.
+        print("\n==> DDR primitive branch\n")
+        passed, detail = run_unit(xsim, PRIM_SNAPSHOT)
+        results.append((PRIM_SNAPSHOT, passed))
+        print(f"  {'PASS' if passed else 'FAIL'}  {PRIM_SNAPSHOT:<24} {detail}")
 
     print(f"\n==> Running {len(todo)} scenario(s)\n")
     for name, direction in todo:

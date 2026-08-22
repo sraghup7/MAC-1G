@@ -29,6 +29,9 @@
 //   led[1]  link up              "did the PHY negotiate?"         (step 3)
 //   led[2]  heartbeat, ~1.9 Hz   "is anything running at all?"    (step 1)
 //   led[3]  sticky RX error      "has any bad frame been seen?"   (step 7)
+//                              -- includes an RX FIFO drop, the one receive
+//                              failure B.3a says cannot happen and so has no
+//                              counter of its own
 //
 // They are active low: the manual is explicit that a user LED lights when its
 // pin is driven low, so the assignment at the bottom inverts once, in one place.
@@ -124,6 +127,7 @@ module gem_top #(
     wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_ok, stat_tx_rejected, stat_tx_underrun;
     wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_ok, stat_rx_badfcs, stat_rx_runt;
     wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize, stat_rx_rxer;
+    wire         rx_fifo_drop;
     wire [31:0]  phy_id;
     wire         phy_id_valid, link_up;
     wire [1:0]   link_speed;
@@ -184,6 +188,7 @@ module gem_top #(
         .stat_rx_runt     (stat_rx_runt),
         .stat_rx_oversize (stat_rx_oversize),
         .stat_rx_rxer     (stat_rx_rxer),
+        .rx_fifo_drop     (rx_fifo_drop),
         .stat_clear       (stat_clear),
         .phy_id           (phy_id),
         .phy_id_valid     (phy_id_valid),
@@ -292,6 +297,24 @@ module gem_top #(
     // Sticky, because an error counted once at three in the morning is the
     // thing a soak needs to have noticed. Cleared with the counters it
     // reflects, by the same key.
+    //
+    // The FIFO-drop pulse joins it through a toggle synchroniser, same as the
+    // counter events inside gem_mac cross: the pulse lives in rx_clk and this
+    // latch in tx_clk. A dropped beat is not one of R17's counted error
+    // classes -- B.3a derives that it cannot happen -- so its only witness is
+    // this LED. If it ever lights, B.3a's premise (no-stall user logic, R18)
+    // was wrong somewhere, which is precisely what a soak exists to learn.
+    wire rx_fifo_drop_tx;
+
+    gem_pulse_sync u_ev_fifo_drop (
+        .src_clk   (rgmii_rx_clk),
+        .src_rst_n (rx_rst_n),
+        .src_pulse (rx_fifo_drop),
+        .dst_clk   (tx_clk),
+        .dst_rst_n (tx_rst_n),
+        .dst_pulse (rx_fifo_drop_tx)
+    );
+
     reg err_seen;
 
     always @(posedge tx_clk or negedge tx_rst_n) begin
@@ -300,7 +323,8 @@ module gem_top #(
         end else if (stat_clear) begin
             err_seen <= 1'b0;
         end else if ((|stat_rx_badfcs) || (|stat_rx_runt) ||
-                     (|stat_rx_oversize) || (|stat_rx_rxer)) begin
+                     (|stat_rx_oversize) || (|stat_rx_rxer) ||
+                     rx_fifo_drop_tx) begin
             err_seen <= 1'b1;
         end
     end

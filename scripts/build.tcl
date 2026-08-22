@@ -94,6 +94,10 @@ write_checkpoint -force "$BUILD_DIR/post_synth.dcp"
 # CRITICAL WARNINGs and exited 0, because constrs/ described gem_top while
 # this script still built skeleton_top. That is the defect this gate was
 # written against; it did not need planting.
+#
+# This count is taken after synthesis only. The bitstream stage re-queries it
+# (gate 0b), because implementation can emit criticals of its own and this
+# query never sees them.
 if {[catch {set crit [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
     puts "FATAL: cannot query critical-warning count: $err"
     puts "Build refused: gate 0 could not run, and a gate that cannot run must"
@@ -321,6 +325,26 @@ if {$TARGET eq "impl"} {
 }
 
 # ---- 4. Bitstream -------------------------------------------------------------
+
+# Gate 0b: zero CRITICAL WARNINGs at the end of the run. Gate 0 counts them
+# after synthesis only, and opt_design / place_design / route_design can emit
+# their own -- an unconstrained set_property, an unroutable placement rule --
+# which landed after the count was taken and never refused anything. The
+# counter is cumulative for this session, so by here it covers read, synthesis
+# and implementation together; the same refusal as gate 0 applies.
+if {[catch {set crit_impl [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
+    puts "FATAL: cannot query critical-warning count after implementation: $err"
+    puts "Build refused: gate 0b could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+if {$crit_impl > 0} {
+    puts "FATAL: $crit_impl CRITICAL WARNING(s) across read, synthesis and"
+    puts "implementation. Search vivado.log for 'CRITICAL WARNING'."
+    puts "Build refused: the build is not clean."
+    exit 1
+}
+puts "==> Critical-warning check (post-implementation): PASS (0 critical warnings)"
 
 puts "==> Writing bitstream"
 write_bitstream -force "$BUILD_DIR/${TOP}.bit"
