@@ -136,11 +136,66 @@ puts "      BRAMs  $n_bram"
 # because a block that misses 125 MHz before placement is not going to be
 # rescued by placement - and finding that now costs minutes instead of a
 # restructure after everything is built on top of it.
-create_clock -name tx_clk  -period 8.000 [get_ports tx_clk]
-create_clock -name rx_clk  -period 8.000 [get_ports rgmii_rx_clk]
-create_clock -name gtx_clk -period 8.000 [get_ports gtx_clk_shifted]
-set_clock_groups -asynchronous \
-    -group [get_clocks tx_clk] -group [get_clocks rx_clk]
+#
+# Clocks are created FROM THE PORTS THE MODULE ACTUALLY HAS, not from gem_mac's
+# port list. This script's whole job is "one module alone" (Stage 4 step 6),
+# and an earlier revision hardcoded tx_clk / rgmii_rx_clk / gtx_clk_shifted
+# here -- names that exist only on gem_mac -- so the advertised
+#   make oocsynth M=gem_crc32
+# created no clock at all, found no timing paths to analyse, and refused.
+# Every module except the one this flow exists to measure was unreachable.
+#
+# The mapping below covers the repository's clock-port vocabulary; anything
+# with none of these ports gets refused at the existing no-paths check rather
+# than silently analysed against nothing. wr_clk/rd_clk and src_clk/dst_clk
+# are independent domains in their modules and are grouped asynchronous to
+# each other; gtx_clk_shifted stays ungrouped from rx exactly as the gem_mac
+# run has always treated it (it crosses no internal path).
+proc gem_create_clock_if_port {portname period} {
+    if {[llength [get_ports -quiet $portname]] > 0} {
+        create_clock -name $portname -period $period [get_ports $portname]
+        return 1
+    }
+    return 0
+}
+
+set n_clocks 0
+set clocks_created {}
+
+# The board oscillator is 50 MHz, not 125.
+foreach {p period} [list clk50 20.000 \
+                         tx_clk 8.000  rgmii_rx_clk 8.000  gtx_clk_shifted 8.000 \
+                         rx_clk 8.000  wr_clk 8.000  rd_clk 8.000 \
+                         src_clk 8.000 dst_clk 8.000  clk 8.000] {
+    if {[llength [get_ports -quiet $p]] > 0} {
+        create_clock -name $p -period $period [get_ports $p]
+        lappend clocks_created $p
+        incr n_clocks
+    }
+}
+
+# Domain grouping, only meaningful once two domains exist. tx_clk and
+# gtx_clk_shifted are two outputs of one MMCM and share a group; every other
+# clock here is its own asynchronous domain.
+if {$n_clocks > 1} {
+    set related {}
+    foreach p {tx_clk gtx_clk_shifted} {
+        if {[lsearch -exact $clocks_created $p] >= 0} { lappend related $p }
+    }
+    set others {}
+    foreach p $clocks_created {
+        if {[lsearch -exact $related $p] < 0} { lappend others $p }
+    }
+
+    set cmd [list set_clock_groups -asynchronous]
+    if {[llength $related] > 0} {
+        set grp {}
+        foreach p $related { lappend grp [get_clocks $p] }
+        lappend cmd -group [concat {*}$grp]
+    }
+    foreach p $others           { lappend cmd -group [get_clocks $p] }
+    if {[llength $cmd] > 3} { {*}$cmd }
+}
 
 set timing_rpt [report_timing_summary -return_string -delay_type max]
 set fh [open "$BUILD_DIR/ooc_${TOP}_timing.rpt" w]
