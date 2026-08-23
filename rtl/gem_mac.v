@@ -47,13 +47,21 @@
 //     u_stats           R17's counters
 //     u_mdio            R16's management interface
 //
-// CLOCKING (B.1b). tx_clk is the 125 MHz MMCM output; rx_clk is the PHY's
-// recovered clock arriving on rgmii_rx_clk and is asynchronous to it. The two
+// CLOCKING (B.1b). tx_clk is the 125 MHz MMCM output; rx_clk is the receive
+// domain's clock -- deskewed from the raw pin by gem_clk_rst's second MMCM,
+// which is why this port is named rx_clk and no longer rgmii_rx_clk: it has
+// not carried the pin since Stage 6 part 2. It is asynchronous to tx_clk. The
 // resets are per-domain and are expected to arrive already synchronised to
 // their own clock -- asynchronous assert, synchronous deassert -- which is why
 // this module uses them directly rather than re-synchronising: the clock/reset
-// module that owns the MMCM is where B.1b puts that job, and doing it twice
+// module that owns both MMCMs is where B.1b puts that job, and doing it twice
 // would just add a cycle.
+//
+// rx_path_rst_n (Stage 6 part 2) covers the destination halves of every
+// crossing OUT of the RX domain, so that an RX-only reset cannot leave one
+// half of a crossing stale while the other re-zeroes. See
+// Documents/RX Clock Deskew Design.md Step 3b for what happens without it:
+// up to 127 octets of fabricated frame data per link drop.
 //
 // gtx_clk_shifted is the second MMCM output, phase shifted about 1.6 ns from
 // tx_clk (B.1b), and it exists as a port because the shift cannot be made
@@ -74,6 +82,9 @@ module gem_mac (
     input  wire         tx_clk,             // 125 MHz from the MMCM
     input  wire         tx_rst_n,           // async assert, sync deassert
     input  wire         rx_rst_n,           // ditto, in the rx_clk domain
+    // tx_clk-domain reset for the destination half of every RX-domain
+    // crossing. Asserts with rx_rst_n; releases after it.
+    input  wire         rx_path_rst_n,
 
     // Second MMCM output, phase-shifted ~1.6 ns from tx_clk (B.1b/R14). Drives
     // only the GTX_CLK forwarding cell.
@@ -85,7 +96,9 @@ module gem_mac (
     output wire         rgmii_gtx_clk,
     input  wire [3:0]   rgmii_rxd,
     input  wire         rgmii_rx_ctl,       // rise = RX_DV, fall = RX_DV ^ RX_ER
-    input  wire         rgmii_rx_clk,       // recovered by the PHY's CDR
+    input  wire         rx_clk,             // the DESKEWED receive clock from
+                                            // gem_clk_rst -- no longer the raw
+                                            // pin, see the CLOCKING paragraph
 
     // ---- PHY management (R16) ---------------------------------------------
     output wire         mdc,                // <= 2.5 MHz
@@ -223,7 +236,7 @@ module gem_mac (
     wire       rx_gm_dv, rx_gm_er;
 
     gem_rgmii_rx u_rgmii_rx (
-        .rx_clk       (rgmii_rx_clk),
+        .rx_clk       (rx_clk),
         .rgmii_rxd    (rgmii_rxd),
         .rgmii_rx_ctl (rgmii_rx_ctl),
         .gm_byte      (rx_gm_byte),
@@ -240,7 +253,7 @@ module gem_mac (
     wire       ev_rx_oversize_r, ev_rx_rxer_r;
 
     gem_rx_deframe u_rx_ctrl (
-        .clk            (rgmii_rx_clk),
+        .clk            (rx_clk),
         .rst_n          (rx_rst_n),
         .gm_byte        (rx_gm_byte),
         .gm_dv          (rx_gm_dv),
@@ -259,7 +272,7 @@ module gem_mac (
     );
 
     gem_crc32 u_rx_crc (
-        .clk        (rgmii_rx_clk),
+        .clk        (rx_clk),
         .rst_n      (rx_rst_n),
         .init       (rx_crc_init),
         .en         (rx_crc_en),
@@ -271,22 +284,34 @@ module gem_mac (
     gem_rx_fifo #(
         .WIDTH (10)
     ) u_rx_fifo (
-        .wr_clk   (rgmii_rx_clk),
+        .wr_clk   (rx_clk),
         .wr_rst_n (rx_rst_n),
         .wr_en    (fifo_wr),
         .wr_data  (fifo_din),
         .full     (fifo_full),
         .drop     (fifo_drop),
         .rd_clk   (tx_clk),
-        .rd_rst_n (tx_rst_n),
+        // rx_path_rst_n, not tx_rst_n: the read half must never outlive the
+        // write half's pointers. On an RX-only reset the write side zeroes
+        // while mem -- which has no reset, so it infers as RAM -- keeps the
+        // last frames; a read side still running on stale Gray samples would
+        // see empty deassert and drain up to 127 octets of that debris onto
+        // the AXI-S port as if it were a received frame. Design doc Step 3b.
+        .rd_rst_n (rx_path_rst_n),
         .rd_en    (fifo_rd),
         .rd_data  (fifo_dout),
         .empty    (fifo_empty)
     );
 
+    // Takes rx_path_rst_n rather than tx_rst_n. Leaving it out of the RX
+    // reset was traced worse than resetting it: egress would stall mid-frame
+    // on fifo_empty and then resume the old frame with the new frame's
+    // octets, emitting a well-formed frame spliced from two different ones.
+    // Resetting makes the failure loud instead: tvalid drops mid-frame, and
+    // B.4a now says that is what a link event looks like on this port.
     gem_rx_egress u_rx_egress (
         .clk        (tx_clk),
-        .rst_n      (tx_rst_n),
+        .rst_n      (rx_path_rst_n),
         .fifo_empty (fifo_empty),
         .fifo_dout  (fifo_dout),
         .fifo_rd    (fifo_rd),
@@ -303,26 +328,37 @@ module gem_mac (
     wire ev_rx_ok_s, ev_rx_badfcs_s, ev_rx_runt_s;
     wire ev_rx_oversize_s, ev_rx_rxer_s;
 
+    // Destination halves take rx_path_rst_n so a link drop cannot manufacture
+    // phantom counter events: if the source toggle resets while the
+    // destination chain keeps its old value, the edge detector fires once and
+    // five counters lie about a link that delivered nothing.
     gem_pulse_sync u_ev_rx_ok (
-        .src_clk (rgmii_rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_ok_r),
-        .dst_clk (tx_clk),       .dst_rst_n (tx_rst_n), .dst_pulse (ev_rx_ok_s));
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_ok_r),
+        .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_ok_s));
 
     gem_pulse_sync u_ev_rx_badfcs (
-        .src_clk (rgmii_rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_badfcs_r),
-        .dst_clk (tx_clk),       .dst_rst_n (tx_rst_n), .dst_pulse (ev_rx_badfcs_s));
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_badfcs_r),
+        .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_badfcs_s));
 
     gem_pulse_sync u_ev_rx_runt (
-        .src_clk (rgmii_rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_runt_r),
-        .dst_clk (tx_clk),       .dst_rst_n (tx_rst_n), .dst_pulse (ev_rx_runt_s));
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_runt_r),
+        .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_runt_s));
 
     gem_pulse_sync u_ev_rx_oversize (
-        .src_clk (rgmii_rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_oversize_r),
-        .dst_clk (tx_clk),       .dst_rst_n (tx_rst_n), .dst_pulse (ev_rx_oversize_s));
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_oversize_r),
+        .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_oversize_s));
 
     gem_pulse_sync u_ev_rx_rxer (
-        .src_clk (rgmii_rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_rxer_r),
-        .dst_clk (tx_clk),       .dst_rst_n (tx_rst_n), .dst_pulse (ev_rx_rxer_s));
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_rxer_r),
+        .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_rxer_s));
 
+    // Deliberately tx_rst_n, NOT rx_path_rst_n. The counters must survive a
+    // link flap -- a statistics block that zeroed itself whenever the cable
+    // moved would destroy the evidence at exactly the moment it is wanted.
+    // This is safe only because the pulse synchronisers above reset both
+    // halves together: no phantom event reaches these counters across a flap,
+    // so they stay truthful without being reset. The two changes are one
+    // change; "fixing" either alone breaks both.
     gem_stats u_stats (
         .clk              (tx_clk),
         .rst_n            (tx_rst_n),

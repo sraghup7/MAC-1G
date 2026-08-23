@@ -60,6 +60,8 @@ RTL_SOURCES = [
     # here in its own right until the Stage 5 top level instantiates both.
     "rtl/gem_reset_sync.v",
     "rtl/gem_mmcm.v",
+    # Stage 6 part 2: the RX deskew MMCM, instantiated by gem_clk_rst.
+    "rtl/gem_rx_mmcm.v",
     "rtl/gem_clk_rst.v",
     # R17's readout (V-20, spec B.7 item 5).
     "rtl/gem_uart_tx.v",

@@ -41,6 +41,18 @@ module tb_gem_mac_tx;
         rx_rst_n = 1'b1;
     end
 
+    // gem_mac's destination-half reset for everything crossing out of the RX
+    // domain. This bench runs one clock, so the source is the same stimulus;
+    // the synchroniser is the real module, so the release order matches the
+    // board exactly: two tx_clk edges after rx_rst_n.
+    logic rx_path_rst_n;
+
+    gem_reset_sync u_tb_rx_path_rst (
+        .clk    (tx_clk),
+        .arst_n (tx_rst_n & rx_rst_n),
+        .rst_n  (rx_path_rst_n)
+    );
+
     //------------------------------------------------------------------
     // DUT
     //------------------------------------------------------------------
@@ -59,13 +71,14 @@ module tb_gem_mac_tx;
         .tx_clk           (tx_clk),
         .tx_rst_n         (tx_rst_n),
         .rx_rst_n         (rx_rst_n),
+        .rx_path_rst_n    (rx_path_rst_n),
 
         .rgmii_txd        (rgmii_txd),
         .rgmii_tx_ctl     (rgmii_tx_ctl),
         .rgmii_gtx_clk    (),
         .rgmii_rxd        (4'b0),
         .rgmii_rx_ctl     (1'b0),
-        .rgmii_rx_clk     (tx_clk),
+        .rx_clk           (tx_clk),
 
         .mdc              (),
         .mdio_i           (1'b1),

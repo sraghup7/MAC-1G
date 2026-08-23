@@ -57,6 +57,17 @@ module tb_gem_mac_rx;
         rx_rst_n = 1'b1;
     end
 
+    // gem_mac's destination-half reset for everything crossing out of the RX
+    // domain. Same module the board uses, so the release order is real: two
+    // tx_clk edges after rx_rst_n (Documents/RX Clock Deskew Design.md 3b).
+    logic rx_path_rst_n;
+
+    gem_reset_sync u_tb_rx_path_rst (
+        .clk    (tx_clk),
+        .arst_n (tx_rst_n & rx_rst_n),
+        .rst_n  (rx_path_rst_n)
+    );
+
     //------------------------------------------------------------------
     // DUT
     //------------------------------------------------------------------
@@ -76,13 +87,14 @@ module tb_gem_mac_rx;
         .tx_clk           (tx_clk),
         .tx_rst_n         (tx_rst_n),
         .rx_rst_n         (rx_rst_n),
+        .rx_path_rst_n    (rx_path_rst_n),
 
         .rgmii_txd        (),
         .rgmii_tx_ctl     (),
         .rgmii_gtx_clk    (),
         .rgmii_rxd        (rgmii_rxd),
         .rgmii_rx_ctl     (rgmii_rx_ctl),
-        .rgmii_rx_clk     (rx_clk),
+        .rx_clk           (rx_clk),
 
         .mdc              (),
         .mdio_i           (1'b1),

@@ -35,10 +35,26 @@ set_input_delay -clock rgmii_rx_clk_virt -min -1.800 $rx_data_ports -add_delay
 set_input_delay -clock rgmii_rx_clk_virt -max 0.200 -clock_fall $rx_data_ports -add_delay
 set_input_delay -clock rgmii_rx_clk_virt -min -1.800 -clock_fall $rx_data_ports -add_delay
 
-set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -fall_to [get_clocks rgmii_rx_clk] -setup
-set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -rise_to [get_clocks rgmii_rx_clk] -setup
-set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -rise_to [get_clocks rgmii_rx_clk] -hold
-set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -fall_to [get_clocks rgmii_rx_clk] -hold
+# The capture clock is the DESKEWED MMCM output (u_clk_rst/u_rx_mmcm's
+# CLKOUT0 through u_bufg_rx), not the raw pin clock. Addressing it by object,
+# because a hierarchical path that goes stale would make these exceptions
+# silently apply to nothing -- the "the tool reports success and is checking
+# nothing" class this whole chain started from.
+#
+# XDC has no control flow, so the ASSERTION that the lookup matched exactly
+# one clock cannot be written here -- an `if` in this file is itself a
+# CRITICAL WARNING and gate 0 refuses it (measured). The assertion lives in
+# scripts/build.tcl instead, which re-runs this exact lookup after synthesis
+# and refuses unless it resolved to one clock. Until that check ran and
+# passed, these four lines mean nothing either way -- which is why the check
+# is a gate and not a comment.
+set rx_cap_clk [get_clocks -quiet -of_objects \
+    [get_pins -quiet u_clk_rst/u_rx_mmcm/u_bufg_rx/O]]
+
+set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -fall_to $rx_cap_clk -setup
+set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -rise_to $rx_cap_clk -setup
+set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -rise_to $rx_cap_clk -hold
+set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -fall_to $rx_cap_clk -hold
 
 #############################################################################
 # TX: rgmii_txd[3:0], rgmii_tx_ctl, rgmii_gtx_clk, launched by

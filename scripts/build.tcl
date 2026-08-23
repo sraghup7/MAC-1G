@@ -114,6 +114,27 @@ if {$crit > 0} {
 }
 puts "==> Critical-warning check: PASS (0 critical warnings)"
 
+# Gate 1c: the RX capture clock must resolve, exactly once. constrs/
+# rgmii_timing.xdc false-paths its RX input-delay exceptions against the
+# deskewed MMCM's output clock, addressed by object -- and XDC has no control
+# flow, so the assertion the design document calls for (Documents/RX Clock
+# Deskew Design.md, constraints step 2) cannot live there. It lives here,
+# after synthesis when the netlist hierarchy exists: if the instance path
+# ever goes stale, the four set_false_path lines would silently apply to
+# nothing while every gate stayed green -- the exact failure class V-14 was.
+set rx_cap_clk [get_clocks -quiet -of_objects \
+    [get_pins -quiet u_clk_rst/u_rx_mmcm/u_bufg_rx/O]]
+if {[llength $rx_cap_clk] != 1} {
+    puts "FATAL: the RX capture-clock lookup resolved to [llength $rx_cap_clk]\
+clock(s), expected exactly 1."
+    puts "constrs/rgmii_timing.xdc's RX exceptions would silently apply to\
+nothing. Fix the path u_clk_rst/u_rx_mmcm/u_bufg_rx/O in both files or"
+    puts "rename the instances together."
+    puts "Build refused: the RGMII receive exceptions are not anchored."
+    exit 1
+}
+puts "==> RX capture-clock anchor check: PASS ([get_property NAME [lindex $rx_cap_clk 0]])"
+
 # Gate 1: zero inferred latches, no exceptions. (Stage 2: "fail on inferred
 # latches"; Stage 4 sidebar: "any inferred latch is a bug, no exceptions.")
 set latches [get_cells -hierarchical -filter {PRIMITIVE_SUBGROUP == "latch"}]

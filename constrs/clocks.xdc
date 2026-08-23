@@ -47,6 +47,15 @@ create_clock -name rgmii_rx_clk -period 8.000 -waveform {1.200 5.200} \
 # the tools will try to time paths between them, and the RX FIFO's Gray-coded
 # pointers -- which are correct precisely because they tolerate arriving at any
 # phase -- would be reported as failures that cannot be fixed.
+#
+# The RX group is taken WITH its generated clocks: since Stage 6 part 2 the RX
+# domain runs on the deskew MMCM's output, which is a new clock object derived
+# from rgmii_rx_clk and is NOT named by a bare [get_clocks rgmii_rx_clk]. A
+# bare name here would leave every clk50-tree <-> RX-domain path -- the FIFO's
+# Gray pointers, the five pulse synchronisers, all of them correct by
+# construction -- timed as if synchronous, failing on paths that cannot be
+# fixed by placement. -include_generated_clocks matches the form the clk50
+# group already uses.
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks clk50] \
-    -group [get_clocks rgmii_rx_clk]
+    -group [get_clocks -include_generated_clocks rgmii_rx_clk]

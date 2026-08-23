@@ -5,9 +5,11 @@
 //
 // FIVE BLOCKS AND NOTHING ELSE OF SUBSTANCE:
 //
-//   u_clk_rst    the MMCM, three reset synchronisers and the PHY's 10 ms reset
-//                hold (B.1b). Turns clk50 and a button into every clock and
-//                reset the rest of the design expects to be handed.
+//   u_clk_rst    the two MMCMs (crystal and RX deskew), five reset
+//                synchronisers, the RX MMCM's clk50 reset supervisor and the
+//                PHY's 10 ms reset hold (B.1b). Turns clk50 and a button into
+//                every clock and reset the rest of the design expects to be
+//                handed.
 //   u_mac        the MAC itself, unchanged and unaware of any of this.
 //   u_echo       B.5 step 6's echo mode: good frames come back to their sender
 //                with the addresses exchanged. Application logic, above the MAC.
@@ -25,7 +27,10 @@
 // THE LEDs, which are the only diagnostic before a serial cable is attached and
 // are therefore chosen for the questions asked in that order (B.5 steps 1-4):
 //
-//   led[0]  MMCM locked          "are the clocks alive?"          (step 2)
+//   led[0]  all clocks locked     "are the clocks alive?"          (step 2)
+//                               -- crystal MMCM AND the RX deskew MMCM; a
+//                               link with this LED dark is the deskew
+//                               design's new failure mode (Step 3f)
 //   led[1]  link up              "did the PHY negotiate?"         (step 3)
 //   led[2]  heartbeat, ~1.9 Hz   "is anything running at all?"    (step 1)
 //   led[3]  sticky RX error      "has any bad frame been seen?"   (step 7)
@@ -84,6 +89,7 @@ module gem_top #(
     // Clocks and resets
     //======================================================================
     wire tx_clk, gtx_clk_shifted, tx_rst_n, rx_rst_n, mmcm_locked;
+    wire rx_clk_deskew, rx_mmcm_locked, rx_path_rst_n;
 
     gem_clk_rst #(
         .PHY_RST_CYCLES (PHY_RST_CYCLES)
@@ -93,9 +99,12 @@ module gem_top #(
         .rx_clk          (rgmii_rx_clk),
         .tx_clk          (tx_clk),
         .gtx_clk_shifted (gtx_clk_shifted),
+        .rx_clk_deskew   (rx_clk_deskew),
         .tx_rst_n        (tx_rst_n),
         .rx_rst_n        (rx_rst_n),
+        .rx_path_rst_n   (rx_path_rst_n),
         .mmcm_locked     (mmcm_locked),
+        .rx_mmcm_locked  (rx_mmcm_locked),
         .phy_rst_n       (phy_rst_n)
     );
 
@@ -141,6 +150,7 @@ module gem_top #(
         .tx_clk           (tx_clk),
         .tx_rst_n         (tx_rst_n),
         .rx_rst_n         (rx_rst_n),
+        .rx_path_rst_n    (rx_path_rst_n),
         .gtx_clk_shifted  (gtx_clk_shifted),
 
         .rgmii_txd        (rgmii_txd),
@@ -148,7 +158,9 @@ module gem_top #(
         .rgmii_gtx_clk    (rgmii_gtx_clk),
         .rgmii_rxd        (rgmii_rxd),
         .rgmii_rx_ctl     (rgmii_rx_ctl),
-        .rgmii_rx_clk     (rgmii_rx_clk),
+        // The deskewed clock, not the raw pin: cancelling the clock network's
+        // insertion-delay spread is why the second MMCM exists at all.
+        .rx_clk           (rx_clk_deskew),
 
         .mdc              (mdc),
         .mdio_i           (mdio_i),
@@ -240,6 +252,9 @@ module gem_top #(
         .link_speed       (link_speed),
         .phy_id           (phy_id),
         .phy_id_valid     (phy_id_valid),
+        // The deskew MMCM's lock, on the record: the one field that says why
+        // a link exists while nothing is being received. Design doc Step 3f.
+        .rx_mmcm_locked   (rx_mmcm_locked),
         .uart_data        (uart_data),
         .uart_valid       (uart_valid),
         .uart_ready       (uart_ready)
@@ -299,19 +314,27 @@ module gem_top #(
     // reflects, by the same key.
     //
     // The FIFO-drop pulse joins it through a toggle synchroniser, same as the
-    // counter events inside gem_mac cross: the pulse lives in rx_clk and this
-    // latch in tx_clk. A dropped beat is not one of R17's counted error
-    // classes -- B.3a derives that it cannot happen -- so its only witness is
-    // this LED. If it ever lights, B.3a's premise (no-stall user logic, R18)
-    // was wrong somewhere, which is precisely what a soak exists to learn.
+    // counter events inside gem_mac cross: the pulse lives in the RX domain
+    // and this latch in tx_clk. A dropped beat is not one of R17's counted
+    // error classes -- B.3a derives that it cannot happen -- so its only
+    // witness is this LED. If it ever lights, B.3a's premise (no-stall user
+    // logic, R18) was wrong somewhere, which is precisely what a soak exists
+    // to learn.
+    //
+    // Both halves take the deskew design's resets (Step 3b): the source on
+    // rx_rst_n, the destination on rx_path_rst_n. This is a crossing out of
+    // the RX domain like any other -- the design document enumerated the six
+    // inside gem_mac and missed this seventh; leaving it on tx_rst_n would
+    // have manufactured one phantom FIFO-drop event per link flap and lit
+    // err_seen for nothing.
     wire rx_fifo_drop_tx;
 
     gem_pulse_sync u_ev_fifo_drop (
-        .src_clk   (rgmii_rx_clk),
+        .src_clk   (rx_clk_deskew),
         .src_rst_n (rx_rst_n),
         .src_pulse (rx_fifo_drop),
         .dst_clk   (tx_clk),
-        .dst_rst_n (tx_rst_n),
+        .dst_rst_n (rx_path_rst_n),
         .dst_pulse (rx_fifo_drop_tx)
     );
 
@@ -329,7 +352,13 @@ module gem_top #(
         end
     end
 
-    assign led = ~{err_seen, heartbeat_cnt[24], link_up, mmcm_locked};
+    // led[0] is "all clocks locked" (design doc Step 3f): the crystal MMCM
+    // locks within ~100 us of power-up and stays locked, so a dark clock LED
+    // on a board with link_up lit can only be the RX deskew MMCM -- the new
+    // failure mode, readable from the four LEDs this board has. The UART
+    // record's rxlock field distinguishes the two MMCMs for certainty.
+    assign led = ~{err_seen, heartbeat_cnt[24], link_up,
+                   mmcm_locked & rx_mmcm_locked};
 
     //======================================================================
     // Deliberately unread, gathered here rather than scattered (R22)

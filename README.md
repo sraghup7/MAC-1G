@@ -55,23 +55,27 @@ tree's own defect on the first run, 68 of them, from `constrs/` already
 describing the board while the build still targeted the blinker.
 
 **Known issue: `impl`/`bitstream` currently refuse, by design.** The RGMII I/O
-delay constraints (V-2) are now written and wired into the real build — with a
-corrected clock phase (`-waveform {1.200 5.200}`, the KSZ9031RNX's default RX
-skew) and input delays derived from it, the first constraints in this tree that
-make Vivado check the physically real DDR capture events — and what they check
-**fails**: WHS −3.031 ns on all five RX pins (setup passes at +2.0 ns each; the
-per-port table is in
-[`docs/reports/stage6-part2/task-4a-report.md`](docs/reports/stage6-part2/task-4a-report.md)).
-The deficit is physical, not a constraint artefact: the BUFG clock network's
-min/max insertion-delay spread to the IDDR (3.720 ns corner-to-corner) exceeds
-the 2.000 ns eye RGMII v2.0 guarantees, invariant under every phase or
-input-delay choice, and the textbook BUFIO/BUFR fix was built and measured
-falling short too ([`task-4b-report.md`](docs/reports/stage6-part2/task-4b-report.md)).
-The approved fix is an MMCM feedback-deskew clock for the receive path
-([`Documents/RX Clock Deskew Design.md`](Documents/RX%20Clock%20Deskew%20Design.md));
-until it lands, gate 3 (constraint coverage, now refusing rather than reporting)
-passes and gate 2 refuses — which is the honest state, recorded here rather than
-hidden behind a bitstream built from unconstrained pins.
+delay constraints (V-2) are written, corrected, and wired into the real build,
+and they check the physically real DDR capture events. The RX clock deskew
+they demanded is built -- a second MMCM deskewing the recovered receive clock,
+which collapsed the clock network's corner-to-corner spread from 3.720 ns to
+0.635 ns and fixed the hold violation completely (WHS +0.094 ns design-wide) --
+but **setup now fails on all five RX pins by ~2.1 ns**, and the deficit is
+structural: the capture interval sits ~2 ns early and is ~0.11 ns too wide for
+the RGMII eye no matter how it is shifted, a residue that proved identical
+across two different clock topologies and therefore lives in the compensation
+model rather than the routing. Full measurements and the open half-cycle
+question are in
+[`docs/reports/stage6-part2/task-4d-report.md`](docs/reports/stage6-part2/task-4d-report.md)
+and [`task-4d2-report.md`](docs/reports/stage6-part2/task-4d2-report.md);
+the reset architecture the deskew forced (`rx_path_rst_n`, the clk50
+supervisor, the B.1b exception) is in
+[`Documents/RX Clock Deskew Design.md`](Documents/RX%20Clock%20Deskew%20Design.md).
+Gate 3 (constraint coverage, refusing rather than reporting, anchored by gate
+1c on the derived RX clock) passes; gate 2 refuses -- which is the honest
+state, recorded here rather than hidden behind a bitstream built from
+mis-modelled pins. Simulation is fully green: `make check` runs 29 of 29
+scenarios against the new reset architecture.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a

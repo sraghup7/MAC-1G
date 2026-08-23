@@ -71,6 +71,11 @@ TOPS = [
     "rtl/gem_stat_report.v",
     "rtl/gem_uart_tx.v",
     "rtl/gem_echo.v",
+    # The RX deskew MMCM (Stage 6 part 2). Not under gem_mac -- it lives in
+    # gem_clk_rst, which is itself listed here -- and named on its own for the
+    # same reason the others are: a future top could drop it without anyone
+    # noticing it had stopped being linted.
+    "rtl/gem_rx_mmcm.v",
 ]
 
 # GEM_BEHAVIORAL_IO selects the plain-Verilog models of the DDR I/O cells. The

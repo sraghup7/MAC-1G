@@ -366,6 +366,11 @@ module tb_gem_top;
         drv_rst_n = 1'b1;
 
         wait (u_dut.mmcm_locked === 1'b1);
+        // The lock LED is now "all clocks locked" -- the RX deskew MMCM's
+        // lock arrives after its supervisor's first retry pulse clears and
+        // 128 input clocks count, so give it its own wait rather than hoping
+        // 20 clk50 cycles cover it.
+        wait (u_dut.rx_mmcm_locked === 1'b1);
         repeat (20) @(posedge clk50);
 
         note_check();
@@ -486,6 +491,9 @@ module tb_gem_top;
         //--------------------------------------------------------------
         rst_key_n = 1'b1;
         wait (u_dut.mmcm_locked === 1'b1);
+        // Same reasoning as section 1: both MMCMs must report lock before the
+        // "all clocks locked" LED is meaningful.
+        wait (u_dut.rx_mmcm_locked === 1'b1);
         wait (phy_rst_n === 1'b1);
         repeat (50) @(posedge clk50);
 

@@ -103,3 +103,31 @@ set_property PACKAGE_PIN  E21 [get_ports {led[1]}]
 set_property PACKAGE_PIN  D20 [get_ports {led[2]}]
 set_property PACKAGE_PIN  C20 [get_ports {led[3]}]
 set_property IOSTANDARD   LVCMOS33 [get_ports {led[*]}]
+
+#############################################################################
+# RX clock region confinement (Stage 6 part 2, BUFH deskew variant)
+#############################################################################
+#
+# A BUFH reaches only its own clock region (UG472 p.14), so every cell the
+# deskewed receive clock touches is confined to X0Y1 -- the region that
+# already holds the RX I/O bank, its IDDR cells, and the RX MMCM's CMT. See
+# Documents/RX Clock Deskew BUFH Variant.md Step 3 for why each instance is
+# listed. Whole hierarchies are constrained rather than individual flops:
+# splitting u_rx_fifo or a pulse synchroniser by domain at flop level would be
+# bookkeeping with no benefit at ~5% utilization.
+#
+# Mechanism note: CLOCK_REGION as a cell property exists only for global clock
+# buffers ("must be set on a global clock buffer", Vivado 12-4190 -- measured);
+# regular cells are confined through a pblock whose range is a clock region.
+create_pblock pblock_rx_domain
+resize_pblock pblock_rx_domain -add {CLOCKREGION_X0Y1}
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_rgmii_rx]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_rx_ctrl]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_rx_crc]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_rx_fifo]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_ok]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_badfcs]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_runt]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_oversize]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_rxer]
+add_cells_to_pblock pblock_rx_domain [get_cells u_ev_fifo_drop]

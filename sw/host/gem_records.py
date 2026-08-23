@@ -59,6 +59,10 @@ STATUS_FIELDS = (
     "speed",
     "phyid",
     "phyok",
+    # The RX deskew MMCM's lock (design doc Step 3f). Explains a link that is
+    # up while nothing is received: the MMCM on the recovered clock never
+    # locked.
+    "rxlock",
 )
 
 ALL_FIELDS = COUNTER_FIELDS + STATUS_FIELDS
@@ -99,6 +103,10 @@ class Record:
     @property
     def phy_id_valid(self) -> bool:
         return bool(self.values["phyok"])
+
+    @property
+    def rx_locked(self) -> bool:
+        return bool(self.values["rxlock"])
 
     @property
     def errors(self) -> int:

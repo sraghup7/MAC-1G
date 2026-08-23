@@ -13,7 +13,8 @@
 //
 //   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000000 rx_ok=000001f4 \
 //       rx_bad=00000002 rx_runt=00000000 rx_over=00000000 rx_rxer=00000000 \
-//       link=00000001 speed=00000002 phyid=00221622 phyok=00000001\n
+//       link=00000001 speed=00000002 phyid=00221622 phyok=00000001 \
+//       rxlock=00000001\n
 //
 // (one line, no wrapping; broken here only to fit in a comment.)
 //
@@ -80,14 +81,21 @@ module gem_stat_report #(
     input  wire [31:0] phy_id,
     input  wire        phy_id_valid,
 
+    // The RX deskew MMCM's lock (design doc Step 3f). On the record because
+    // it is the one field that explains a link that is up while nothing is
+    // received: the MMCM on the recovered clock never locked. One wire, and
+    // the four-hour soak can tell "cable problem" from "clocking problem"
+    // from a log file.
+    input  wire        rx_mmcm_locked,
+
     // To gem_uart_tx.
     output wire [7:0]  uart_data,
     output wire        uart_valid,
     input  wire        uart_ready
 );
 
-    localparam integer N_FIELDS   = 12;
-    localparam [3:0]   LAST_FIELD = 4'd11;
+    localparam integer N_FIELDS   = 13;
+    localparam [3:0]   LAST_FIELD = 4'd12;
 
     localparam [2:0] ST_IDLE = 3'd0,
                      ST_TAG  = 3'd1,
@@ -145,6 +153,7 @@ module gem_stat_report #(
             snap[9]  <= {30'd0, link_speed};
             snap[10] <= phy_id;
             snap[11] <= {31'd0, phy_id_valid};
+            snap[12] <= {31'd0, rx_mmcm_locked};
         end
     end
 
@@ -171,6 +180,7 @@ module gem_stat_report #(
             4'd9:    name_of = {16'd0, "speed"};
             4'd10:   name_of = {16'd0, "phyid"};
             4'd11:   name_of = {16'd0, "phyok"};
+            4'd12:   name_of = {8'd0,  "rxlock"};
             default: name_of = {48'd0, "?"};
         endcase
     endfunction

@@ -17,7 +17,7 @@
 // THE SNAPSHOT IS THE PROPERTY WORTH THE TROUBLE. Every counter is changed to a
 // different value the moment the first record starts transmitting, while about
 // a hundred and ninety characters are still queued behind it. The record must
-// come out carrying the old values throughout -- all twelve fields from one
+// come out carrying the old values throughout -- all thirteen fields from one
 // instant -- and the next record must carry the new ones. Without the snapshot
 // this test fails in the most confusing way available: the first few fields are
 // right and the rest are not.
@@ -56,6 +56,7 @@ module tb_gem_stat_report;
     logic [1:0]  link_speed;
     logic [31:0] phy_id;
     logic        phy_id_valid;
+    logic        rx_mmcm_locked;
 
     wire [7:0] uart_data;
     wire       uart_valid;
@@ -79,6 +80,7 @@ module tb_gem_stat_report;
         .link_speed       (link_speed),
         .phy_id           (phy_id),
         .phy_id_valid     (phy_id_valid),
+        .rx_mmcm_locked   (rx_mmcm_locked),
         .uart_data        (uart_data),
         .uart_valid       (uart_valid),
         .uart_ready       (uart_ready)
@@ -144,11 +146,12 @@ module tb_gem_stat_report;
         input logic        a_link,
         input logic [1:0]  a_speed,
         input logic [31:0] a_phyid,
-        input logic        a_phyok);
+        input logic        a_phyok,
+        input logic        a_rxlock);
         return $sformatf(
-            "gem tx_ok=%08x tx_rej=%08x tx_urun=%08x rx_ok=%08x rx_bad=%08x rx_runt=%08x rx_over=%08x rx_rxer=%08x link=%08x speed=%08x phyid=%08x phyok=%08x",
+            "gem tx_ok=%08x tx_rej=%08x tx_urun=%08x rx_ok=%08x rx_bad=%08x rx_runt=%08x rx_over=%08x rx_rxer=%08x link=%08x speed=%08x phyid=%08x phyok=%08x rxlock=%08x",
             a_tx_ok, a_tx_rej, a_tx_urun, a_rx_ok, a_rx_bad, a_rx_runt, a_rx_over, a_rx_rxer,
-            32'(a_link), 32'(a_speed), a_phyid, 32'(a_phyok));
+            32'(a_link), 32'(a_speed), a_phyid, 32'(a_phyok), 32'(a_rxlock));
     endfunction
 
     task automatic drive_set_a();
@@ -164,6 +167,7 @@ module tb_gem_stat_report;
         link_speed   = 2'b10;            // 1000 Mbps, Clause 22
         phy_id       = 32'h00221622;     // KSZ9031RNX
         phy_id_valid = 1'b1;
+        rx_mmcm_locked = 1'b1;
     endtask
 
     // Deliberately different in every field, including the ones that are a
@@ -181,6 +185,7 @@ module tb_gem_stat_report;
         link_speed   = 2'b01;
         phy_id       = 32'hffffffff;
         phy_id_valid = 1'b0;
+        rx_mmcm_locked = 1'b0;
     endtask
 
     string want_a, want_b;
@@ -192,10 +197,10 @@ module tb_gem_stat_report;
         drive_set_a();
         want_a = expected_line(32'h0000002a, 32'h00000000, 32'h00000003, 32'h000001f4,
                                32'h00000002, 32'h00000000, 32'h0000000b, 32'h00000000,
-                               1'b1, 2'b10, 32'h00221622, 1'b1);
+                               1'b1, 2'b10, 32'h00221622, 1'b1, 1'b1);
         want_b = expected_line(32'hdeadbeef, 32'h00000001, 32'hffffffff, 32'h12345678,
                                32'h000000ff, 32'h00000009, 32'h00000000, 32'h0000abcd,
-                               1'b0, 2'b01, 32'hffffffff, 1'b0);
+                               1'b0, 2'b01, 32'hffffffff, 1'b0, 1'b0);
 
         fork
             receive_forever();

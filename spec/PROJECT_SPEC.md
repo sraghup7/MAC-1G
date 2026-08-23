@@ -1,8 +1,46 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.13 — Stage 1 complete, Stage 3 complete, Stage 4 complete, **Stage 5
-complete**. Amended throughout by what building the reference model, the verification
-layer and the RTL actually forced. Versioned alongside the RTL.
+Document status: v0.14 — Stages 1–5 complete, Stage 6 in progress and
+**honestly red**: the RGMII I/O timing work is built and measured, and what it
+measures fails pending a resolution that is recorded rather than faked
+(`docs/reports/stage6-part2/task-4d-report.md`). Versioned alongside the RTL.
+
+**Changelog v0.13 → v0.14 (Stage 6 part 2: RGMII I/O timing, deskew, reset
+architecture):**
+
+* **The receive domain runs on a deskewed clock.** A second MMCM
+  (`rtl/gem_rx_mmcm.v`, VCO 1125 MHz, feedback through a regional buffer)
+  cancels the FPGA's clock-network insertion delay for `rgmii_rx_clk`;
+  `gem_mac.rx_clk` now takes the MMCM's output, not the pin. Reason and
+  measured history: task-4a proved the raw-BUFG network's 3.720 ns
+  corner-to-corner spread exceeds the entire RGMII eye. The deskew collapsed
+  the spread to 0.635 ns and fixed hold completely — but setup still fails
+  ~2.1 ns on all five RX pins, structurally (task-4d/4d2 reports). **R20's
+  WNS >= 0 is not met today and the build refuses rather than shipping a
+  broken bitstream.**
+* **Reset architecture amended** (`Documents/RX Clock Deskew Design.md`): an
+  MMCM on a recovered clock does not self-recover after its input stops
+  (UG472 p.83/p.91), so a clk50 reset supervisor re-pulses it forever while
+  unlocked (~428 µs worst-case recovery, not 100 µs); `rx_rst_n` moved to the
+  deskewed clock and became lock-gated; and a second reset, `rx_path_rst_n`,
+  covers the destination half of every crossing out of the RX domain — without
+  which one link drop delivered up to 127 octets of stale FIFO contents as
+  fabricated frames plus five phantom counter events. The B.1b rule this
+  violates and its justification are written into B.1b below.
+* **Sub-gigabit links stop working entirely** — the deskew MMCM cannot lock
+  below `MMCM_FINMIN` (10 MHz) against RGMII's 25/2.5 MHz lower-speed clocks.
+  R13 already scoped v1 to 1000BASE-T only; the failure mode changed from
+  "captures garbage" to "captures nothing, `rxlock=0` says why".
+* The UART record gained a field: `rxlock=` (the deskew MMCM's lock),
+  closing design-doc Step 3f. `sw/host` parses it; fixtures regenerated from
+  simulation output.
+* **B.1b's "no IDELAY needed for v1" claim is retracted** — it reasoned about
+  the PHY's delay at the pins and omitted the FPGA's own clock-network
+  insertion delay, which task-4a measured as the entire problem.
+* Gate additions: gate 1c (the derived RX capture-clock anchor must resolve or
+  the build refuses), gate 3 upgraded from reporting to refusing on
+  unconstrained I/O, and gate 3 moved ahead of gate 2 because coverage gates
+  the meaning of slack.
 
 **Changelog v0.12 → v0.13 (Stage 5 closes):** `sw/host/` and `bringup_checklist.md`,
 the two deliverables B.6 has listed as deliberately absent since v0.2, both exist. The
@@ -324,17 +362,22 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 |---|---|---|---|
 | `tx_clk` | 125 MHz | MMCM, locked to the board's 50 MHz oscillator | TX datapath, register block, `sys_clk` (= `tx_clk`, B.7 item 3) |
 | `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted ≈ −72° (1.6 ns) from `tx_clk` | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
-| `rx_clk` | 125 MHz nominal | Recovered by the KSZ9031RNX's CDR from the link partner's transmit clock, driven in on `RX_CLK` | RGMII input capture, SFD hunt, deframe, CRC check, classify — **asynchronous to `tx_clk`** (independent oscillator sources) |
+| `rx_clk` | 125 MHz nominal | Recovered by the KSZ9031RNX's CDR from the link partner's transmit clock, driven in on `RX_CLK` | The RX deskew MMCM only (Stage 6 part 2) — **asynchronous to `tx_clk`** |
+| `rx_clk_deskew` | 125 MHz | Second MMCM, feedback deskewed against the raw pin clock | RGMII input capture, SFD hunt, deframe, CRC check, classify, FIFO write side — the whole receive domain. See B.7 item 6 and `Documents/RX Clock Deskew Design.md` |
 
 **RGMII skew mechanism (R14) — resolved from the KSZ9031RNX datasheet (Microchip, Rev
 2.2), "RGMII Timing" section and Table 19:**
 
 - **RX:** the PHY adds **1.2 ns typical** delay to `RX_CLK` relative to `RXD`/`RX_DV`
   **by default, out of reset — no MDIO write required.** This sits inside the RGMII v2.0
-  `TsetupR`/`TholdR` window (1.0–2.0 ns). Consequence: the FPGA RX side needs **no IDELAY**
-  for v1 — an IDDR clocked directly by `RX_CLK` is sufficient. Fallback if bring-up shows
-  insufficient margin (real PCB trace lengths vary): the PHY's `RX_CLK` pad-skew register
-  (MMD address `2h`, register `8h`, bits `[4:0]`, 0.06 ns/step) can add up to 2.58 ns.
+  `TsetupR`/`TholdR` window (1.0–2.0 ns). ~~Consequence: the FPGA RX side needs
+  **no IDELAY** for v1 — an IDDR clocked directly by `RX_CLK` is sufficient.~~
+  **Retracted in Stage 6 part 2:** that reasoning accounted for the PHY's delay at
+  the *pins* and omitted the FPGA's own clock-network insertion delay, which
+  task-4a measured at 3.720 ns corner-to-corner — more than the entire guaranteed
+  eye, and invariant under every IDELAY or phase choice. The fix was a deskew MMCM
+  (`Documents/RX Clock Deskew Design.md`), not an IDELAY; its outcome is recorded
+  in the v0.14 changelog and `docs/reports/stage6-part2/`.
 - **TX:** the datasheet is explicit that the PHY does **not** add delay on its `GTX_CLK`/
   `TX_EN`/`TXD` inputs — *"the KSZ9031RNX does not add any delay locally... and expects
   the GTX_CLK delay to be provided on-chip by the MAC."* Required window at the PHY pins:
@@ -385,9 +428,26 @@ hand-wavily by working code.*
 **Reset strategy:**
 
 - Per-domain: asynchronous assert, synchronous deassert (2-flop synchronizer) on that
-  domain's own clock — no domain's reset release depends on another domain's clock running.
+  domain's own clock — no domain's reset release depends on another domain's
+  clock running, **with one exception, added in Stage 6 part 2: a domain whose own
+  clock is not free-running may have its reset release depend on `clk50` and clocks
+  derived from it, because `clk50` is the board oscillator — free-running, never
+  gated, and already the root every other reset depends on. Any use of this exception
+  must be acyclic and must be written down.** `rx_clk_deskew`'s reset takes this
+  exception: an MMCM on a recovered clock does not self-recover after its input stops,
+  so its release waits for the clk50-clocked supervisor's re-lock and is additionally
+  gated on `tx_rst_n`. The reasoning is in `Documents/RX Clock Deskew Design.md`,
+  Steps 3a–3e and 5; the dependency graph is a strict DAG rooted at `clk50`.
 - `tx_clk`-domain reset release is additionally gated on MMCM lock (never leave reset on
   an unlocked MMCM).
+- **`rx_path_rst_n`** — a second reset, in the `tx_clk` domain, covering the destination
+  half of every crossing out of the RX domain (FIFO read side, egress, the five counter
+  event synchronisers, the FIFO-drop LED pulse). Both halves of any such crossing now
+  always assert together; without this, an RX-only reset drained stale FIFO contents
+  onto the AXI-S port as fabricated frames and fired phantom counter events
+  (`Documents/RX Clock Deskew Design.md`, Step 3b). Consequence stated plainly: a frame
+  in flight on the RX AXI-S port during a link event aborts **without `tlast`**
+  (owner decision (a), recorded in B.4a).
 - PHY reset (`RST_N`, active-low, board-level): datasheet specifies **tSR ≥ 10 ms** from
   stable supply voltage to reset de-assertion. Hold `RST_N` low ≥ 10 ms after power-up and
   treat MDIO as invalid until it's released — this is bring-up checklist step 2/3 (B.5).
@@ -494,7 +554,7 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 | FFs | ≤ 3,000 | **788** | 41,600 | pipeline + CDC + counters |
 | BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
 | DSP | 0 | **0** | 90 | nothing multiplies here |
-| MMCM | 1 | **0** (in `gem_mac`) · **1** (in `gem_clk_rst`) | 5 | single MMCM, two outputs: `tx_clk` (125 MHz) + `gtx_clk_shifted` (125 MHz, ≈1.6 ns phase-shifted, B.1b) |
+| MMCM | 2 | **0** (in `gem_mac`) · **1** crystal + **1** RX deskew (in `gem_clk_rst`) | 5 | two MMCMs: crystal (tx_clk 125 MHz + gtx_clk_shifted ≈1.222 ns, B.1b) and RX deskew (125 MHz, feedback-compensated — see B.7 item 6) |
 
 The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
 at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop
@@ -686,6 +746,17 @@ genuinely ambiguous in v0.2, and each is now binding on the Stage 4 RTL.
    leave the runt counter permanently at zero.
 
 A consequence of (1) is the four-cycle FCS holdback added to B.1b's latency sum.
+
+**Amendment (Stage 6 part 2, owner decision (a)): rule 2 now has a second carve-out.**
+On a link event, the receive domain resets (`rx_path_rst_n`), and a frame in flight
+on this port aborts **without `tlast`**: `rx_axis_tvalid` simply drops mid-frame.
+Resetting egress was traced better than the alternative — an un-reset egress resumes
+the old frame with the new frame's octets and emits a well-formed frame spliced from
+two different ones, which is silent corruption; the reset makes the failure loud.
+A consumer holding per-frame state therefore sees a frame that starts and never ends
+on every link flap; in v1 that consumer is the bring-up echo path only. The clean
+fix — an in-band abort beat carrying `tlast=1, tuser=1( bad)` — is scheduled as its
+own task before anything real consumes this port (verification plan open item).
 
 ## B.4b TX underrun contract (resolved in Stage 3)
 
@@ -926,7 +997,6 @@ deferred to RTL time):**
    over one max-length frame (~0.3 B, negligible) plus CDC pointer-sync latency
    (~4 B) — roughly an order of magnitude below the chosen depth, which costs nothing
    extra since a single BRAM18 natively holds far more than 64 entries at 8-bit width.
-
 5. **How R17's counters are read: UART, not VIO.** Decided before Stage 5 starts, so
    that the integration work has one answer rather than a choice to make mid-build.
 
@@ -952,7 +1022,7 @@ deferred to RTL time):**
    itself:
 
    ```
-   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001
+   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001
    ```
 
    192 characters and a newline, once a second. Every field is named on every line and
@@ -990,6 +1060,17 @@ deferred to RTL time):**
    Cost, stated plainly: a UART transmitter, a formatter and a divider are real RTL —
    perhaps 150–250 LUTs against the 1,255 still free under B.2's budget — where VIO
    would have been zero. That is the price of a soak test that produces a file.
+
+6. **The receive clock is deskewed by its own MMCM (Stage 6 part 2).** Resolved from
+   measurement, not preference: task-4a proved the raw clock network's insertion-delay
+   spread (3.720 ns corner-to-corner) exceeds the entire RGMII eye and is invariant
+   under every phase, input-delay and buffering choice; task-4b built the textbook
+   BUFIO/BUFR answer and measured it falling short on the BUFIO cell's own spread.
+   The remaining lever — cancelling the network delay with feedback compensation —
+   is what `rtl/gem_rx_mmcm.v` implements. Its timing outcome (hold fixed, setup
+   still failing structurally) and the open half-cycle question are recorded in
+   `docs/reports/stage6-part2/task-4d-report.md` and `task-4d2-report.md`; the reset
+   architecture it forced is B.1b's amended strategy above.
 
 **Alternatives considered, restated for traceability:**
 - **Store-and-forward vs. cut-through (RX delivery):** cut-through with a trailing

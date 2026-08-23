@@ -24,16 +24,18 @@ import gem_records as gr
 LINE_FROM_STAT_TB = (
     "gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 "
     "rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 "
-    "link=00000001 speed=00000002 phyid=00221622 phyok=00000001"
+    "link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001"
 )
 
 # From tb_gem_top: the whole board, 12 good frames received and 6 echoed back,
 # with no PHY on the MDIO bus -- so the all-ones read is reported as an invalid
 # PHY ID and no link, which is the honest answer rather than a hopeful one.
+# The RX deskew MMCM reports locked (the bench drives its input clock), so
+# rxlock reads 1 even with no link.
 LINE_FROM_TOP_TB = (
     "gem tx_ok=00000006 tx_rej=00000000 tx_urun=00000000 rx_ok=0000000c "
     "rx_bad=00000000 rx_runt=00000000 rx_over=00000000 rx_rxer=00000000 "
-    "link=00000000 speed=00000002 phyid=ffffffff phyok=00000000"
+    "link=00000000 speed=00000002 phyid=ffffffff phyok=00000000 rxlock=00000001"
 )
 
 

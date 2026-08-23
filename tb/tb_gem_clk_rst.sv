@@ -1,44 +1,49 @@
 //----------------------------------------------------------------------------
-// tb_gem_clk_rst -- the clock/reset block against the four promises B.1b makes
-// about it.
+// tb_gem_clk_rst -- the clock/reset block against the promises B.1b and the
+// deskew design make about it.
 //
 // This module has no data path, so there is nothing for the scenario
-// regression to compare and no golden model to compare it against. What it has
-// instead is a small set of properties that are either true or catastrophic,
-// and each of them fails in a way that would be blamed on something else:
+// regression to compare and no golden model to compare it against. What it
+// has instead is a small set of properties that are either true or
+// catastrophic, rewritten for the Stage 6 part 2 reset architecture
+// (Documents/RX Clock Deskew Design.md; criterion D scenarios D1-D5):
 //
-//   1. RESET ASSERTS WITH NO CLOCK RUNNING. Asserting the board reset stops the
-//      MMCM, which stops tx_clk -- so a reset that needed a tx_clk edge to take
-//      effect would never take effect at all. Checked by pulling ext_rst_n low
-//      deliberately between two tx_clk edges and confirming tx_rst_n drops with
-//      no edge in between.
+//   1. RESET ASSERTS WITH NO CLOCK RUNNING. Asserting the board reset stops
+//      the crystal MMCM, which stops tx_clk -- so a reset that needed a
+//      tx_clk edge to take effect would never take effect at all. Checked by
+//      pulling ext_rst_n low between two tx_clk edges and confirming that
+//      tx_rst_n, rx_rst_n AND rx_path_rst_n all drop with no edge in between.
 //
-//   2. RESET RELEASES ON AN EDGE, NOT BETWEEN THEM. The other half of B.1b's
-//      "asynchronous assert, synchronous deassert": every release is checked to
-//      land exactly on its own domain's clock edge. A release that drifts off
-//      the edge is a recovery/removal violation, which fails intermittently on
-//      hardware and never in simulation.
+//   2. RESET RELEASES ON AN EDGE, NOT BETWEEN THEM. Every release lands on
+//      its own domain's clock edge -- now checked on three chains: tx_rst_n,
+//      rx_rst_n (on the deskewed clock) and the new rx_path_rst_n (on tx_clk).
 //
-//   3. tx_rst_n NEVER RELEASES ONTO AN UNLOCKED MMCM. Policed on every tx_clk
-//      edge for the whole run rather than sampled once, because the window this
-//      protects is a transient: during acquisition the output is not a 125 MHz
-//      clock, it is whatever the VCO is doing on the way there.
+//   3. tx_rst_n NEVER RELEASES ONTO AN UNLOCKED MMCM. Policed continuously,
+//      because during acquisition the output is not a 125 MHz clock.
 //
-//   4. rx_rst_n DOES NOT DEPEND ON THE MMCM. B.1b's rule that no domain's reset
-//      release depends on another domain's clock. The test starts rx_clk while
-//      the MMCM is still acquiring and requires rx_rst_n to be released before
-//      LOCKED arrives -- so a stray `& mmcm_locked` in the rx chain, which
-//      would look harmless and pass every other test, fails here. It also
-//      starts rx_clk late, because on hardware the PHY is not driving RX_CLK
-//      when the FPGA comes out of configuration.
+//   4. THE RX DOMAIN'S NEW SEMANTICS, replacing the old "rx depends on
+//      nothing" property the deskew deliberately retired:
+//      a. COLD START, NO LINK. With rx_clk never running at all, rx_rst_n and
+//         rx_path_rst_n stay asserted while everything clk50/tx side runs
+//         normally -- no deadlock, board comes up and reports no link.
+//      b. LATE START ORDERING. When rx_clk starts, lock arrives first;
+//         rx_rst_n releases two deskewed-clock edges later, and rx_path_rst_n
+//         two tx_clk edges after THAT (Step 3b property 2). The old property
+//         "rx releases before LOCKED" is now the design's opposite by intent:
+//         an MMCM on a recovered clock does not self-recover (UG472 p.83/91),
+//         so its domain's release waits for the supervisor's re-lock.
+//      c. LINK DROP MID-OPERATION. Stopping rx_clk asserts rx_rst_n with NO
+//         further rx_clk edge available -- the async-assert property.
+//      d. STOP-RESTART. The clk50 supervisor re-pulses the MMCM's RST (retry
+//         period overridden short), the MMCM relocks, and the release order
+//         repeats -- recovery never requires ext_rst_n. This is the scenario
+//         chain the whole deskew task exists for.
+//      e. RAPID FLAP. Several quick stop/start cycles faster than one retry
+//         period still recover.
 //
-// And the PHY's reset hold, which is a number rather than a property: >= 10 ms
-// (KSZ9031RNX tSR). The sequencing is checked with a short override -- 50
-// cycles instead of 500,000 -- and the real number is checked separately
-// against the datasheet minimum, at elaboration, on an instance that never
-// runs. Simulating 10 ms to watch a counter count is not evidence anyone needs,
-// but "the default is long enough" is, and it is the half that would be wrong
-// after somebody edits the parameter header.
+// And the PHY's reset hold: sequencing checked with a short override, the
+// real number checked separately against the datasheet minimum at
+// elaboration-time values, as before.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -49,14 +54,13 @@ module tb_gem_clk_rst;
 
     import gem_tb_pkg::*;
 
-    // Short enough to simulate, long enough that the reset synchroniser's two
-    // stages are not a rounding error on it.
     localparam int PHY_RST_TEST_CYCLES = 50;
 
-    // The datasheet minimum, written here as a duration rather than as a cycle
-    // count, so this check does not restate the RTL's arithmetic back at it.
-    // KSZ9031RNX tSR: RST_N low >= 10 ms after the supplies are stable.
-    localparam real PHY_TSR_MIN_NS = 10_000_000.0;
+    // Retry period override: 200 clk50 cycles = 4 us, long enough that a lock
+    // acquisition (~1 us model + supervisor latency) cannot be interrupted,
+    // short enough that several retries fit in the simulation. Same licence
+    // PHY_RST_CYCLES' override carries.
+    localparam int RX_MMCM_RETRY_TEST = 200;
 
     localparam real CLK50_HALF_NS = 10.0;   // 50 MHz
     localparam real RXCLK_HALF_NS = 4.0;    // 125 MHz, from the PHY's CDR
@@ -67,25 +71,31 @@ module tb_gem_clk_rst;
     logic rx_clk_run = 1'b0;   // the PHY is not driving RX_CLK yet
 
     wire tx_clk, gtx_clk_shifted, tx_rst_n, rx_rst_n, mmcm_locked, phy_rst_n;
+    wire rx_clk_deskew, rx_mmcm_locked, rx_path_rst_n;
 
     gem_clk_rst #(
-        .PHY_RST_CYCLES (PHY_RST_TEST_CYCLES)
+        .PHY_RST_CYCLES       (PHY_RST_TEST_CYCLES),
+        .RX_MMCM_RETRY_CYCLES (RX_MMCM_RETRY_TEST)
     ) u_dut (
         .clk50           (clk50),
         .ext_rst_n       (ext_rst_n),
         .rx_clk          (rx_clk),
         .tx_clk          (tx_clk),
         .gtx_clk_shifted (gtx_clk_shifted),
+        .rx_clk_deskew   (rx_clk_deskew),
         .tx_rst_n        (tx_rst_n),
         .rx_rst_n        (rx_rst_n),
+        .rx_path_rst_n   (rx_path_rst_n),
         .mmcm_locked     (mmcm_locked),
+        .rx_mmcm_locked  (rx_mmcm_locked),
         .phy_rst_n       (phy_rst_n)
     );
 
-    // A second instance carrying the real PHY_RST_CYCLES, held in reset for the
-    // whole simulation so it costs nothing to have. It exists to be read, not
-    // to run: check 5 asks what the default parameter would actually do.
+    // A second instance carrying the real PHY_RST_CYCLES, held in reset for
+    // the whole simulation so it costs nothing to have. It exists to be read,
+    // not to run: the datasheet-minimum check asks what the default would do.
     wire d_tx_clk, d_gtx_clk, d_tx_rst_n, d_rx_rst_n, d_locked, d_phy_rst_n;
+    wire d_rx_clk_deskew, d_rx_mmcm_locked, d_rx_path_rst_n;
 
     gem_clk_rst u_dut_default (
         .clk50           (clk50),
@@ -93,14 +103,18 @@ module tb_gem_clk_rst;
         .rx_clk          (1'b0),
         .tx_clk          (d_tx_clk),
         .gtx_clk_shifted (d_gtx_clk),
+        .rx_clk_deskew   (d_rx_clk_deskew),
         .tx_rst_n        (d_tx_rst_n),
         .rx_rst_n        (d_rx_rst_n),
+        .rx_path_rst_n   (d_rx_path_rst_n),
         .mmcm_locked     (d_locked),
+        .rx_mmcm_locked  (d_rx_mmcm_locked),
         .phy_rst_n       (d_phy_rst_n)
     );
 
     always #(CLK50_HALF_NS * 1ns) clk50 = ~clk50;
     always #(RXCLK_HALF_NS * 1ns) rx_clk = rx_clk_run ? ~rx_clk : 1'b0;
+
 
     //----------------------------------------------------------------------
     // Edge bookkeeping, so the checks can talk about "with no clock edge in
@@ -109,14 +123,15 @@ module tb_gem_clk_rst;
     int  tx_edges = 0;
     int  clk50_edges = 0;
     real last_tx_edge_ns = -1.0;
-    real last_rx_edge_ns = -1.0;
+    real last_rx_edge_ns = -1.0;      // deskewed-clock edges
+    real last_dsk_edge_ns = -1.0;     // alias, kept distinct for clarity below
 
     always @(posedge tx_clk) begin
         tx_edges++;
         last_tx_edge_ns = $realtime;
     end
 
-    always @(posedge rx_clk) begin
+    always @(posedge rx_clk_deskew) begin
         last_rx_edge_ns = $realtime;
     end
 
@@ -124,13 +139,6 @@ module tb_gem_clk_rst;
         clk50_edges++;
     end
 
-    // When phy_rst_n actually rose, recorded where it happens rather than
-    // measured by a `wait` in the main sequence. The first version of this test
-    // did it the other way and reported a 50-cycle hold as 132, because by the
-    // time the sequence had finished checking the MMCM and got round to
-    // looking, the signal had been up for eighty cycles. A test that measures
-    // when it looked instead of when the event happened will pass a design that
-    // holds reset for any duration at all.
     int phy_rise_edges = -1;
 
     always @(posedge phy_rst_n) begin
@@ -166,14 +174,24 @@ module tb_gem_clk_rst;
         end
     end
 
+    always @(posedge rx_path_rst_n) begin
+        note_check();
+        if ($realtime != last_tx_edge_ns) begin
+            report_fail("gem_clk_rst", $sformatf(
+                "rx_path_rst_n released at %0t, which is not a tx_clk edge (last edge %0t)",
+                $realtime, last_tx_edge_ns));
+        end
+    end
+
     always @(posedge rx_rst_n) begin
         note_check();
         if ($realtime != last_rx_edge_ns) begin
             report_fail("gem_clk_rst", $sformatf(
-                "rx_rst_n released at %0t, which is not an rx_clk edge (last edge %0t)",
+                "rx_rst_n released at %0t, which is not a deskewed-clock edge (last edge %0t)",
                 $realtime, last_rx_edge_ns));
         end
-        if (!mmcm_locked) begin
+        note_check();
+        if (!rx_mmcm_locked && rx_mmcm_locked !== 1'bx) begin
             rx_released_before_lock = 1'b1;
         end
     end
@@ -183,78 +201,47 @@ module tb_gem_clk_rst;
     //----------------------------------------------------------------------
     int  edges_at_release;
     int  phy_hold_cycles;
-    int  tx_edges_before;
     real default_hold_ns;
+    realtime t_lock, t_rx_release, t_path_release;
+    realtime edge_at_rx_release;
+    int      tx_edges_before;
     bit  ok;
 
     initial begin
         begin_scenario("gem_clk_rst");
 
         //--------------------------------------------------------------
-        // 1. Held in reset: nothing is released, and rx_clk is not even
-        //    running -- which is the state the board is actually in between
-        //    configuration and the PHY coming alive.
+        // D1a. Held in reset with NO rx_clk at all (the board between
+        //      configuration and the PHY coming alive): nothing released,
+        //      and the RX MMCM reports unlocked.
         //--------------------------------------------------------------
         repeat (4) @(posedge clk50);
 
         note_check();
-        if (tx_rst_n !== 1'b0 || rx_rst_n !== 1'b0 || phy_rst_n !== 1'b0) begin
+        if (tx_rst_n !== 1'b0 || rx_rst_n !== 1'b0 || phy_rst_n !== 1'b0 ||
+            rx_path_rst_n !== 1'b0) begin
             report_fail("gem_clk_rst", $sformatf(
-                "with ext_rst_n low: tx_rst_n=%b rx_rst_n=%b phy_rst_n=%b, expected all low",
-                tx_rst_n, rx_rst_n, phy_rst_n));
+                "with ext_rst_n low and no rx_clk: tx=%b rx=%b path=%b phy=%b, expected all low",
+                tx_rst_n, rx_rst_n, rx_path_rst_n, phy_rst_n));
         end
 
         note_check();
-        if (mmcm_locked !== 1'b0) begin
-            report_fail("gem_clk_rst", "the MMCM claims lock while held in reset");
+        if (mmcm_locked !== 1'b0 || rx_mmcm_locked !== 1'b0) begin
+            report_fail("gem_clk_rst",
+                "an MMCM claims lock while held in reset");
         end
 
         //--------------------------------------------------------------
-        // 2. Release. rx_clk starts here too -- deliberately during MMCM
-        //    acquisition, so that property 4 has something to prove.
+        // D2. Release WITHOUT starting rx_clk (criterion D1 cold start):
+        //     the tx/clk50 side must come up completely on its own -- PHY
+        //     hold counted, tx reset released after lock -- while the RX
+        //     domain stays parked. No deadlock anywhere.
         //--------------------------------------------------------------
         @(posedge clk50);
         phy_rise_edges = -1;
-        ext_rst_n  = 1'b1;
-        rx_clk_run = 1'b1;
+        ext_rst_n = 1'b1;
         edges_at_release = clk50_edges;
 
-        // rx_rst_n must be out long before LOCKED: two rx_clk edges against
-        // the model's 128 clk50 cycles of acquisition.
-        wait (rx_rst_n === 1'b1);
-
-        note_check();
-        if (mmcm_locked === 1'b1) begin
-            report_fail("gem_clk_rst",
-                "the MMCM locked before rx_rst_n released, so this run cannot prove rx reset is independent of it");
-        end
-
-        wait (mmcm_locked === 1'b1);
-
-        note_check();
-        if (!rx_released_before_lock) begin
-            report_fail("gem_clk_rst",
-                "rx_rst_n was not released until LOCKED arrived -- the rx domain's reset depends on the MMCM (B.1b forbids it)");
-        end
-
-        // tx_rst_n follows lock within the synchroniser's depth, plus slack
-        // for the edge the release lands on.
-        repeat (8) @(posedge tx_clk);
-
-        note_check();
-        if (tx_rst_n !== 1'b1) begin
-            report_fail("gem_clk_rst",
-                "tx_rst_n is still asserted 8 cycles after LOCKED");
-        end
-
-        //--------------------------------------------------------------
-        // 3. The PHY's reset hold, counted in clk50 cycles from the board
-        //    reset releasing. Checked as ">= what was asked for, and not
-        //    dramatically more" rather than as an exact edge count: the
-        //    requirement is a minimum hold, and an exact count would just be
-        //    the RTL's own arithmetic written twice, failing whenever the
-        //    synchroniser depth changes for unrelated reasons.
-        //--------------------------------------------------------------
         wait (phy_rise_edges >= 0);
         phy_hold_cycles = phy_rise_edges - edges_at_release;
 
@@ -265,31 +252,146 @@ module tb_gem_clk_rst;
                 phy_hold_cycles, PHY_RST_TEST_CYCLES));
         end
 
+        wait (mmcm_locked === 1'b1);
+        wait (tx_rst_n === 1'b1);
+
         note_check();
-        if (phy_hold_cycles > PHY_RST_TEST_CYCLES + 4) begin
+        if (rx_rst_n !== 1'b0 || rx_path_rst_n !== 1'b0 || rx_mmcm_locked !== 1'b0) begin
             report_fail("gem_clk_rst", $sformatf(
-                "phy_rst_n released after %0d clk50 cycles against %0d asked for -- more than the synchroniser can account for",
-                phy_hold_cycles, PHY_RST_TEST_CYCLES));
+                "rx domain left reset without any receive clock: rx=%b path=%b locked=%b",
+                rx_rst_n, rx_path_rst_n, rx_mmcm_locked));
         end
 
-        // It rises once and stays up. A counter that wrapped instead of
-        // stopping would re-assert the PHY's reset periodically, which
-        // presents as a link that negotiates and then dies.
-        repeat (PHY_RST_TEST_CYCLES * 10) @(posedge clk50);
+        $display("[gem_tb] gem_clk_rst: cold start clean -- tx/PHY up, RX domain parked");
+
+        //--------------------------------------------------------------
+        // D3. The link arrives: rx_clk starts late. Lock, then the release
+        //     order rx_rst_n -> rx_path_rst_n, each on its own edge.
+        //--------------------------------------------------------------
+        rx_clk_run = 1'b1;
+
+        wait (rx_mmcm_locked === 1'b1);
+        t_lock = $realtime;
+
+        wait (rx_rst_n === 1'b1);
+        t_rx_release = $realtime;
+        // Captured NOW, not after the next wait: the deskewed clock keeps
+        // running while rx_path_rst_n releases, and a comparison made later
+        // would measure the wrong edge (measured exactly that way).
+        edge_at_rx_release = last_rx_edge_ns;
 
         note_check();
-        if (phy_rst_n !== 1'b1) begin
+        if (rx_released_before_lock) begin
             report_fail("gem_clk_rst",
-                "phy_rst_n went back down without a board reset -- the hold counter wraps instead of stopping");
+                "rx_rst_n was released before the RX MMCM reported locked");
+        end
+
+        wait (rx_path_rst_n === 1'b1);
+        t_path_release = $realtime;
+
+        note_check();
+        if (!(t_lock < t_rx_release && t_rx_release <= t_path_release)) begin
+            report_fail("gem_clk_rst", "release ordering violated: expected lock < rx_rst_n <= rx_path_rst_n");
+        end
+
+        note_check();
+        if (t_rx_release != edge_at_rx_release) begin
+            report_fail("gem_clk_rst", "rx_rst_n did not release exactly on a deskewed-clock edge");
+        end
+
+        $display("[gem_tb] gem_clk_rst: late-start ordering OK (lock %0t, rx %0t, path %0t)",
+                 t_lock, t_rx_release, t_path_release);
+
+        // Let everything settle before stressing it.
+        repeat (20) @(posedge tx_clk);
+
+
+        //--------------------------------------------------------------
+        // D4. Link drops mid-operation: rx_clk stops. rx_rst_n must assert
+        //     with NO further deskewed-clock edge available -- the
+        //     async-assert property -- and rx_path_rst_n follows.
+        //--------------------------------------------------------------
+        @(posedge rx_clk_deskew);
+        #(RXCLK_HALF_NS * 0.3 * 1ns);   // mid-cycle, like the old tx check
+        rx_clk_run = 1'b0;
+
+        // The watchdog's detection is not instantaneous -- it samples every
+        // CLKIN_WATCH_NS -- so wait out one window plus margin before judging.
+        repeat (10) @(posedge clk50);
+
+        note_check();
+        if (rx_rst_n !== 1'b0) begin
+            report_fail("gem_clk_rst",
+                "rx_rst_n did not assert after the receive clock stopped -- the assert path needs a clock edge the stopped clock cannot provide");
+        end
+
+        note_check();
+        if (rx_path_rst_n !== 1'b0 || rx_mmcm_locked !== 1'b0) begin
+            report_fail("gem_clk_rst", $sformatf(
+                "after the link dropped: path=%b locked=%b, expected both low",
+                rx_path_rst_n, rx_mmcm_locked));
+        end
+
+        $display("[gem_tb] gem_clk_rst: link drop asserts both RX resets with no rx edge");
+
+        // Hold long enough that the supervisor must have pulsed RST at least
+        // once while the clock was gone (retry period is 4 us).
+        repeat (300) @(posedge clk50);
+
+        note_check();
+        if (rx_mmcm_locked !== 1'b0 || rx_rst_n !== 1'b0) begin
+            report_fail("gem_clk_rst",
+                "the supervisor let the RX domain out of reset while its clock was still gone");
         end
 
         //--------------------------------------------------------------
-        // 4. Assert reset with no clock edge available to carry it.
-        //
-        //    The offset is deliberate: 1.3 ns after a tx_clk edge is 6.7 ns
-        //    before the next one would have been, and asserting the MMCM's
-        //    reset stops tx_clk entirely, so no next edge arrives at all. A
-        //    reset that needed one would never assert.
+        // D5. The clock returns. The supervisor's next retry pulse resets
+        //     the MMCM, it relocks WITHOUT ext_rst_n, and the release order
+        //     repeats. This is the scenario chain the whole task exists for.
+        //--------------------------------------------------------------
+        rx_released_before_lock = 1'b0;
+        rx_clk_run = 1'b1;
+
+        wait (rx_mmcm_locked === 1'b1);
+        wait (rx_rst_n === 1'b1);
+        wait (rx_path_rst_n === 1'b1);
+
+        note_check();
+        if (rx_released_before_lock) begin
+            report_fail("gem_clk_rst",
+                "on recovery, rx_rst_n released before the RX MMCM relocked");
+        end
+
+        $display("[gem_tb] gem_clk_rst: stop-restart recovered without a board reset");
+
+        //--------------------------------------------------------------
+        // D6. Rapid flap, faster than one retry period, twice. Still
+        //     recovers; nothing wedges.
+        //--------------------------------------------------------------
+        for (int flap = 0; flap < 2; flap++) begin
+            rx_clk_run = 1'b0;
+            repeat (30) @(posedge clk50);
+            rx_clk_run = 1'b1;
+
+            fork
+                begin : wait_up
+                    wait (rx_path_rst_n === 1'b1);
+                end
+                begin : watchdog
+                    repeat (600) @(posedge clk50);
+                    report_fail("gem_clk_rst", $sformatf(
+                        "flap %0d did not recover within 600 clk50 cycles", flap));
+                    disable wait_up;
+                end
+            join_any
+            disable fork;
+        end
+
+        $display("[gem_tb] gem_clk_rst: rapid flaps recovered each time");
+
+        //--------------------------------------------------------------
+        // P1. Board reset asserted with no tx_clk edge available to carry
+        //     it: all four resets must drop asynchronously.
         //--------------------------------------------------------------
         @(posedge tx_clk);
         #1.3ns;
@@ -300,7 +402,7 @@ module tb_gem_clk_rst;
         note_check();
         if (tx_rst_n !== 1'b0) begin
             report_fail("gem_clk_rst",
-                "tx_rst_n did not assert without a clock edge -- the assert path is synchronous, which cannot work with the MMCM in reset");
+                "tx_rst_n did not assert without a clock edge -- the assert path is synchronous");
         end
 
         note_check();
@@ -311,15 +413,15 @@ module tb_gem_clk_rst;
         end
 
         note_check();
-        if (rx_rst_n !== 1'b0 || phy_rst_n !== 1'b0) begin
+        if (rx_rst_n !== 1'b0 || rx_path_rst_n !== 1'b0 || phy_rst_n !== 1'b0) begin
             report_fail("gem_clk_rst", $sformatf(
-                "after asserting ext_rst_n: rx_rst_n=%b phy_rst_n=%b, expected both low",
-                rx_rst_n, phy_rst_n));
+                "after asserting ext_rst_n: rx=%b path=%b phy=%b, expected all low",
+                rx_rst_n, rx_path_rst_n, phy_rst_n));
         end
 
         //--------------------------------------------------------------
-        // 5. Release a second time: the PHY hold has to run again from the
-        //    start, not stay released because it once was.
+        // P2. Second release: the PHY hold restarts from zero rather than
+        //     staying released because it once was.
         //--------------------------------------------------------------
         @(posedge clk50);
         phy_rise_edges = -1;
@@ -337,29 +439,30 @@ module tb_gem_clk_rst;
         end
 
         //--------------------------------------------------------------
-        // 6. The number that ships. Everything above ran with a 50-cycle
-        //    override; this is the only check that looks at the real one, and
-        //    it states the datasheet's requirement as a duration so that
-        //    editing GEM_PHY_RESET_HOLD_US down to something plausible-looking
-        //    fails here rather than on a bench weeks later.
+        // P3. The number that ships: default PHY hold vs datasheet tSR,
+        //     and this bench's clk50 vs the frequency the RTL derived from.
         //--------------------------------------------------------------
         default_hold_ns = u_dut_default.PHY_RST_CYCLES * (2.0 * CLK50_HALF_NS);
 
         note_check();
-        if (default_hold_ns < PHY_TSR_MIN_NS) begin
+        if (default_hold_ns < 10_000_000.0) begin
             report_fail("gem_clk_rst", $sformatf(
                 "the default PHY reset hold is %0.3f ms, short of the KSZ9031RNX's 10 ms tSR",
                 default_hold_ns / 1_000_000.0));
         end
 
-        // ... and that this testbench's own clk50 is the frequency the RTL
-        // derived that count from. Without this the check above is only as
-        // good as an assumption made in two files.
         note_check();
         if ((1_000_000_000.0 / (2.0 * CLK50_HALF_NS)) != real'(`GEM_CLK50_HZ)) begin
             report_fail("gem_clk_rst", $sformatf(
                 "this testbench drives clk50 at %0.1f Hz but the design derives its counts from %0d Hz",
                 1_000_000_000.0 / (2.0 * CLK50_HALF_NS), `GEM_CLK50_HZ));
+        end
+
+        // ... and the retry override actually made it into this instance.
+        note_check();
+        if (u_dut.RX_MMCM_RETRY_CYCLES != RX_MMCM_RETRY_TEST) begin
+            report_fail("gem_clk_rst",
+                "the RX_MMCM_RETRY_CYCLES override did not reach the instance -- the recovery checks above ran against the wrong period");
         end
 
         $display("[gem_tb] gem_clk_rst: PHY hold %0d cycles at the override, %0.1f ms at the default",
@@ -371,8 +474,9 @@ module tb_gem_clk_rst;
     end
 
     initial begin
-        #1ms;
+        #5ms;
         $fatal(1, "[gem_tb] gem_clk_rst TIMED OUT");
     end
 
 endmodule
+
