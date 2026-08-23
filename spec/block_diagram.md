@@ -56,7 +56,8 @@ Echo is store-and-forward — the opposite of the MAC's own cut-through decision
 an echo that streamed could not know whether the frame deserved echoing.
 
 **Pins.** Every pin above is confirmed against the board schematic; the provenance
-is in `Manuals/AX7035B_pinout_notes.md` and the argument is V-21.
+is in `Manuals/AX7035B_pinout_notes.md` (kept locally, git-ignored -- vendor
+material) and the argument is V-21.
 
 ---
 

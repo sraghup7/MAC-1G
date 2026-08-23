@@ -10,6 +10,9 @@ function cycles = rgmiiEncode(bytes, dv, er)
 %   makes inter-frame gap, inter-frame garbage (R11), RX_ER bursts (R10) and
 %   frame data all the same kind of thing, so the generator can compose them
 %   freely instead of the encoder needing to know about frames at all.
+%   (Omitting DV is legal but loud about it: it defaults to asserting DV
+%   across the entire stream, which is almost never what idle traffic wants.
+%   Every generator passes DV explicitly.)
 %
 %   RGMII v2.0 mapping, per cycle:
 %

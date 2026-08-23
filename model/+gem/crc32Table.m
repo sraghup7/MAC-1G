@@ -12,8 +12,12 @@ function tbl = crc32Table()
 %
 %   See also GEM.CRC32, GEM.PARAMS.
 
-%   The table is built once and cached -- it is called per byte by GEM.CRC32
-%   and rebuilding it 1500 times per frame dominates the runtime otherwise.
+%   The table is built once and cached -- GEM.CRC32 calls it once per
+%   invocation (not per byte), and rebuilding a 256-entry table per frame
+%   would dominate the runtime otherwise. The cache lives for the session:
+%   unlike GEM.PARAMS it does not invalidate on a parameter edit, so after
+%   changing the polynomial call `clear` (or restart MATLAB) rather than
+%   trusting a stale table.
 persistent cached
 if ~isempty(cached)
     tbl = cached;

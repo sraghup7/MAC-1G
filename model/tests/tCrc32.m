@@ -80,7 +80,7 @@ classdef tCrc32 < matlab.unittest.TestCase
 
             bad = find(mine ~= theirs);
             if isempty(bad)
-                tc.verifyTrue(true);
+                tc.verifyEqual(mine, theirs);   % all nVectors agree with zlib
                 return
             end
 

@@ -8,11 +8,12 @@
 %   rtl/gem_mac_params.vh via GEM.PARAMS, the same way the golden model does
 %   -- this script does not keep a second hardcoded copy of a number the RTL
 %   already defines, for the same reason GEM.PARAMS itself gives: two copies
-%   of one constant is a bug that looks exactly like a real failure. The
-%   PHY-datasheet and IEEE-802.3 numbers below (clock ppm tolerance,
-%   TsetupT/TholdT windows, the R21 ceiling) have no RTL parameter to read,
-%   since they describe the environment the design sits in, not the design
-%   itself, so they stay local.
+%   of one constant is a bug that looks exactly like a real failure. That
+%   now includes SYS_CLK_HZ and RX_LATENCY_MAX_CYCLES, which the header
+%   carries too. The PHY-datasheet and IEEE-802.3 numbers below (clock ppm
+%   tolerance, TsetupT/TholdT windows) have no RTL parameter to read, since
+%   they describe the environment the design sits in, not the design itself,
+%   so they stay local.
 
 here = fileparts(mfilename('fullpath'));           % .../spec
 repoRoot = fileparts(here);                         % .../
@@ -21,7 +22,7 @@ addpath(fullfile(repoRoot, 'model'));
 p = gem.params();
 
 lineRateBps       = 1e9;      % 1000BASE-T, R18
-clockHz           = 125e6;    % tx_clk / rx_clk, R19
+clockHz           = double(p.SYS_CLK_HZ);            % GEM_SYS_CLK_HZ
 clockPeriodNs      = 1e9 / clockHz;                  % 8.0 ns at 125 MHz
 
 minFrameBytes     = double(p.MIN_FRAME_BYTES);       % 802.3 Table 4-2
@@ -40,7 +41,7 @@ phyTxSetupHoldNs  = [1.2, 2.0]; % KSZ9031RNX datasheet Table 19, TsetupT/TholdT
 phyRxSetupHoldNs  = [1.0, 2.0]; % KSZ9031RNX datasheet Table 19, TsetupR/TholdR
 phyRxDefaultDelayNs = 1.2;      % KSZ9031RNX default RX_CLK-to-RXD delay
 
-r21LatencyCeilingCycles = 32;   % spec requirement, 256 ns @ 125 MHz
+r21LatencyCeilingCycles = double(p.RX_LATENCY_MAX_CYCLES);   % GEM_RX_LATENCY_MAX_CYCLES
 
 % (name, cycles) -- B.1b bottom-up latency check.
 %

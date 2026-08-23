@@ -95,7 +95,8 @@ da = uint8([]); sa = uint8([]); etherType = NaN;
 if n >= p.HEADER_BYTES
     da = frameBytes(1:p.DA_BYTES);
     sa = frameBytes(p.DA_BYTES + (1:p.SA_BYTES));
-    etherType = double(frameBytes(13)) * 256 + double(frameBytes(14));
+    etOff = double(p.DA_BYTES + p.SA_BYTES);   % octets before Length/Type
+    etherType = double(frameBytes(etOff + 1)) * 256 + double(frameBytes(etOff + 2));
 end
 
 % Payload spans header..FCS exclusive, pad included (decision 2 above).

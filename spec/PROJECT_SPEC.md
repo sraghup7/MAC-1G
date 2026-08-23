@@ -628,11 +628,16 @@ Eighteen scenarios generate vector files, each cross-checked by reading its own 
 with the golden RX path. The SystemVerilog layer (`tb/`) runs against a port-only stub
 (`rtl/gem_mac_stub.v`) and fails informatively, which is the intended Stage 3 result.
 
-Eight gates guard the project: four from `make check` (model tests, committed-vector
-staleness, Verilator lint per R22, and the scenario regression), three inside
-`scripts/build.tcl` (inferred latches, slack, and constraint coverage), and one added in
-Stage 4 inside `scripts/synth_module.tcl` (a memory array that dissolved into
-flip-flops instead of becoming RAM). **Every one has
+The gates, enumerated by where they live rather than by a total that goes stale
+every time one is added: `make check` runs five — model tests, committed-vector
+staleness, Verilator lint per R22, the host record parser, and the scenario
+regression. `scripts/build.tcl` refuses on six conditions — CRITICAL WARNINGs
+counted after synthesis and again before the bitstream, surviving latch cells,
+Synth 8-327 latch inference, negative setup or hold slack, and the six hard
+`check_timing` coverage conditions. `scripts/synth_module.tcl` adds the same two
+latch checks, negative slack, B.2's resource budget for `gem_mac`, and the Stage-4
+memory gate (Synth 8-4767: an array that dissolved into flip-flops instead of
+becoming RAM). **Every one has
 been observed to fail**, not merely to pass — each was tested by planting the defect it
 exists to catch: an injected width mismatch trips the lint gate, one corrupted octet trips
 the vector gate, a planted assertion trips the regression, an inferred latch trips the
@@ -665,6 +670,13 @@ genuinely ambiguous in v0.2, and each is now binding on the Stage 4 RTL.
    said early termination "can also be" done, which is not a decision; one delivery rule
    for all five classes means one `tlast` timing for the RTL, the assertions and the
    model to agree on rather than two.
+   One carve-out falls out of the four-octet holdback and is part of this rule rather
+   than an exception to it: a received frame of four octets or fewer — too short for
+   even the holdback register to have anything behind the FCS — delivers **zero**
+   beats and therefore no `tlast` at all. It is still counted (a runt), still
+   classified by the same precedence, and the model's `expectedBeats` returns the
+   same empty delivery; the rule above describes every frame from which at least
+   one octet is delivered.
 3. **Error class precedence is `rxer > oversize > runt > badfcs`.** R10 requires one
    counter per class (R17) and a single frame can be in several at once — a truncated
    frame is usually both a runt and an FCS failure. The order is argued from diagnostic
