@@ -52,10 +52,26 @@ blinker, for B.5 step 1) — `build/gem_top.bit` writes clean, WNS +1.249 ns /
 WHS +0.052 ns post-route. A new gate refuses the build outright on any
 `CRITICAL WARNING`, which a constraint matching no port produces; it caught the
 tree's own defect on the first run, 68 of them, from `constrs/` already
-describing the board while the build still targeted the blinker. What is still
-open: the RGMII I/O delay constraints (V-2) are not written, and until they are,
-gate 3 only *reports* the RGMII pins as unconstrained rather than refusing on
-them — that refusal is what turning V-14's deferred half on requires.
+describing the board while the build still targeted the blinker.
+
+**Known issue: `impl`/`bitstream` currently refuse, by design.** The RGMII I/O
+delay constraints (V-2) are now written and wired into the real build — with a
+corrected clock phase (`-waveform {1.200 5.200}`, the KSZ9031RNX's default RX
+skew) and input delays derived from it, the first constraints in this tree that
+make Vivado check the physically real DDR capture events — and what they check
+**fails**: WHS −3.031 ns on all five RX pins (setup passes at +2.0 ns each; the
+per-port table is in
+[`docs/reports/stage6-part2/task-4a-report.md`](docs/reports/stage6-part2/task-4a-report.md)).
+The deficit is physical, not a constraint artefact: the BUFG clock network's
+min/max insertion-delay spread to the IDDR (3.720 ns corner-to-corner) exceeds
+the 2.000 ns eye RGMII v2.0 guarantees, invariant under every phase or
+input-delay choice, and the textbook BUFIO/BUFR fix was built and measured
+falling short too ([`task-4b-report.md`](docs/reports/stage6-part2/task-4b-report.md)).
+The approved fix is an MMCM feedback-deskew clock for the receive path
+([`Documents/RX Clock Deskew Design.md`](Documents/RX%20Clock%20Deskew%20Design.md));
+until it lands, gate 3 (constraint coverage, now refusing rather than reporting)
+passes and gate 2 refuses — which is the honest state, recorded here rather than
+hidden behind a bitstream built from unconstrained pins.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a

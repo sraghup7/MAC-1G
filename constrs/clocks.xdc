@@ -17,7 +17,25 @@ create_clock -name clk50 -period 20.000 [get_ports clk50]
 # in on RX_CLK. It is asynchronous to everything the MMCM makes (R19, B.1b) --
 # different oscillators, no phase relationship, and the FIFO in gem_rx_fifo is
 # the only place multi-bit data crosses between them.
-create_clock -name rgmii_rx_clk -period 8.000 [get_ports rgmii_rx_clk]
+create_clock -name rgmii_rx_clk -period 8.000 -waveform {1.200 5.200} \
+    [get_ports rgmii_rx_clk]
+
+# The 1.200 ns waveform shift is not cosmetic. It is the KSZ9031RNX's default
+# RX_CLK delay (B.1b: 1.2 ns typical relative to RXD/RX_DV, out of reset, no
+# MDIO write), declared relative to the idealised zero-delay launch reference
+# that constrs/rgmii_timing.xdc calls rgmii_rx_clk_virt. It is a modelling
+# phase, not a claim about an externally observable absolute: this clock has no
+# defined phase relationship to anything else in the design -- it is grouped
+# asynchronous to clk50's tree below, and every rx_clk-internal
+# register-to-register check is expressed against this clock's own edges, so
+# shifting all of them together changes none of those checks. The one place the
+# number is load-bearing is the RX input-delay check in
+# constrs/rgmii_timing.xdc, which reads it as "the real clock's edges arrive
+# 1.200 ns after where the PHY's own undelayed edges would be". Do not drop the
+# waveform without re-deriving that file's RX section with it.
+#
+# The input delays in constrs/rgmii_timing.xdc are derived from this 1.200 and
+# the RGMII v2.0 receive window; the two files must change together.
 
 # tx_clk and gtx_clk_shifted are MMCM outputs and are NOT declared here.
 # create_generated_clock would be wrong twice over: Vivado derives both from

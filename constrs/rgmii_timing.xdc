@@ -13,14 +13,27 @@
 # create_clock'd in constrs/clocks.xdc)
 #############################################################################
 
+# rgmii_rx_clk_virt is the PHY's own *undelayed* reference: edge-aligned with
+# RXD/RX_DV, phase 0, driving nothing. The real rgmii_rx_clk is that clock
+# delayed 1.200 ns by the PHY, and constrs/clocks.xdc declares it
+# -waveform {1.200 5.200} to say exactly that. The two numbers below are
+# derived from that 1.200 ns and the RGMII v2.0 receive window, and they only
+# mean what they say while that waveform is present:
+#
+#   max = phase - TsetupR_min       = 1.200 - 1.000 =  0.200 ns
+#   min = phase - (UI - TholdR_min) = 1.200 - 3.000 = -1.800 ns
+#
+# max - min = 2.000 ns of transition uncertainty per 4.000 ns unit interval,
+# i.e. a declared eye of exactly TsetupR_min + TholdR_min = 2.000 ns, which is
+# the guarantee the datasheet actually gives.
 create_clock -name rgmii_rx_clk_virt -period 8.000
 
 set rx_data_ports [get_ports {rgmii_rxd[*] rgmii_rx_ctl}]
 
-set_input_delay -clock rgmii_rx_clk_virt -max 3.000 $rx_data_ports
-set_input_delay -clock rgmii_rx_clk_virt -min -1.000 $rx_data_ports -add_delay
-set_input_delay -clock rgmii_rx_clk_virt -max 3.000 -clock_fall $rx_data_ports -add_delay
-set_input_delay -clock rgmii_rx_clk_virt -min -1.000 -clock_fall $rx_data_ports -add_delay
+set_input_delay -clock rgmii_rx_clk_virt -max 0.200 $rx_data_ports
+set_input_delay -clock rgmii_rx_clk_virt -min -1.800 $rx_data_ports -add_delay
+set_input_delay -clock rgmii_rx_clk_virt -max 0.200 -clock_fall $rx_data_ports -add_delay
+set_input_delay -clock rgmii_rx_clk_virt -min -1.800 -clock_fall $rx_data_ports -add_delay
 
 set_false_path -rise_from [get_clocks rgmii_rx_clk_virt] -fall_to [get_clocks rgmii_rx_clk] -setup
 set_false_path -fall_from [get_clocks rgmii_rx_clk_virt] -rise_to [get_clocks rgmii_rx_clk] -setup
