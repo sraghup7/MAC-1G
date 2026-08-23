@@ -259,17 +259,27 @@ module tb_gem_mdio;
         end
     end
 
-    // The PHY drives the second turnaround bit and the 16 data bits of a read,
-    // changing on the falling edge so each value is stable across the station's
-    // sample. Driving one bit ahead of the counter: at bit_idx == N the next
-    // rising edge is the station's sample of bit N+1.
-    always @(negedge mdc) begin
+    // The PHY drives the second turnaround bit and the 16 data bits of a
+    // read. Clause 22 lets a real PHY change its read data anywhere from 0
+    // to 300 ns after the MDC RISING edge -- so that is what this model
+    // does, at PHY_TCO = 5 ns, rather than on the falling edge where each
+    // value would sit half a period away from every edge the station owns.
+    // Driving inside the datasheet's window is the adversarial arrangement:
+    // a station sampling near the rising edge races the pin's transition,
+    // one sampling at the period's guaranteed-stable end does not.
+    localparam time PHY_TCO = 5ns;
+
+    always @(posedge mdc) begin
+        // This block reads bit_idx AFTER the monitor's same-edge increment
+        // (verified with $monitor traces, not assumed): at the posedge where
+        // bit_idx becomes v, driving ans[62-v] here puts each bit on the
+        // wire across the following half period, which is where the station
+        // samples it.
         if (rst_n && addressed && !is_write &&
-            (bit_idx >= 46) && (bit_idx <= 62)) begin
-            if (bit_idx == 46) mdio_i <= 1'b0;                    // TA
-            else               mdio_i <= answer[62 - bit_idx];    // 15 downto 0
+            (bit_idx >= 47) && (bit_idx <= 62)) begin
+            mdio_i <= #(PHY_TCO) answer[62 - bit_idx];    // 15 downto 0
         end else begin
-            mdio_i <= 1'b1;
+            mdio_i <= #(PHY_TCO) 1'b1;
         end
     end
 
