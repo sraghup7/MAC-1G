@@ -1,4 +1,7 @@
-# Physical pin locations and I/O standards only (see clocks.xdc / exceptions.xdc).
+# Physical pin locations and I/O standards (see clocks.xdc / exceptions.xdc),
+# plus -- since Stage 6 part 2 -- the RX clock region's placement pblock at
+# the bottom of this file, which lives here rather than in a separate file
+# because it is a board-geometry statement like the pins themselves.
 #
 # Source: ALINX AX7035B User Manual (manualslib.com/manual/2994570, ALINX's
 # own product page confirms the same board), and — for the pins the manual

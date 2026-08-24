@@ -836,9 +836,17 @@ All five must be demonstrated, with the output recorded:
 3. `make bitstream` produces `build/gem_top.bit` with gates 0, 1, 1b, 2 and 3
    all reporting PASS, and gate 3 listing the RGMII ports that still lack I/O
    delays.
+   *(Superseded by Stage 6 part 2: gate 3 now REFUSES on unconstrained I/O
+   rather than listing it — the RGMII delays exist and the refusal is the
+   point — and gate 2 passes with the five RX input-delay endpoints waived
+   under the fenced task-4e derivation. See `docs/reports/stage6-part2/`.)*
 4. `make bitstream TOP=skeleton_top` still produces the B.5 step 1 blinker.
 5. Gate 0 has been shown refusing, both against the defect that motivated it and
    against a planted one.
+   *(First half evidenced at commit time — the 68 real criticals; the planted-
+   defect half was demonstrated later: a renamed port in `constrs/pins.xdc`
+   refuses. Gates 1c, 2's waiver fences and gate 4 have since been demonstrated
+   refusing in their own commits.)*
 
 **Not in scope, and deliberately:** any `set_input_delay` or `set_output_delay`,
 the `create_generated_clock` on `rgmii_gtx_clk`, `report_cdc`,

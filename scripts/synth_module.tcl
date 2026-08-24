@@ -210,12 +210,12 @@ if {[llength $paths] == 0} {
     exit 1
 }
 set wns [get_property SLACK [lindex $paths 0]]
-puts "      WNS    $wns ns (post-synthesis estimate, 125 MHz)"
 if {![string is double -strict $wns]} {
     puts "FATAL: worst slack came back as '$wns', which is not a number."
     puts "Build refused: timing was never analysed."
     exit 1
 }
+puts "      WNS    $wns ns (post-synthesis estimate)"
 if {$wns < 0} {
     puts "Build refused: $TOP does not make 125 MHz even before placement"
     puts "(WNS = $wns ns). Stage 4's habit is to pipeline for the target"

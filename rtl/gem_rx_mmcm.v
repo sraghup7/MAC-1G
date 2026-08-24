@@ -54,9 +54,10 @@
 // through a deskew loop -- only the fb-vs-fwd mismatch cancels -- so at slow
 // corner the capture edge lands past the next bit's earliest arrival: hold
 // fails by ~0.33 ns with the edge at 0 degrees. Shifting the output earlier by
-// -1000 ps centres both checks: setup +0.68/+1.13, hold +0.68/+1.12 ns (worst
-// ~+0.5 after clock uncertainty), against the same-corner pairing -- one die,
-// one corner at a time. The step is legal on this grid: 45/9 = 5 degree steps.
+// -1000 ps centres both checks: setup +0.68 (fast) / +1.13 (slow),
+// hold +1.12 (fast) / +0.67 (slow) ns -- worst ~+0.5 after clock
+// uncertainty, against the same-corner pairing: one die, one corner at a
+// time. The step is legal on this grid: 45/9 = 5 degree steps.
 //
 // Vivado STA will still report RX input-delay violations after this trim, and
 // by ~1 ns MORE than before: its ZHOLD model freezes the capture clock's

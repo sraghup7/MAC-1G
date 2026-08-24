@@ -21,7 +21,7 @@ flowchart TB
     KEY1(["KEY1\nM13, clear counters"]) --> GLUE
 
     subgraph CLKRST["gem_clk_rst — B.1b"]
-        MMCM["gem_mmcm\nMMCME2_BASE + 2 BUFG\nCLKOUT0 125 MHz = tx_clk\nCLKOUT1 −72° ≈ 1.6 ns = gtx_clk_shifted"]
+        MMCM["gem_mmcm\nMMCME2_BASE + 2 BUFG\nCLKOUT0 125 MHz = tx_clk\nCLKOUT1 −55° = 1.222 ns = gtx_clk_shifted"]
         RSTS["gem_reset_sync ×3\nasync assert, sync deassert\ntx waits on LOCKED, rx must not"]
         PHYHOLD["PHY reset hold\n≥ 10 ms counted on clk50 (tSR)"]
     end
@@ -29,7 +29,7 @@ flowchart TB
     subgraph SYSDOM["sys_clk domain (= tx_clk, B.7 item 3)"]
         MAC["gem_mac\nthe MAC — second diagram"]
         ECHO["gem_echo — B.5 step 6\nstore and forward, good frames only\nDA/SA exchanged, one frame buffered\n1x BRAM18"]
-        REPORT["gem_stat_report\n12 fields snapshotted in one cycle\none named-field record per second"]
+        REPORT["gem_stat_report\n13 fields snapshotted in one cycle\none named-field record per second"]
         UART["gem_uart_tx\n8N1, 115200 (divisor 1085)"]
     end
 
@@ -65,9 +65,10 @@ material) and the argument is V-21.
 
 Three clock domains: `tx_clk` (125 MHz, also `sys_clk` for v1), `gtx_clk_shifted`
 (125 MHz, phase-shifted copy of `tx_clk`, I/O-only), and `rx_clk` (125 MHz,
-recovered by the PHY, asynchronous to the other two). See B.1b for the
-clocking/reset rationale (including why the phase target is 1.6 ns, centered in the
-PHY's window, not 2.0 ns at its edge) and B.3a for the derived numbers.
+recovered by the PHY, deskewed by the second MMCM, asynchronous to the other
+two). See B.1b for the clocking/reset rationale (TX phase −55° = 1.222 ns, the
+measured-best legal grid point in the PHY's window — see
+`Documents/RGMII I-O Timing Derivation.md` §5) and B.3a for the derived numbers.
 
 ```mermaid
 flowchart LR
@@ -81,12 +82,12 @@ flowchart LR
         TXIN --> ASM --> CRCTX --> ARB
     end
 
-    subgraph GTXCLK["gtx_clk_shifted (I/O only, ~1.6ns phase from tx_clk)"]
+    subgraph GTXCLK["gtx_clk_shifted (I/O only, −55° = 1.222 ns from tx_clk)"]
         ODDR_TX["ODDR: TXD[3:0], TX_CTL,\nGTX_CLK pin"]
     end
 
-    subgraph RXCLK["rx_clk domain (async to tx_clk)"]
-        IDDR_RX["IDDR: RXD[3:0], RX_CTL\n(PHY default 1.2ns delay,\nno FPGA IDELAY needed)"]
+    subgraph RXCLK["rx_clk domain (deskewed, async to tx_clk)"]
+        IDDR_RX["IDDR: RXD[3:0], RX_CTL\n(deskew MMCM capture clock,\n−45° trim — task-4e)"]
         SFD["SFD hunter / deframer\n(strip preamble, stream\nDA..pad onward -- B.4a)"]
         CRCRX["Parallel CRC-32 checker\n+ classifier\n(runt/oversize/bad-FCS/RX_ER)"]
         IDDR_RX --> SFD --> CRCRX
@@ -106,10 +107,13 @@ flowchart LR
     REG -.status/counters.-> READOUT["gem_stat_report + gem_uart_tx\n(R17, B.7 item 5 — board diagram)"]
 ```
 
-**Reset (B.1b):** each domain — `tx_clk`, `rx_clk` — gets its own async-assert /
-sync-deassert reset; `tx_clk`-domain release additionally waits on MMCM lock, and
-`rx_clk`'s deliberately does not, because `rx_clk` does not exist until the PHY has
-a link. PHY `RST_N` is held low ≥ 10 ms (KSZ9031RNX `tSR`) before MDIO is touched.
+**Reset (B.1b):** each domain gets its own async-assert / sync-deassert reset;
+`tx_clk`-domain release waits on MMCM lock, and `rx_clk`'s release is gated on
+`tx_rst_n & rx_mmcm_locked` — the deskew MMCM sits on a recovered clock that
+does not self-recover after a link drop, so a clk50-clocked supervisor re-pulses
+its reset until it locks, and `rx_path_rst_n` covers the destination half of every
+crossing out of the RX domain. PHY `RST_N` is held low ≥ 10 ms (KSZ9031RNX `tSR`)
+before MDIO is touched.
 All of that is `gem_clk_rst`, built in Stage 5 and drawn above; `gem_mac` takes the
 four signals as inputs and contains no reset synchroniser of its own.
 

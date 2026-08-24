@@ -47,10 +47,10 @@ format changes, this fails, which is the only thing keeping the halves together.
 ## The record
 
 ```
-gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001
+gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001
 ```
 
-192 characters and a newline, once a second, at 115200 8N1. Every field named on
+208 characters and a newline, once a second, at 115200 8N1. Every field named on
 every line, every value eight hex nibbles including the one-bit ones, so a
 parser has one rule rather than a width per field. Spec **B.7 item 5** has the
 reasoning, including why this is a UART rather than a VIO probe: a four-hour
@@ -60,7 +60,7 @@ produces a memory of having watched some numbers.
 Two properties worth knowing before reading a log:
 
 **Every field in a line is from the same instant.** The design snapshots all
-twelve when a record starts, because clocking 192 characters out takes about
+thirteen when a record starts, because clocking 208 characters out takes about
 17 ms and fields sampled across that window would show divergence that never
 happened.
 

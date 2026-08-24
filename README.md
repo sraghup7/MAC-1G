@@ -21,11 +21,11 @@ V-20: the counters have been correct since Stage 4 and had no way out of the
 chip. They now leave it as one named-field line a second —
 
 ```
-gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=00221622 phyok=00000001
+gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=00221622 phyok=00000001 rxlock=00000001
 ```
 
 — every field of which is captured in the same cycle, because a record takes 17 ms
-to clock out at 115200 baud and a soak that reads fields from twelve different
+to clock out at 115200 baud and a soak that reads fields from thirteen different
 instants finds divergence it caused itself.
 
 And now **the board itself** (`rtl/gem_top.v`): the MAC, the clocking, the
@@ -54,28 +54,30 @@ WHS +0.052 ns post-route. A new gate refuses the build outright on any
 tree's own defect on the first run, 68 of them, from `constrs/` already
 describing the board while the build still targeted the blinker.
 
-**Known issue: `impl`/`bitstream` currently refuse, by design.** The RGMII I/O
-delay constraints (V-2) are written, corrected, and wired into the real build,
-and they check the physically real DDR capture events. The RX clock deskew
-they demanded is built -- a second MMCM deskewing the recovered receive clock,
-which collapsed the clock network's corner-to-corner spread from 3.720 ns to
-0.635 ns and fixed the hold violation completely (WHS +0.094 ns design-wide) --
-but **setup now fails on all five RX pins by ~2.1 ns**, and the deficit is
-structural: the capture interval sits ~2 ns early and is ~0.11 ns too wide for
-the RGMII eye no matter how it is shifted, a residue that proved identical
-across two different clock topologies and therefore lives in the compensation
-model rather than the routing. Full measurements and the open half-cycle
-question are in
-[`docs/reports/stage6-part2/task-4d-report.md`](docs/reports/stage6-part2/task-4d-report.md)
-and [`task-4d2-report.md`](docs/reports/stage6-part2/task-4d2-report.md);
-the reset architecture the deskew forced (`rx_path_rst_n`, the clk50
-supervisor, the B.1b exception) is in
+**RGMII RX timing: signed off by derivation, bench check pending.** The RGMII
+I/O delay constraints (V-2) are written, corrected, and wired into the real
+build, and they check the physically real DDR capture events. The RX clock
+deskew they demanded is built -- a second MMCM deskewing the recovered receive
+clock -- and task 4e then resolved what task 4d had left open: the ~-2.1 ns
+"structural" setup failure was **Vivado's ZHOLD compensation model**, which
+freezes the deskewed capture-clock arrival at a routing-independent constant
+(~2.3 ns of phantom spread on exactly those five checks). Underneath it sat a
+real defect the model hid in both directions at once -- input-side IBUF spread
+passes straight through a deskew loop, so slow-corner hold missed by ~0.33 ns
+on silicon while STA showed hold passing -- fixed by a -45 degree (-1000 ps)
+capture trim with predicted worst same-corner margin +0.669 ns. STA still shows
+the five RX checks red by ~3.1 ns of artifact and always will; gate 2 waives
+exactly those five endpoints under that documented basis (count asserted,
+envelope bounded) and refuses everything else. R20's RX half gets its
+authoritative check on the bench at bring-up. Evidence:
+[`docs/reports/stage6-part2/task-4e-report.md`](docs/reports/stage6-part2/task-4e-report.md)
+(and 4a/4b/4d/4d2 for the chain that got there); the reset architecture the
+deskew forced (`rx_path_rst_n`, the clk50 supervisor, the B.1b exception) is in
 [`Documents/RX Clock Deskew Design.md`](Documents/RX%20Clock%20Deskew%20Design.md).
 Gate 3 (constraint coverage, refusing rather than reporting, anchored by gate
-1c on the derived RX clock) passes; gate 2 refuses -- which is the honest
-state, recorded here rather than hidden behind a bitstream built from
-mis-modelled pins. Simulation is fully green: `make check` runs 29 of 29
-scenarios against the new reset architecture.
+1c on the derived RX clock) passes; gate 2 passes with the five-path waiver.
+Simulation is fully green: `make check` runs 29 of 29 scenarios against the new
+reset architecture.
 
 Writing it changed exactly one number in the reference. `tx_reject_oversize` had
 frozen an expectation no cut-through MAC can meet — silence on the wire for a
@@ -189,12 +191,15 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | Inferred latches | a deliberate incomplete `always @(*)` — twice, once for a latch that synthesis optimised away and the first gate missed |
 | Timing / slack | commenting out `create_clock` |
 | Constraint coverage | the same |
+| Critical-warning cleanliness (gate 0) | the 68 real ones a mismatched build emitted while exiting 0 — constraints describing `gem_top` read against `skeleton_top` — plus a renamed port planted in `constrs/pins.xdc` |
+| RX capture-clock anchor (gate 1c) | asserted by construction: it refuses on any count ≠ 1, and the failure mode it guards (a stale instance path silently voiding four false-path lines) is exactly what renaming an instance would cause |
+| RX I/O waiver fences | a stale endpoint name (`g_rxd[9]` → "resolved to 4 pin(s)"), TX output delays planted past closure (five paths named and refused), clk50 over-constrained to 8 ns (enumeration-cap refusal) |
 | FIFO overflow, FSM legality, CRC re-seed, R10 recovery | a CRC re-seeded one cycle late, and a receive path made to take 10 cycles to recover instead of 8 |
 | MDIO Clause 22 framing | a write sent with the read opcode, which leaves both ends driving the bus |
 | MDIO preamble length | a frame started mid-MDC-period, which drives 31 preamble ones instead of 32 |
-| Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (B.1b forbids it), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
+| Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (then forbidden — the deskew architecture has since reversed this, with the testbench rewritten around the new semantics), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
 | UART framing and baud | a divisor 3.2% off, and a transmitter reversed to send MSB first. The first of those **passed** until the test was fixed: it had been measuring its own receiver's delay loop rather than the design's edges, and framing alone cannot catch a wrong baud because a receiver resynchronises on every start bit |
-| Status record | the snapshot removed, so the fields come from twelve different instants, and the value nibbles reversed |
+| Status record | the snapshot removed, so the fields come from thirteen different instants, and the value nibbles reversed |
 | Recovery from a mid-operation reset | a `pending` flag moved out of the echo path's reset, so it survives a reset that clears the length and header underneath it. It powers up correct, so a cold start works and every other test stays green — the same defect passes the previous testbench at 31 checks and fails this one |
 | Echo path | the header taken from the live capture register instead of the one latched at commit — the defect this module actually had, which corrupts a reply's destination only when a second frame arrives mid-transmission — and a bad frame echoed as though it were good |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |
@@ -225,9 +230,12 @@ Other useful entry points:
 - `make model` — the golden model's own suite, ~5 s, the fastest signal there is
 - `make vectors` — regenerate every scenario from its seed
 - `make regress-all` — includes the two large random sweeps (~760k cycles)
-- `make synth` / `impl` / `bitstream` — `gem_top` against real constraints, five
-  gates (critical-warning cleanliness, two latch checks, slack, constraint
-  coverage). `TOP=skeleton_top` builds the Stage 2 blinker instead.
+- `make synth` / `impl` / `bitstream` — `gem_top` against real constraints,
+  seven gates (critical-warning cleanliness before and after implementation,
+  the RX capture-clock anchor, two latch checks, constraint coverage, and
+  slack — where the five RGMII RX input checks are waived under the fenced
+  task-4e derivation and everything else must pass outright).
+  `TOP=skeleton_top` builds the Stage 2 blinker instead.
 - `make oocsynth` — the whole MAC synthesised alone: area, slack, and the B.2
   budget checked rather than assumed (Stage 4 step 6). `M=gem_crc32` does one
   module.

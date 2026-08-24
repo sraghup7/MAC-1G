@@ -60,13 +60,16 @@ phantom lands straight in the skew.
 
 ## 2. The physical margin, from the loop's fixed point
 
-With the arc replaced by the measured `-fb`, per corner:
+With the arc replaced by the measured `-fb`, per corner. Two reference
+frames, stated once and kept distinct: the capture edge lands at
+**+2.150 ns (fast) / +3.836 ns (slow) after the data transition** --
+equivalently **+0.950 / +2.636 ns after the pin's own nominal edge**
+(the PHY's 1.200 ns delay):
 
 ```
-capture = pin edge + IBUF+ccio + fwd - fb
-
-fast:  1.200 + 0.913 + 0.973 - 0.936 = +0.950 ns after the pin's nominal edge
-slow:  1.200 + 2.569 + 2.041 - 1.974 = +2.636 ns
+after transition : pin_edge(1.200) + IBUF+ccio + fwd - fb
+fast : 1.200 + 0.913 + 0.973 - 0.936 = +2.150 ns   (residual +0.950)
+slow : 1.200 + 2.569 + 2.041 - 1.974 = +3.836 ns   (residual +2.636)
 ```
 
 (fwd-fast 0.973 recovered from the tool's own DCD arithmetic on the routed
@@ -75,24 +78,20 @@ build; every other term read off the probe reports.)
 Same-corner pairing throughout -- one die sits at one corner at a time, so
 clock-slow-with-data-fast pessimism is not physical here. With data
 insertion Ddat_f/s = 0.263/1.496 and the RGMII v2.0 window (TsetupR =
-TholdR = 1.0 ns about the PHY's nominal 1.2 ns delayed edge):
+TholdR = 1.0 ns about the PHY's nominal 1.2 ns delayed edge), margins in
+skew form -- skew = residual - Ddat, setup margin = 1.0 + skew + tsu,
+hold margin = 1.0 - skew - thold:
 
 ```
-setup margin = 1.0 + (DCD - Ddat) + tsu
-  fast : 1.0 + (0.950 - 0.263) - 0.011 = +1.676 ns
-  slow : 1.0 + (2.636 - 1.496) - 0.011 = +2.129 ns
+skew_fast = 0.950 - 0.263 = +0.687     skew_slow = 2.636 - 1.496 = +1.140
 
-hold margin  = 1.0 - (DCD - Ddat) - thold
-  fast : 1.0 - (0.950 - 0.263) - 0.191 = +0.122 ns
-  slow : 1.0 - (2.636 - 1.496) - 0.191 = -0.327 ns   FAILS
+setup:  fast 1.0 + 0.687 - 0.011 = +1.676   slow 1.0 + 1.140 - 0.011 = +2.129
+hold :  fast 1.0 - 0.687 - 0.191 = +0.122   slow 1.0 - 1.140 - 0.191 = -0.331  FAILS
 ```
 
 So underneath the artifact sat a genuine defect: **at slow corner the capture
 edge lands ~0.33 ns too late** -- the next bit can replace the current one
-before the IDDR samples it. No static phase or input-delay choice fixes it:
-setup and hold trade one-for-one and need opposite directions... they trade
-one-for-one but both have room only if the shift goes EARLIER, and the
-feasible window for an added shift s is:
+before the IDDR samples it. An added shift s must satisfy
 
 ```
 hold, slow : s <= -0.331          setup, fast : s >= -1.676

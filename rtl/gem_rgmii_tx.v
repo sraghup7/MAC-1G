@@ -12,7 +12,7 @@
 // fabric logic. A clock that leaves the chip through ordinary logic has an
 // unpredictable, uncharacterisable delay relative to the data it clocks; one
 // forwarded through an output register in the IOB has the same launch path as
-// the data, which is what makes R14's 1.6 ns number mean anything. The shift
+// the data, which is what makes R14's shift number mean anything. The shift
 // itself is not made here: gtx_clk_shifted is a second MMCM output, phase
 // shifted per B.1b, and this cell only puts it on a pin.
 //----------------------------------------------------------------------------
@@ -22,7 +22,7 @@
 module gem_rgmii_tx (
     input  wire       tx_clk,
 
-    // The 125 MHz clock phase-shifted ~1.6 ns from tx_clk (B.1b). Only ever
+    // The 125 MHz clock phase-shifted -55 deg = 1.222 ns from tx_clk (B.1b). Only ever
     // used to clock the GTX_CLK forwarding cell below.
     input  wire       gtx_clk_shifted,
 

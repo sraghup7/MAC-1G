@@ -30,7 +30,7 @@
 //      measures relative to the frame, so this is invisible -- but it is a
 //      difference, and pretending otherwise is how sim/hardware divergence
 //      gets missed.
-//   2. Nothing here models clock-to-out, setup or hold. R14's 1.6 ns GTX_CLK
+//   2. Nothing here models clock-to-out, setup or hold. R14's GTX_CLK
 //      shift and the PHY's 1.2 ns RX delay cannot be checked by simulation at
 //      all; that is open item V-2, and it closes with static timing analysis
 //      and a scope, not here.

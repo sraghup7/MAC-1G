@@ -9,7 +9,7 @@
 // unchanged against this module. What it could not anticipate was the two
 // requirements that need a port to exist at all:
 //
-//   gtx_clk_shifted   R14's 1.6 ns skew mechanism has to clock the GTX_CLK
+//   gtx_clk_shifted   R14's GTX_CLK skew mechanism has to clock the GTX_CLK
 //                     forwarding cell from somewhere. See the clocking note.
 //   mdio_req_* / phy_id
 //                     R16 asks for "a register-level request interface" and
@@ -63,10 +63,10 @@
 // Documents/RX Clock Deskew Design.md Step 3b for what happens without it:
 // up to 127 octets of fabricated frame data per link drop.
 //
-// gtx_clk_shifted is the second MMCM output, phase shifted about 1.6 ns from
+// gtx_clk_shifted is the second MMCM output, phase shifted -55 deg = 1.222 ns from
 // tx_clk (B.1b), and it exists as a port because the shift cannot be made
 // anywhere else. R14's whole mechanism is that GTX_CLK leaves the chip a
-// deliberate 1.6 ns later than the data it clocks; the cell that forwards it
+// deliberate 1.222 ns later than the data it clocks; the cell that forwards it
 // therefore needs a clock this module does not otherwise have. It is an
 // additive port -- every Stage 3 testbench elaborates unchanged, leaving it
 // unconnected, and the only consequence is that rgmii_gtx_clk does not toggle
@@ -86,7 +86,7 @@ module gem_mac (
     // crossing. Asserts with rx_rst_n; releases after it.
     input  wire         rx_path_rst_n,
 
-    // Second MMCM output, phase-shifted ~1.6 ns from tx_clk (B.1b/R14). Drives
+    // Second MMCM output, phase-shifted -55 deg (1.222 ns) from tx_clk (B.1b/R14). Drives
     // only the GTX_CLK forwarding cell.
     input  wire         gtx_clk_shifted,
 

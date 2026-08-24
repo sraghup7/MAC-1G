@@ -1061,6 +1061,14 @@ which moves setup and hold one-for-one and does not change `skew` (proved in
 `task-4a-report.md`). The next step is then Step 2d's `IDELAYE2` fallback, which
 is a different task.
 
+> **Amended by the Revision 3 addendum (task 4e).** This step's reasoning was
+> written against the tool's model, which turned out to carry ~2.3 ns of
+> phantom spread. Under the corrected physics a static shift *does* close:
+> the feasible window is s ∈ [−1.676, −0.331] ns, and the shipped fix is
+> exactly that — `CLKOUT0_PHASE = −45°`. The "phase trim cannot help" claim
+> above is true of the artifact-widened interval and false of the physical
+> one; see the addendum's §2 for the arithmetic.
+
 ### Modules
 
 **New: `rtl/gem_rx_mmcm.v`** — same two-branch shape as `rtl/gem_mmcm.v`, same
@@ -1306,10 +1314,15 @@ text begins with the word "verilator" is read as a metacomment and fails lint.
 * **`Documents/RGMII I-O Timing Derivation.md`** — the RX section. Task 4b's
   rewrite is in `task-4b-report.md` Step 7 and still applies, plus this design's
   measured result. It must not record the fix as complete until gate 2 passes.
+  *(Done in the task-4e close-out, with the derivation updated past both this
+  document's Step 2c readings and the Rev 3 addendum.)*
 * **`rtl/gem_rgmii_rx.v`** — its "No IDELAY" header paragraph, per
   `task-4b-report.md` Step 7.
 * **`verification_plan.md`** — V-23 gets its resolution or updated status;
   R13/R14 point at it. Add a new open item for the AXI-S abort decision.
+  *(Done: V-23 marked superseded by V-24, which carries the task-4e
+  resolution; V-25 records the abort decision and the D6/D7/JITTER
+  deferrals.)*
 
 ---
 
@@ -1348,11 +1361,13 @@ the ZHOLD insertion arc (UG906 Table 18).
 ### 2. The physical margins, and why 0 degrees was wrong
 
 Replacing the arc with the measured `-fb` gives the true capture-edge
-position relative to the data transition:
+position -- **+2.150 fast / +3.836 slow after the data transition**, i.e.
+a residual of +0.950/+2.636 after the pin's own nominal edge:
 
 ```
-fast:  1.200 + 0.913 + 0.973 - 0.936 = +0.950 ns
-slow:  1.200 + 2.569 + 2.041 - 1.974 = +2.636 ns
+after transition : pin_edge(1.200) + IBUF+ccio + fwd - fb
+fast : 1.200 + 0.913 + 0.973 - 0.936 = +2.150 ns   residual +0.950
+slow : 1.200 + 2.569 + 2.041 - 1.974 = +3.836 ns   residual +2.636
 ```
 
 The input-side IBUF+route spread (~1.66 ns corner-to-corner) passes straight

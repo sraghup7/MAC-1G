@@ -6,7 +6,8 @@ which prints one line per second like:
 
     gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 \
     rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 \
-    link=00000001 speed=00000002 phyid=00221622 phyok=00000001
+    link=00000001 speed=00000002 phyid=00221622 phyok=00000001 \
+    rxlock=00000001
 
 (one line on the wire; wrapped here to fit). Spec B.7 item 5 chose a UART over a
 JTAG probe precisely so that a four-hour soak produces a file that can be

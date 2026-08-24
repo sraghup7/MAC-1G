@@ -5,29 +5,54 @@ which cites the KSZ9031RNX datasheet (Microchip Rev 2.2) Table 19.
 
 ## RX: rgmii_rxd[3:0], rgmii_rx_ctl, sampled by rgmii_rx_clk
 
-The PHY delays RX_CLK 1.2 ns (typical) relative to RXD/RX_DV so the clock
-edge lands inside the data eye rather than at its boundary. RGMII v2.0's
-TsetupR/TholdR window is 1.0-2.0 ns -- the guaranteed minimum setup and hold
-margin at the receiving pin once that delay is applied. This design uses the
-window's worst-case bound, 1.0 ns, as the guaranteed budget: a design that
-only requires the datasheet's stated minimum is safe across the PHY's full
-1.0-2.0 ns delay range, not merely at its typical 1.2 ns value.
+*Rewritten after Stage 6 part 2. The version this replaces derived
+`max = 3.000 / min = -1.000` at zero phase -- a constraint that declared a
+zero-width data eye and checked edge pairs representing no capture event.
+Task 4a found both defects; what stands below is the corrected derivation,
+which `constrs/rgmii_timing.xdc` implements.*
 
-Using the virtual-clock method (matching
-reference/verilog-ethernet/syn/quartus/rgmii_io.sdc's structure): a virtual
-clock rgmii_rx_clk_virt, period 8.000 ns, phase 0, stands for the PHY's own
-undelayed reference. Data transitions relative to that virtual clock's edges
-by the datasheet's guaranteed window:
+**The phase relationship.** A virtual clock `rgmii_rx_clk_virt`, period
+8.000 ns at phase 0, stands for the PHY's own undelayed reference -- its
+edges are, by definition, the nominal data-transition instants. The real
+`rgmii_rx_clk` arrives 1.2 ns later (KSZ9031RNX default RX_CLK delay, out of
+reset, no MDIO write), so `constrs/clocks.xdc` declares it
+`-waveform {1.200 5.200}`. The relative phase is the load-bearing quantity:
+with it, Vivado checks the physically real capture event (launch and capture
+one unit interval apart); without it, setup degenerates onto an edge 8 ns
+out and both checks become meaningless -- measured in task-4a Step 5b.
 
-  max = period/2 - Tsetup_min = 4.000 - 1.0 = 3.000 ns
-  min = -(Thold_min)           = -1.0 ns
+**The input delays track the phase.** With Delta = 1.200 ns and the window's
+worst-case bound TsetupR_min = TholdR_min = 1.0 ns:
 
-applied on both -clock and -clock_fall (RGMII DDR carries data on both edges),
-and constrained against rgmii_rx_clk's *own* falling/rising 90-degree-esque
-sampling structure via the same set_false_path edge-pairing the reference
-uses -- because rgmii_rx_clk_virt and rgmii_rx_clk are not the same clock and
-Vivado would otherwise check non-corresponding edge pairs that do not
-represent a real capture event.
+```
+max = Delta - TsetupR_min       = 1.200 - 1.000 = +0.200 ns
+min = Delta - (UI - TholdR_min) = 1.200 - 3.000 = -1.800 ns
+```
+
+declared on both edges (`-clock` / `-clock_fall`), with four `set_false_path`
+lines removing exactly the non-corresponding DDR edge pairs. The declared
+transition uncertainty is then 2.000 ns per unit interval -- an eye of
+exactly TsetupR_min + TholdR_min, the guarantee the datasheet actually gives.
+
+**What captures, and where the margin comes from.** Since Stage 6 part 2 the
+IDDR cells are clocked by the deskew MMCM's output
+(`rtl/gem_rx_mmcm.v`), not by the raw pin: the feedback loop cancels the
+clock network's delay, collapsing corner-to-corner insertion spread from
+3.720 ns (raw BUFG, task-4a) to ~0.64 ns. The capture clock carries a static
+**CLKOUT0_PHASE = -45 degrees (-1000 ps)** trim, centring the physical
+capture interval inside the eye (task-4e: without it, slow-corner hold fails
+by ~0.33 ns).
+
+**Sign-off status -- read before trusting any slack number on these pins.**
+Task 4e measured the routed feedback path against the compensation arc
+Vivado applies and proved the STA model freezes this MMCM's capture-clock
+arrival at a routing-independent constant: the five RX input-delay checks
+report ~-3.1 ns of pure modeling artifact and can never go green honestly.
+R20's RX half is therefore signed off by the loop-equation derivation --
+predicted worst same-corner margin +0.669 ns after the trim -- plus bench
+measurement at bring-up (`scripts/build.tcl` gate 2 waives exactly those
+five endpoints under that documented basis and refuses everything else).
+Full evidence chain: `docs/reports/stage6-part2/task-4e-report.md`.
 
 ## TX: rgmii_txd[3:0], rgmii_tx_ctl, rgmii_gtx_clk, launched by gtx_clk_shifted
 

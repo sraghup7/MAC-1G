@@ -326,7 +326,7 @@ module instantiated twice rather than two implementations of the same arithmetic
 
 **One port was added in Stage 4**, and it is the only change to the interface the
 Stage 3 stub froze: `gtx_clk_shifted`, an input carrying the MMCM's second output.
-R14's mechanism is that GTX_CLK leaves the chip a deliberate 1.6 ns after the data it
+R14's mechanism is that GTX_CLK leaves the chip a deliberate 1.222 ns after the data it
 clocks, so the cell that forwards it needs a clock the MAC does not otherwise have;
 the alternative is to move that cell outside `gem_mac`, which puts half of the RGMII
 output stage somewhere B.1a does not describe. The addition is backward compatible —
@@ -383,10 +383,14 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
   rule that vendor primitives do not appear in logic modules) and the synchroniser
   itself in `rtl/gem_reset_sync.v`, instantiated once per domain. It also owns the PHY's
   power-on reset hold, counted on `clk50` because that is the only clock running before
-  the MMCM locks. `tb_gem_clk_rst` checks the four properties B.1b asserts and nothing
-  else can: reset asserting with no clock edge available, releasing only on its own
-  domain's edge, `tx_rst_n` never releasing onto an unlocked MMCM, and `rx_rst_n` not
-  depending on the MMCM at all.
+   the MMCM locks. `tb_gem_clk_rst` checks the properties B.1b asserts and nothing
+   else can: reset asserting with no clock edge available, releasing only on its own
+   domain's edge, `tx_rst_n` never releasing onto an unlocked MMCM — and, since the
+   Stage 6 part 2 deskew architecture amended B.1b, `rx_rst_n`'s lock-gated release
+   (`tx_rst_n & rx_mmcm_locked`, on the deskewed clock) with `rx_path_rst_n` asserting
+   and releasing in the right order. That amendment retired the bullet this sentence
+   previously carried — "`rx_rst_n` not depending on the MMCM at all" — which was true
+   of the pre-deskew design and is deliberately false of this one.
 
 ## B.1b Clocking and reset
 
@@ -395,7 +399,7 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 | Clock | Freq | Source | Drives |
 |---|---|---|---|
 | `tx_clk` | 125 MHz | MMCM, locked to the board's 50 MHz oscillator | TX datapath, register block, `sys_clk` (= `tx_clk`, B.7 item 3) |
-| `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted ≈ −72° (1.6 ns) from `tx_clk` | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
+| `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted −55° (1.222 ns) from `tx_clk` — the committed value; see Documents/RGMII I-O Timing Derivation.md §5 for why not the 1.6 ns centre | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
 | `rx_clk` | 125 MHz nominal | Recovered by the KSZ9031RNX's CDR from the link partner's transmit clock, driven in on `RX_CLK` | The RX deskew MMCM only (Stage 6 part 2) — **asynchronous to `tx_clk`** |
 | `rx_clk_deskew` | 125 MHz | Second MMCM, feedback deskewed against the raw pin clock | RGMII input capture, SFD hunt, deframe, CRC check, classify, FIFO write side — the whole receive domain. See B.7 item 6 and `Documents/RX Clock Deskew Design.md` |
 
@@ -416,11 +420,13 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
   `TX_EN`/`TXD` inputs — *"the KSZ9031RNX does not add any delay locally... and expects
   the GTX_CLK delay to be provided on-chip by the MAC."* Required window at the PHY pins:
   `TsetupT`/`TholdT` = 1.2–2.0 ns. Mechanism: the MMCM's second output (`gtx_clk_shifted`
-  above), phase-shifted ≈ **1.6 ns (−72° of the 8 ns period)** from `tx_clk`, feeds the
-  ODDR driving `GTX_CLK`. 1.6 ns is the **numeric center** of the 1.2–2.0 ns window, not
-  its edge — a naive 90°/2.0 ns shift lands exactly on `TsetupT`/`TholdT`'s max and would
-  leave **zero margin**; centering gives ±0.4 ns of margin against both the min and max
-  before anything is even placed and routed. Fallback: the PHY's `GTX_CLK` pad-skew
+  above), phase-shifted **−55° = 1.222 ns of the 8 ns period** from `tx_clk`, feeds the
+  ODDR driving `GTX_CLK`. The committed value is a measured choice, not the window's
+  naive centre: −72°/1.6 ns was never achievable on this VCO's phase grid, and the
+  sweep across every legal grid point inside the PHY window (task-2b/2d/2e, recorded in
+  `Documents/RGMII I-O Timing Derivation.md` §5) put −55° on the 1125 MHz VCO's exact
+  5° grid with the best measured post-route margin — worst TX setup +0.058 ns, hold
+  +1.645 ns. Fallback: the PHY's `GTX_CLK` pad-skew
   register (MMD `2h`, reg `8h`, bits `[9:5]`) can add up to +1.38 ns if the MMCM phase
   alone proves insufficient once measured on the bench (ILA or scope on `GTX_CLK`/`TXD0`).
 
@@ -543,9 +549,10 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   1000 Mbps mode only. (10/100 fallback explicitly out of scope — see B.7.)
 - **R14 [M]** The clock-to-data skew required by RGMII is provided by a deliberate,
   documented mechanism, resolved in B.1b: **RX** relies on the KSZ9031RNX's default
-  1.2 ns PHY-side delay (no MDIO write needed); **TX** is generated FPGA-side via a
-  second MMCM output phase-shifted ~1.6 ns (centered in the PHY's window, ±0.4 ns
-  margin) relative to `tx_clk`, driving `GTX_CLK` through an ODDR — constrained in
+  1.2 ns PHY-side delay plus the deskew MMCM's −45° capture trim; **TX** is generated FPGA-side via a
+  second MMCM output phase-shifted −55° (1.222 ns, the measured-best legal grid point
+  in the PHY's window — see `Documents/RGMII I-O Timing Derivation.md` §5)
+  relative to `tx_clk`, driving `GTX_CLK` through an ODDR — constrained in
   XDC, and never left to luck.
 - **R15 [M]** User side: 8-bit AXI-Stream-style handshake per direction —
   `tdata[7:0], tvalid, tready, tlast` plus `tuser` (TX: DA/SA/EtherType sideband at SOF;
@@ -571,10 +578,14 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   50 MHz board oscillator), `rx_clk` (125 MHz, from PHY RXC pin — asynchronous to
   tx_clk), `sys_clk` (user/management domain; may equal tx_clk domain in v1). All
   domain crossings via async FIFOs or documented synchronizers; **zero undeclared CDC
-  paths** (checked by `report_cdc`).
+  paths** (checked by `report_cdc` — build.tcl gate 4, which asserts the exact
+  inventory of structurally-unprovable-but-documented crossings and refuses on any
+  unmarked synchroniser or new finding).
 - **R20 [M]** Timing closed with WNS ≥ 0 at 125 MHz on all declared clocks, and RGMII I/O
   constrained with real input/output delay values derived from the KSZ9031RNX datasheet
-  (Table 19, "RGMII Timing") — not left unconstrained.
+  (Table 19, "RGMII Timing") — not left unconstrained. Status and the RX-half sign-off
+  mechanism: `verification_plan.md`'s R20 row (TX/fabric by STA; the five RX input checks
+  by derivation plus bench, waived in gate 2 — task-4e).
 - **R21 [M]** MAC-added latency (last bit of a field in → corresponding byte out of the
   user interface) ≤ 32 rx_clk cycles (256 ns) on RX. Measured in sim; a spec number to
   design against — confirmed generous by the bottom-up pipeline sum in B.1b (13 cycles,
@@ -678,7 +689,7 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 | RX FIFO drift term | `2 × 100 ppm × 1518 B ≈ 0.3 B` | worst-case relative skew (`tx_clk` vs. recovered `rx_clk`) accumulated over one max-length frame (12.14 µs) — negligible, because the FIFO drains every IFG rather than absorbing sustained rate mismatch |
 | RX FIFO sync-latency term | ~4 bytes | dual-flop gray-code pointer synchronizer, 2 destination-clock cycles of pointer visibility delay, rounded up with margin |
 | **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.m`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
-| TX `GTX_CLK` phase shift | ≈ 1.6 ns (−72° of an 8 ns period) | center of the KSZ9031RNX's `TsetupT`/`TholdT` window (1.2–2.0 ns, datasheet Table 19), giving ±0.4 ns margin both edges — not the window's 2.0 ns edge (zero margin) — see B.1b |
+| TX `GTX_CLK` phase shift | −55° = 1.222 ns | best measured legal grid point inside the KSZ9031RNX's `TsetupT`/`TholdT` window (1.2–2.0 ns, datasheet Table 19): the 1125 MHz VCO's 5° grid puts −55° exactly on 1.222 ns, and the post-route sweep (task-2e) measured it at worst setup +0.058 ns — ahead of both the 1.2000 ns window edge (which sits on the floor and costs 26 ps of extra VCO jitter) and every other grid point — see `Documents/RGMII I-O Timing Derivation.md` §5 and B.1b |
 | RX capture delay | 1.2 ns (PHY default, no FPGA action) | KSZ9031RNX default RX_CLK-to-RXD delay, inside `TsetupR`/`TholdR` (1.0–2.0 ns) — see B.1b |
 | PHY reset hold time | ≥ 10 ms | KSZ9031RNX datasheet `tSR`: stable supply → reset de-assertion |
 | MDC max frequency | 2.5 MHz | IEEE 802.3-2022 Clause 22 MII management interface ceiling (R16) |
@@ -723,21 +734,26 @@ with the golden RX path. The SystemVerilog layer (`tb/`) runs against a port-onl
 (`rtl/gem_mac_stub.v`) and fails informatively, which is the intended Stage 3 result.
 
 The gates, enumerated by where they live rather than by a total that goes stale
-every time one is added: `make check` runs five — model tests, committed-vector
+every time one is added: `make check` runs five -- model tests, committed-vector
 staleness, Verilator lint per R22, the host record parser, and the scenario
-regression. `scripts/build.tcl` refuses on six conditions — CRITICAL WARNINGs
-counted after synthesis and again before the bitstream, surviving latch cells,
-Synth 8-327 latch inference, negative setup or hold slack, and the six hard
-`check_timing` coverage conditions. `scripts/synth_module.tcl` adds the same two
+regression. `scripts/build.tcl` refuses on: CRITICAL WARNINGs counted after
+synthesis (gate 0) and again after implementation (gate 0b), an RX capture-clock
+anchor that does not resolve to exactly one clock (gate 1c), surviving latch cells
+(gate 1), Synth 8-327 latch inference (gate 1b), the six hard `check_timing`
+coverage conditions plus unconstrained I/O ports (gate 3), negative setup or hold
+slack outside the fenced task-4e RX I/O waiver, and unexplained clock-domain
+crossings per gate 4's asserted inventory (`report_cdc`; R19). `scripts/synth_module.tcl` adds the same two
 latch checks, negative slack, B.2's resource budget for `gem_mac`, and the Stage-4
 memory gate (Synth 8-4767: an array that dissolved into flip-flops instead of
-becoming RAM). **Every one has
-been observed to fail**, not merely to pass — each was tested by planting the defect it
-exists to catch: an injected width mismatch trips the lint gate, one corrupted octet trips
-the vector gate, a planted assertion trips the regression, an inferred latch trips the
-build twice over (once as a surviving cell and once as a synthesis warning for a latch
-optimised away), and commenting out `create_clock` trips the timing gate. The stub trips
-everything else.
+becoming RAM). **Every one has been observed to fail**, not merely to pass --
+each was tested by planting the defect it exists to catch: an injected width
+mismatch trips the lint gate, one corrupted octet trips the vector gate, a
+planted assertion trips the regression, an inferred latch trips the build twice
+over (once as a surviving cell and once as a synthesis warning for a latch
+optimised away), commenting out `create_clock` trips the timing gate, a renamed
+port trips gate 0, a stale anchor path trips gate 1c, a renamed IDDR endpoint and
+planted TX output-delay violations trip gate 2's waiver fences, and removing a
+synchroniser's ASYNC_REG property trips gate 4. The stub trips everything else.
 
 Two harness self-tests (`tb_rgmii_bfm`, `tb_axis_tx_driver`) have no DUT in them and are
 the only runs green today; both exist because the harness had bugs that presented as
@@ -1011,7 +1027,7 @@ deferred to RTL time):**
 
 1. **RGMII skew mechanism (R14).** Resolved in B.1b from the KSZ9031RNX datasheet:
    PHY-side default delay on RX (1.2 ns, no MDIO write), FPGA-side MMCM phase shift on
-   TX (≈1.6 ns, centered in the datasheet's window with margin — not the window's edge —
+   TX (−55° = 1.222 ns, the measured-best legal grid point in the datasheet's window —
    since the PHY does not delay its GTX_CLK input by default). This replaced an earlier
    assumption that the board used a Realtek RTL8211 — corrected after pulling the actual
    ALINX AX7035 manual and Microchip KSZ9031RNX datasheet; see the note in A.2.
@@ -1059,7 +1075,7 @@ deferred to RTL time):**
    gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001
    ```
 
-   192 characters and a newline, once a second. Every field is named on every line and
+   208 characters and a newline, once a second. Every field is named on every line and
    every value is eight hex nibbles including the one-bit ones, so a parser has one rule
    rather than a width per field. **Every field in a line is captured in the same cycle**
    — a record takes ~17 ms to clock out at 115200 baud, and without that snapshot its
@@ -1068,7 +1084,7 @@ deferred to RTL time):**
 
    **Measured cost: 249 LUTs and 373 flip-flops** (`gem_stat_report` 209 + 40 for
    `gem_uart_tx`), against the 150–250 LUTs estimated below. The estimate held, at its
-   top end; the flip-flops are mostly the 12×32-bit snapshot, which the estimate did not
+   top end; the flip-flops are mostly the 13×32-bit snapshot, which the estimate did not
    name because the coherence problem it solves had not been thought about yet.
 
    **What this obliges Stage 5 to build**, stated here so the decision is actionable and
