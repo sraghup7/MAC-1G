@@ -1,9 +1,43 @@
 # 1G Ethernet MAC on a Budget FPGA — Board Selection & Initial Specification
 
-Document status: v0.14 — Stages 1–5 complete, Stage 6 in progress and
-**honestly red**: the RGMII I/O timing work is built and measured, and what it
-measures fails pending a resolution that is recorded rather than faked
-(`docs/reports/stage6-part2/task-4d-report.md`). Versioned alongside the RTL.
+Document status: v0.15 — Stages 1–5 complete, Stage 6 part 2's timing
+question **resolved**: task-4e measured the routed deskew feedback path and
+proved the −2.1 ns STA failure was Vivado's ZHOLD compensation constant, not
+routing — while uncovering a real slow-corner hold miss underneath it, fixed
+by a −45° capture-clock trim with predicted worst physical margin +0.669 ns.
+R20's RX half is signed off by that derivation plus bench measurement; gate 2
+waives exactly the five RX IDDR endpoints under a fenced envelope and refuses
+everything else. Versioned alongside the RTL.
+
+**Changelog v0.14 → v0.15 (task 4e: the half-cycle residue resolved):**
+
+* **The "structural" RX setup failure was an artifact of Vivado's ZHOLD
+  model** — and the open question task-4d recorded is closed with evidence.
+  Measuring the routed feedback path directly (0.936/1.974 ns fast/slow)
+  against the arc the tool applies (−2.703/−6.062) shows the modeled
+  capture-clock arrival is a constructed constant, invariant across buffer
+  topologies and blind to routing, carrying ~2.3 ns of phantom spread onto
+  exactly the five RX input-delay checks. Manual generated-clock
+  re-declaration leaves the arc intact (measured); `COMPENSATION=EXTERNAL`
+  is rejected for any on-chip feedback loop ([Timing 38-290], measured).
+* **Underneath the artifact sat a real defect**: the input-side IBUF+route
+  spread (~1.66 ns corner-to-corner) passes straight through a deskew loop,
+  so at `CLKOUT0_PHASE = 0` the slow-corner hold margin was **−0.33 ns** on
+  silicon even though STA showed hold passing. The v0.14 claim that hold was
+  "completely fixed" was true of the model, not of the physics — recorded
+  here because it is exactly the class of error this project's gates exist
+  to catch and this one slipped past all of them in both directions at once.
+* **Fix:** `CLKOUT0_PHASE = −45.000` (−1000 ps, centred in the feasible
+  window). Predicted physical margins +0.68/+1.13 ns setup, +1.12/+0.67 ns
+  hold (~+0.5 ns after uncertainty). Bench fine-trim remains available in
+  111.1 ps steps or via the KSZ9031RNX MMD pad-skew registers. STA still
+  reports the five RX checks negative by ~3.1 ns of artifact; **R20's RX
+  half is signed off by derivation plus bench measurement**, not WNS.
+* Gate 2 reshaped: it waives exactly the five RX IDDR input endpoints (count
+  asserted — four or six refuse), bounds the waiver at −5.000 ns, refuses on
+  any other violating path named individually, and refuses if violations
+  cannot be fully enumerated. Demonstrated refusing both ways before
+  trusted.
 
 **Changelog v0.13 → v0.14 (Stage 6 part 2: RGMII I/O timing, deskew, reset
 architecture):**

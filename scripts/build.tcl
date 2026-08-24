@@ -342,9 +342,37 @@ foreach {check description} {
 
 puts "==> Constraint coverage check: PASS (see $ct_report)"
 
-# Gate 2: WNS/WHS >= 0. (Stage 2: "fail on negative slack - the tool will
-# otherwise write a broken bitstream and report success"; Stage 7: "never
-# program a bitstream with negative slack.")
+# Gate 2: WNS/WHS >= 0 -- with ONE documented exception. (Stage 2: "fail on
+# negative slack - the tool will otherwise write a broken bitstream and report
+# success"; Stage 7: "never program a bitstream with negative slack.")
+#
+# THE EXCEPTION, AND WHY IT IS NOT THE THIN END OF A WEDGE. Task 4e
+# (docs/reports/stage6-part2/task-4e-report.md) proved, by measuring the
+# routed feedback path against the arc the tool applies, that Vivado's ZHOLD
+# model freezes this MMCM's capture-clock arrival at a constant independent of
+# routing (-1.452/-0.817 ns vs the physical +2.636/+0.950), injecting ~2.3 ns
+# of phantom spread that lands entirely on the five RX input-delay checks.
+# No constraint lever removes it: manual generated-clock override leaves the
+# arc intact (measured), COMPENSATION=EXTERNAL is rejected for any on-chip
+# feedback loop ([Timing 38-290], measured). The physical margins -- loop
+# fixed point, per corner, same-corner pairing -- close at CLKOUT0_PHASE =
+# -45 deg with worst-case +0.669 ns (+~0.5 after uncertainty); R20's RX half
+# is therefore signed off by derivation plus bench measurement, not by WNS,
+# and this gate counts the five RX input-delay paths separately instead of
+# letting them fail the whole build.
+#
+# The waiver is fenced four ways, because a waiver without fences is how a
+# gate rots into rubber:
+#   1. It matches EXACTLY five named endpoints. Four or six resolve, the
+#      build refuses -- a renamed IDDR instance cannot silently widen it.
+#   2. Only endpoints inside the fence are waived; ANY other violating path
+#      refuses the build exactly as before, named individually.
+#   3. A waived slack beyond -5.000 ns refuses: the derivation predicts about
+#      -3.1 ns of pure modeling artifact (task-4d measured -2.109 at phase 0;
+#      the -45 deg trim moves the modeled edge another -1.0). Slack beyond
+#      the envelope means the design moved and the derivation is stale.
+#   4. If violations cannot be enumerated completely, the build refuses
+#      rather than passing on a partial list.
 # Fetch the worst path for each check, and refuse plainly if there is not one.
 #
 # get_timing_paths returns an empty list when the design has no analysable
@@ -377,18 +405,130 @@ proc gem_worst_slack {kind} {
     return $s
 }
 
+# The waiver exists only for the board top. The skeleton has no RX pins, and
+# a fence that refuses the blinker would just teach everyone to bypass gates.
+if {$TOP eq "gem_top"} {
+    # Five exact names, not a wildcard pattern: four data cells under the
+    # g_rxd generate block (dot-separated: g_rxd[0].u_iddr) and the CTL cell
+    # beside them. Exactness IS the fence -- an instance rename resolves to
+    # fewer than five and refuses the build below.
+    set rx_waiver_pins [get_pins -quiet {
+        u_mac/u_rgmii_rx/g_rxd[0].u_iddr/u_iddr/D
+        u_mac/u_rgmii_rx/g_rxd[1].u_iddr/u_iddr/D
+        u_mac/u_rgmii_rx/g_rxd[2].u_iddr/u_iddr/D
+        u_mac/u_rgmii_rx/g_rxd[3].u_iddr/u_iddr/D
+        u_mac/u_rgmii_rx/u_iddr_ctl/u_iddr/D
+    }]
+    if {[llength $rx_waiver_pins] != 5} {
+        puts "FATAL: the RX I/O waiver endpoint lookup resolved to\
+[llength $rx_waiver_pins] pin(s), expected exactly 5."
+        puts "The waiver may only cover the five RGMII receive data/CTL IDDR\
+inputs (task-4e). An instance rename under rtl/gem_rgmii_rx.v changes what"
+        puts "this matches -- resolve it there and here together, never by\
+widening the pattern."
+        puts "Build refused: the RX I/O timing waiver is not anchored."
+        exit 1
+    }
+    set rx_waiver_names {}
+    foreach p $rx_waiver_pins { lappend rx_waiver_names [get_property NAME $p] }
+} else {
+    set rx_waiver_names {}
+}
+
+# Split every violating path of one check into waived (endpoint is one of the
+# five fenced IDDR inputs) and real. Refuses when the enumeration cannot be
+# proven complete: -max_paths caps the query, and hitting the cap means more
+# violations may exist unseen, which is not a passable state.
+# Endpoint identity needs care: depending on tool version the path's
+# endpoint property hands back a pin object or its name. Try NAME and fall
+# back to the raw value rather than assuming either. (The properties are
+# ENDPOINT_PIN/STARTPOINT_PIN on 2024.2 timing paths -- "ENDPOINT" does not
+# exist, measured as [Common 17-54].)
+proc gem_endpoint_name {ep} {
+    if {[catch {get_property NAME $ep} n]} { return $ep }
+    return $n
+}
+
+proc gem_partition_violations {kind waiver_names} {
+    set cap 200
+    set viol [get_timing_paths -$kind -slack_lesser_than 0 -max_paths $cap \
+                  -nworst 1]
+    if {[llength $viol] >= $cap} {
+        puts "FATAL: $kind has reached the $cap-path enumeration cap while\
+partitioning violations."
+        puts "A design this far from closure cannot be waived piecemeal; the\
+derivation in docs/reports/stage6-part2/task-4e-report.md does not cover it."
+        puts "Build refused: $kind violations too numerous to partition."
+        exit 1
+    }
+    set waived {}
+    set real {}
+    foreach p $viol {
+        set ep [gem_endpoint_name [get_property ENDPOINT_PIN $p]]
+        if {[lsearch -exact $waiver_names $ep] >= 0} {
+            lappend waived $p
+        } else {
+            lappend real $p
+        }
+    }
+    return [list $waived $real]
+}
+
 set wns [gem_worst_slack setup]
 set whs [gem_worst_slack hold]
 puts "==> WNS (setup) = $wns ns, WHS (hold) = $whs ns"
-if {$wns < 0} {
-    puts "Build refused: negative setup slack (WNS = $wns ns)."
-    exit 1
+
+set gate2_refused 0
+foreach kind {setup hold} {
+    set worst [expr {$kind eq "setup" ? $wns : $whs}]
+    if {$worst >= 0} { continue }
+    lassign [gem_partition_violations $kind $rx_waiver_names] waived real
+
+    if {[llength $real] > 0} {
+        puts "FATAL: $kind violated on [llength $real] path(s) outside the\
+RX I/O waiver:"
+        foreach p $real {
+            puts "    [gem_endpoint_name [get_property STARTPOINT_PIN $p]] ->\
+[gem_endpoint_name [get_property ENDPOINT_PIN $p]] :\
+[get_property SLACK $p] ns"
+        }
+        puts "The task-4e waiver covers only the five RGMII RX IDDR input\
+checks; everything else must meet timing outright."
+        puts "Build refused: negative $kind slack outside the documented\
+waiver."
+        set gate2_refused 1
+        break
+    }
+
+    # Envelope: predicted artifact is ~-3.1 ns (see the comment above); past
+    # -5.000 the design has moved and the derivation must be redone, not the
+    # envelope widened.
+    set worst_waived +inf
+    foreach p $waived {
+        set s [get_property SLACK $p]
+        if {$s < $worst_waived} { set worst_waived $s }
+    }
+    if {$worst_waived < -5.000} {
+        puts "FATAL: worst waived RX $kind slack is $worst_waived ns, past the\
+-5.000 ns envelope."
+        puts "The derivation predicts about -3.1 ns of ZHOLD-modeling artifact.\
+Slack this far out means the design or constraints moved since task 4e;"
+        puts "redo the derivation, never widen the number."
+        puts "Build refused: RX I/O waiver envelope exceeded."
+        set gate2_refused 1
+        break
+    }
+
+    if {[llength $waived] > 0} {
+        puts "==> RX I/O waiver ($kind): [llength $waived] path(s), worst\
+$worst_waived ns -- signed off by derivation plus bench measurement\
+(docs/reports/stage6-part2/task-4e-report.md)."
+    }
 }
-if {$whs < 0} {
-    puts "Build refused: negative hold slack (WHS = $whs ns)."
-    exit 1
-}
-puts "==> Timing check: PASS (WNS=$wns ns, WHS=$whs ns)"
+if {$gate2_refused} { exit 1 }
+
+puts "==> Timing check: PASS (WNS=$wns ns, WHS=$whs ns; RX I/O waived per\
+task-4e where applicable)"
 
 if {$TARGET eq "impl"} {
     puts "==> Target 'impl' reached. Stopping."

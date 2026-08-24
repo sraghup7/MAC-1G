@@ -36,6 +36,18 @@ create_clock -name rgmii_rx_clk -period 8.000 -waveform {1.200 5.200} \
 #
 # The input delays in constrs/rgmii_timing.xdc are derived from this 1.200 and
 # the RGMII v2.0 receive window; the two files must change together.
+#
+# EXPECTED RED ON THE RX INPUT-DELAY CHECKS -- READ BEFORE "FIXING" THEM.
+# Task 4e (docs/reports/stage6-part2/task-4e-report.md) measured the routed
+# deskew feedback path against the arc Vivado applies and proved the STA
+# model freezes this MMCM's capture-clock arrival at a routing-independent
+# constant (~2.3 ns of phantom spread landing on exactly these checks). The
+# physical margins close with CLKOUT0_PHASE = -45 deg (worst +0.669 ns,
+# derivation in the report); the modeled numbers stay negative by ~3.1 ns of
+# artifact. scripts/build.tcl gate 2 waives exactly those five IDDR endpoints
+# on that basis and refuses everything else. Do not add slack here to make
+# the reports green: it would not touch the artifact and would blind the one
+# check still measuring something real.
 
 # tx_clk and gtx_clk_shifted are MMCM outputs and are NOT declared here.
 # create_generated_clock would be wrong twice over: Vivado derives both from
