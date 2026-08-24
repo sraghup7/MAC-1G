@@ -169,7 +169,9 @@ module gem_mdio #(
 
     // mdio_i synchronised into sys_clk before anything samples it. Held at
     // idle-high through reset, which is what a pulled-up MDIO reads as.
-    reg mdio_i_s1, mdio_i_s2;
+    // ASYNC_REG per gem_reset_sync.v/gem_pulse_sync.v: placement plus CDC
+    // visibility to report_cdc (gate 4).
+    (* ASYNC_REG = "TRUE" *) reg mdio_i_s1, mdio_i_s2;
 
     /* verilator lint_off SYNCASYNCNET */
     // Justified suppression (R22 permits one with a reason): these flops

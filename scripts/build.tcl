@@ -494,6 +494,10 @@ RX I/O waiver:"
         }
         puts "The task-4e waiver covers only the five RGMII RX IDDR input\
 checks; everything else must meet timing outright."
+        if {$TOP ne "gem_top"} {
+            puts "(This top has no RX waiver endpoints -- any violation here\
+is refused outright.)"
+        }
         puts "Build refused: negative $kind slack outside the documented\
 waiver."
         set gate2_refused 1
@@ -529,6 +533,96 @@ if {$gate2_refused} { exit 1 }
 
 puts "==> Timing check: PASS (WNS=$wns ns, WHS=$whs ns; RX I/O waived per\
 task-4e where applicable)"
+
+# Gate 4: CDC (R19: "zero undeclared CDC paths"). report_cdc -details lists
+# every crossing the design's clock relationships do not structurally explain,
+# with a severity per row. This design has crossings that are safe by
+# construction but structurally unprovable to the tool, and they are exactly
+# enumerated here rather than waived wholesale:
+#
+#   CDC-1  x10  FIFO memory -> egress registers. Safe by the pointer
+#               protocol (a slot is readable only after its write is visible
+#               through two synchronised Gray-code stages), covered by
+#               clocks.xdc's asynchronous clock groups. report_cdc cannot
+#               prove a pointer protocol, so it stays Critical; the count and
+#               both endpoint hierarchies are asserted so a NEW unexplained
+#               crossing cannot hide inside the allowance.
+#   CDC-10 x2   Combinational logic before a synchroniser: the reset AND
+#               feeding u_rx_path_rst's and u_rx_rst's asynchronous CLR.
+#               Async assertion is the Step 3b requirement -- a reset that
+#               waits for an edge cannot fire on a domain whose clock just
+#               died -- so the combinational term is deliberate.
+#
+# Everything else Critical refuses, as does ANY CDC-2 ("missing ASYNC_REG")
+# row at all: every synchroniser in this design is marked, so one more means
+# an unmarked one just appeared. report_methodology runs alongside, written
+# for a human to read and deliberately not gated -- it is a design-quality
+# sweep whose findings were triaged once (TIMING-10 drove the ASYNC_REG work)
+# and gating it would refuse builds over noise nobody has scoped.
+set cdc_report "$BUILD_DIR/${TOP}_cdc.rpt"
+if {[catch {report_cdc -details -file $cdc_report} err]} {
+    puts "FATAL: report_cdc could not run: $err"
+    puts "Build refused: gate 4 could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+set fh [open $cdc_report r]
+set cdc_text [read $fh]
+close $fh
+
+proc gem_gate4_classify {cdc_text} {
+    set n_mem 0
+    set n_rstclr 0
+    set n_missing_async 0
+    set unknown {}
+    foreach line [split $cdc_text "\n"] {
+        if {![regexp {^\s*\d+\s+(CDC-\d+)\s+(Critical|Warning|Info)\s} $line \
+                  -> id sev]} { continue }
+        if {$id eq "CDC-2"} {
+            # Missing ASYNC_REG on a synchroniser: always a defect here.
+            lappend unknown $line
+            incr n_missing_async
+            continue
+        }
+        if {$sev ne "Critical"} { continue }
+        if {$id eq "CDC-1" && \
+            [regexp {u_mac/u_rx_fifo/\S+\s+u_mac/u_rx_egress/} $line]} {
+            incr n_mem
+        } elseif {$id eq "CDC-10" && \
+                 ([regexp {u_clk_rst/u_rx_rst/sync_reg\[1\]/\S+\s+u_clk_rst/u_rx_path_rst/sync_reg\[0\]/CLR\s*$} $line] || \
+                  [regexp {u_clk_rst/u_tx_rst/sync_reg\[1\]/\S+\s+u_clk_rst/u_rx_rst/sync_reg\[0\]/CLR\s*$} $line])} {
+            incr n_rstclr
+        } else {
+            lappend unknown $line
+        }
+    }
+    return [list $n_mem $n_rstclr $n_missing_async $unknown]
+}
+
+lassign [gem_gate4_classify $cdc_text] g4_mem g4_rstclr g4_missasync g4_unknown
+set gate4_ok [expr {$g4_mem == 10 && $g4_rstclr == 2 && $g4_missasync == 0 \
+                        && [llength $g4_unknown] == 0}]
+if {!$gate4_ok} {
+    puts "FATAL: gate 4 (CDC) found findings outside the documented set."
+    puts "  FIFO-memory crossings (CDC-1): $g4_mem, expected 10."
+    puts "  Reset-CLR crossings  (CDC-10): $g4_rstclr, expected 2."
+    puts "  Unmarked synchronisers (CDC-2): $g4_missasync, expected 0."
+    puts "  Unclassified critical/warning rows: [llength $g4_unknown]"
+    foreach l $g4_unknown { puts "    [string trim $l]" }
+    puts "The allowed set is documented above; extend it only with the same"
+    puts "rigour -- structure argued, endpoints named, count asserted."
+    puts "Build refused: an unexplained clock-domain crossing is present."
+    exit 1
+}
+puts "==> CDC check: PASS (10 FIFO-memory + 2 documented reset-CLR crossings,\
+ 0 unmarked synchronisers; see $cdc_report)"
+
+set methodology_report "$BUILD_DIR/${TOP}_methodology.rpt"
+if {[catch {report_methodology -file $methodology_report} err]} {
+    puts "WARNING: report_methodology failed: $err (not gated -- continuing)"
+} else {
+    puts "==> Methodology report written: $methodology_report (not gated -- read manually)"
+}
 
 if {$TARGET eq "impl"} {
     puts "==> Target 'impl' reached. Stopping."

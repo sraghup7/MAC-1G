@@ -83,8 +83,12 @@ module gem_rx_fifo #(
 
     reg  [AW:0] wr_bin,  wr_gray;
     reg  [AW:0] rd_bin,  rd_gray;
-    reg  [AW:0] rd_gray_s1, rd_gray_s2;   // read pointer, seen from write side
-    reg  [AW:0] wr_gray_s1, wr_gray_s2;   // write pointer, seen from read side
+     // ASYNC_REG on both pointer-synchroniser chains, matching
+     // gem_reset_sync.v/gem_pulse_sync.v: keeps each pair in one slice and
+     // marks them for report_cdc (gate 4 counts unmarked synchroniser
+     // endpoints as findings).
+     (* ASYNC_REG = "TRUE" *) reg  [AW:0] rd_gray_s1, rd_gray_s2;   // read pointer, seen from write side
+     (* ASYNC_REG = "TRUE" *) reg  [AW:0] wr_gray_s1, wr_gray_s2;   // write pointer, seen from read side
 
     function [AW:0] bin2gray;
         input [AW:0] value;
@@ -119,8 +123,12 @@ module gem_rx_fifo #(
     // domain reset.
     //------------------------------------------------------------------
     /* verilator lint_off SYNCASYNCNET */
-    reg rd_rst_n_w1, rd_rst_n_w2;     // read side's reset, in wr_clk
-    reg wr_rst_n_r1, wr_rst_n_r2;     // write side's reset, in rd_clk
+    // ASYNC_REG: reset synchroniser, same class as wr_rst_n_r1/r2 below.
+    (* ASYNC_REG = "TRUE" *) reg rd_rst_n_w1, rd_rst_n_w2;     // read side's reset, in wr_clk
+    // ASYNC_REG: these are reset synchronisers (the other domain's reset,
+    // re-synchronised), same class as gem_reset_sync.v -- placement plus CDC
+    // visibility to report_cdc (gate 4).
+    (* ASYNC_REG = "TRUE" *) reg wr_rst_n_r1, wr_rst_n_r2;     // write side's reset, in rd_clk
 
     always @(posedge wr_clk or negedge wr_rst_n) begin
         if (!wr_rst_n) begin

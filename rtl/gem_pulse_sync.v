@@ -35,7 +35,14 @@ module gem_pulse_sync (
 );
 
     reg toggle;
-    reg sync1, sync2, sync3;
+
+    // ASYNC_REG on the destination chain, matching gem_reset_sync.v: it keeps
+    // the three flops placed together in one slice (so an intervening LUT can
+    // never lengthen the metastability-resolution window) and marks them for
+    // every CDC analysis the toolchain runs -- report_cdc counts unmarked
+    // synchroniser endpoints as "No ASYNC_REG" findings and escalates the
+    // crossing's severity. scripts/build.tcl gate 4 refuses on that.
+    (* ASYNC_REG = "TRUE" *) reg sync1, sync2, sync3;
 
     always @(posedge src_clk or negedge src_rst_n) begin
         if (!src_rst_n) begin

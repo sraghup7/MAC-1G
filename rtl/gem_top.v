@@ -281,7 +281,7 @@ module gem_top #(
     // would be logic guarding against an outcome identical to the intended
     // one. (`gem_stats` clears synchronously, so there is no window where a
     // second pulse could catch it half done.)
-    reg  key_sync1, key_sync2, key_sync3;
+    (* ASYNC_REG = "TRUE" *) reg  key_sync1, key_sync2, key_sync3;
 
     always @(posedge tx_clk or negedge tx_rst_n) begin
         if (!tx_rst_n) begin
