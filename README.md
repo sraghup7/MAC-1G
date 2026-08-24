@@ -38,7 +38,7 @@ else: a 50 MHz oscillator, a reset key, RGMII, and it reads back LEDs, a serial
 line and frames on the wire.
 
 Measured on the whole board, in context, against real constraints: **1123 LUTs,
-1422 FFs, one BRAM18, one MMCM**, no latches, and **WNS +1.546 ns** at 125 MHz
+1422 FFs, one BRAM18, one MMCM**, no latches, and **WNS +1.546 ns** at 125 MHz post-synthesis (Stage 5 snapshot -- post-route the board closes at +0.058 ns on TX, see the timing block below)
 after synthesis.
 
 And the PC side: [`sw/host/`](sw/host/README.md) drives B.5's steps from a

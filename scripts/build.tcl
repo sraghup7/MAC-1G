@@ -624,6 +624,84 @@ if {[catch {report_methodology -file $methodology_report} err]} {
     puts "==> Methodology report written: $methodology_report (not gated -- read manually)"
 }
 
+
+# Gate 5: physical verification. report_drc and report_route_status are the
+# flow doc's Stage-7 outputs that this script never produced -- "synthesis
+# completed successfully" tells you nothing, and neither does a bitstream
+# written without asking the router whether it finished.
+#
+#   DRC           refuse on any CRITICAL-severity rule hit (Warnings are
+#                 triaged in docs/reports/stage7/methodology-triage.md and
+#                 its companions -- CFGBVS fixed at source, REQP-1840 is the
+#                 echo buffer's async-reset index, documented there).
+#   Route status  refuse if any net has routing errors; a bitstream whose
+#                 nets are not all routed is not a bitstream.
+#
+# report_power and report_qor_assessment run alongside as artifacts for a
+# human to read: power at default activity (confidence LOW -- no real
+# switching data exists until the bench), QoR score penalised by the five
+# waived RX input-delay paths and therefore expected below top marks by
+# construction.
+set drc_report "$BUILD_DIR/${TOP}_drc.rpt"
+if {[catch {report_drc -file $drc_report} err]} {
+    puts "FATAL: report_drc could not run: $err"
+    puts "Build refused: gate 5 could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+set fh [open $drc_report r]
+set drc_text [read $fh]
+close $fh
+set drc_critical 0
+foreach line [split $drc_text "\n"] {
+    if {[regexp {^\|\s+\S+\s+\| Critical} $line]} { incr drc_critical }
+}
+if {$drc_critical > 0} {
+    puts "FATAL: report_drc found $drc_critical CRITICAL rule hit(s)."
+    puts "See $drc_report."
+    puts "Build refused: a physical-design rule failed at Critical severity."
+    exit 1
+}
+puts "==> DRC check: PASS (0 Critical rule hits; see $drc_report)"
+
+set rs_report "$BUILD_DIR/${TOP}_route_status.rpt"
+if {[catch {report_route_status -file $rs_report} err]} {
+    puts "FATAL: report_route_status could not run: $err"
+    puts "Build refused: gate 5 could not run, and a gate that cannot run must"
+    puts "not report success."
+    exit 1
+}
+set fh [open $rs_report r]
+set rs_text [read $fh]
+close $fh
+if {![regexp {#\s+of nets with routing errors\s*\.*\s*:\s+(\d+)} $rs_text -> rs_errors]} {
+    puts "FATAL: route-status report has no 'routing errors' count."
+    puts "The format may have changed; read $rs_report and update this parser"
+    puts "rather than widening the match until it passes."
+    puts "Build refused: gate 5 cannot evaluate route status."
+    exit 1
+}
+if {$rs_errors > 0} {
+    puts "FATAL: $rs_errors net(s) have routing errors."
+    puts "See $rs_report."
+    puts "Build refused: the design is not fully routed."
+    exit 1
+}
+puts "==> Route-status check: PASS (0 routing errors; see $rs_report)"
+
+set power_report "$BUILD_DIR/${TOP}_power.rpt"
+if {[catch {report_power -file $power_report} err]} {
+    puts "WARNING: report_power failed: $err (not gated -- continuing)"
+} else {
+    puts "==> Power report written: $power_report (default activity -- confidence LOW until measured)"
+}
+
+set qor_report "$BUILD_DIR/${TOP}_qor.rpt"
+if {[catch {report_qor_assessment -file $qor_report} err]} {
+    puts "WARNING: report_qor_assessment failed: $err (not gated -- continuing)"
+} else {
+    puts "==> QoR assessment written: $qor_report (score penalised by the documented RX waiver)"
+}
 if {$TARGET eq "impl"} {
     puts "==> Target 'impl' reached. Stopping."
     return
