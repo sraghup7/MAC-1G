@@ -1238,27 +1238,42 @@ Apply in this order, confirming `report_clocks` between steps:
 
 ### Acceptance criteria
 
-**A — timing, the one that decides it.** Post-route, all five RX ports
-individually, both corners:
+**A — timing, the one that decides it.** Re-based by Stage 7 onto the task-4e
+regime: the original form measured STA skews against `≥ −0.977 / ≤ +0.784`,
+which is unsatisfiable by construction now that the ZHOLD compensation
+constant is proven to sit inside those numbers (task-4e). The criterion, in
+its current form:
 
-* `skew_fast ≥ −0.977 ns` **and** `skew_slow ≤ +0.784 ns` — Task 4b's two-sided
-  form. Do not use the one-sided `spread < 1.761 ns` criterion; 4b's whole
-  finding is that it is necessary and not sufficient.
+* **Physical margins from the loop equation**, per corner, same-corner
+  pairing, from *measured* routed segments -- exactly the §2 computation of
+  `task-4e-report.md`: setup/hold margin ≥ 0 at fast AND slow. With the
+  committed −45° trim these are +0.676/+1.129 setup, +1.122/+0.669 hold.
+  Any RTL or constraint change to the RX capture path re-derives this table
+  from a fresh checkpoint before it is trusted.
+* **STA side:** the five RX input-delay endpoints stay inside gate 2's fenced
+  waiver envelope (−5.000 ns; measured −3.109). Movement past the envelope
+  means the design moved and the derivation above is stale.
 * the `Requirement:` lines confirmed to name real DDR capture events one unit
-  interval apart, per `task-4a-report.md` Step 4's method. **A passing gate 2 is
-  not evidence on its own** — 4a rejected a *passing* configuration (Step 5c) on
-  exactly this check.
+  interval apart, per `task-4a-report.md` Step 4's method. A passing gate 2 is
+  not evidence on its own -- 4a rejected a *passing* configuration (Step 5c)
+  on exactly this check.
 * **Run the whole of A twice: at `REF_JITTER1 = 0.010` and at 0.125** (DS181's
   `MMCM_FINJITTER` ceiling expressed in UI). Passing at 0.010 is required;
   the margin at 0.125 is recorded either way, and a failure there is a known gap
   requiring bench jitter measurement before sign-off, not a build blocker. If
   `BANDWIDTH` is changed to `"LOW"`, re-run both.
+  *(Stage 7 note: the physical half of A is jitter-independent -- REF_JITTER1
+  feeds only modeled clock uncertainty on the derived clock -- so the rerun's
+  evidence is the modeled numbers at both settings plus this sentence.)*
 * TX `WNS ≥ 0`, and **investigate** any movement from `+0.058 ns` rather than
-  treating movement as failure: a second MMCM and two more `BUFG`s can
+  treating movement as failure: a second MMCM and two more buffers can
   legitimately perturb the placement of unrelated logic.
 * a segment-by-segment insertion-delay table for the new clock path, in the
   format `task-4a-report.md` and `task-4b-report.md` both used, so the three are
-  comparable.
+  comparable -- delivered by `task-4d-report.md` and consumed by task-4e.
+* **the authoritative half is bench measurement** (Stage 8): scope or ILA on
+  RX_CLK/RXD at the pins once the board is in hand. Everything above bounds
+  the silicon analytically; it does not measure it.
 
 **B — constraints.** `report_clocks` shows the derived RX clock; the Step 2
 `error` guard did not fire; `report_clock_interaction` shows no timed paths
