@@ -6,12 +6,16 @@
 // edge, RX_DV ^ RX_ER on the falling one, so an error shows up as the two
 // edges disagreeing rather than as a separate signal.
 //
-// No IDELAY, and that is a decision rather than an omission (R14, B.1b): the
-// KSZ9031RNX adds 1.2 ns to RX_CLK relative to RXD by default, out of reset,
-// with no MDIO write -- which sits inside the RGMII v2.0 receive window, so an
-// IDDR clocked directly by the recovered clock is sufficient for v1. The
-// fallback if the bench says otherwise is the PHY's own pad-skew register, not
-// fabric delay lines. Simulation cannot check any of this (open item V-2).
+// No IDELAY in v1 -- but the header this paragraph replaces claimed more than
+// that, and the claim was retracted by measurement. It reasoned about the
+// PHY's 1.2 ns RX_CLK delay at the PINS and omitted the FPGA's own clock
+// insertion, which task-4a measured at 3.720 ns corner-to-corner on the raw
+// BUFG network -- more than the entire guaranteed eye. What actually makes
+// capture close is the deskew MMCM upstream (rtl/gem_rx_mmcm.v,
+// Documents/RX Clock Deskew Design.md) plus its -45 degree capture trim;
+// task-4e derived the margins and signed them off for bench confirmation.
+// If the bench disagrees, the first lever is the PHY's own pad-skew register,
+// not fabric delay lines. Simulation cannot check any of this (V-2).
 //
 // Everything downstream of this module runs on rx_clk and is asynchronous to
 // tx_clk (R19). The only path out of this domain is the async FIFO and the

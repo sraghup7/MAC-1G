@@ -40,14 +40,31 @@
 // grid (111.1 ps against 125.0 ps), and it is the VCO gem_mmcm already runs,
 // so a reviewer checking one configuration has checked the grid of both.
 //
-// CLKOUT0_PHASE = 0.000 IS A DERIVATION, NOT A DEFAULT. The loop drives the
-// CLKFBIN edge into coincidence with the CLKIN1 edge at the MMCM's pins, so
-// the capture edge lands where the pin's clock does -- and the KSZ9031RNX has
-// already delayed RX_CLK by 1.2 ns relative to RXD/RX_DV out of reset (B.1b),
-// which puts the edge in the centre of the guaranteed eye; task-4a's window
-// arithmetic puts the optimum within 0.1 ns of zero. No shift is wanted. Trim,
-// if a bench measurement ever asks for it, moves in k x VCO_period/8 = 111.1 ps
-// steps and must be an exact multiple of 45/9 = 5 degrees.
+// CLKOUT0_PHASE = -45.000 (= -1000 ps) IS A DERIVATION, NOT A DEFAULT -- and
+// it replaced an earlier 0.000 that was ALSO a derivation, honestly held and
+// physically wrong. Task 4e (docs/reports/stage6-part2/task-4e-report.md)
+// measured the routed feedback path on the real checkpoint and worked the
+// loop's fixed point through per corner:
+//
+//   capture edge = pin edge + IBUF+ccio + fwd - fb
+//     fast:  1.200 + 0.913 + 0.973 - 0.936 = +2.150 ns after the data transition
+//     slow:  1.200 + 2.569 + 2.041 - 1.974 = +3.836 ns
+//
+// The input-side IBUF+route spread (~1.66 ns corner-to-corner) passes straight
+// through a deskew loop -- only the fb-vs-fwd mismatch cancels -- so at slow
+// corner the capture edge lands past the next bit's earliest arrival: hold
+// fails by ~0.33 ns with the edge at 0 degrees. Shifting the output earlier by
+// -1000 ps centres both checks: setup +0.68/+1.13, hold +0.68/+1.12 ns (worst
+// ~+0.5 after clock uncertainty), against the same-corner pairing -- one die,
+// one corner at a time. The step is legal on this grid: 45/9 = 5 degree steps.
+//
+// Vivado STA will still report RX input-delay violations after this trim, and
+// by ~1 ns MORE than before: its ZHOLD model freezes the capture clock's
+// arrival at a constant independent of the routed feedback path (task-4e).
+// R20's RX half is signed off by this derivation plus bench measurement, not
+// by WNS; scripts/build.tcl gate 2 encodes exactly that split. Fine trim on
+// the bench moves in k x VCO_period/8 = 111.1 ps steps (or the KSZ9031RNX's
+// MMD pad-skew registers) and must remain an exact multiple of 5 degrees.
 //
 // STARTUP_WAIT IS "FALSE", AND THAT IS LOAD-BEARING. TRUE would hold the whole
 // device out of startup until this MMCM locks -- and its input clock does not
@@ -93,7 +110,8 @@ module gem_rx_mmcm (
     // is no insertion delay in simulation for a deskew to cancel, so modelling
     // one would model nothing. Detection latency here is up to 80 ns against
     // the silicon's 8 ns (one PFD cycle, UG472 p.83); LOCK_CYCLES gives ~1 us
-    // against MMCM_TLOCKMAX's 100 us; jitter, the static phase offset and the
+    // against MMCM_TLOCKMAX's 100 us; jitter, the static phase offset, the
+    // CLKOUT0_PHASE = -45 degree (-1000 ps) capture trim and the
     // real deskew are absent entirely.
     //
     // Clock-stop detection is a time-based process sampling a toggle that
@@ -170,8 +188,8 @@ module gem_rx_mmcm (
         .DIVCLK_DIVIDE      (1),
         .CLKFBOUT_MULT_F    (9.000),     // VCO = 1125 MHz
         .CLKFBOUT_PHASE     (0.000),
-        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz, phase 0: see the header
-        .CLKOUT0_PHASE      (0.000),
+        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -45 deg: see the header
+        .CLKOUT0_PHASE      (-45.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),     // default, UNVERIFIED: criterion A runs 0.125 too
         .STARTUP_WAIT       ("FALSE")    // load-bearing: TRUE bricks a linkless board

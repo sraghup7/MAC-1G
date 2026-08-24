@@ -1310,3 +1310,76 @@ text begins with the word "verilator" is read as a metacomment and fails lint.
   `task-4b-report.md` Step 7.
 * **`verification_plan.md`** — V-23 gets its resolution or updated status;
   R13/R14 point at it. Add a new open item for the AXI-S abort decision.
+
+---
+
+## Revision 3 addendum (task 4e): the capture edge, measured and corrected
+
+*Written after task 4d's go/no-go measurement came back BLOCKED. Task 4e
+resolved the open question that report recorded -- the "half-cycle residue"
+-- and its result amends Step 2c's readings and the CLKOUT0_PHASE = 0
+derivation above. The full evidence is
+[`docs/reports/stage6-part2/task-4e-report.md`](../docs/reports/stage6-part2/task-4e-report.md);
+the essentials:*
+
+### 1. The pessimistic reading of Step 2c was still too optimistic
+
+Step 2c's three readings all assumed the tool's STA reflects the loop's fixed
+point. It does not. Measuring the routed feedback path directly on the
+task-4d checkpoint:
+
+| Quantity | Fast | Slow |
+|---|---|---|
+| Routed fb path (CLKFBOUT -> BUFH -> CLKFBIN) | 0.936 | 1.974 |
+| Vivado's compensation arc `Prop_mmcme2_adv_CLKIN1_CLKOUT0` | -2.703 | -6.062 |
+
+The physical transfer is exactly `-fb_path` (that is what the PFD enforces).
+Vivado's ZHOLD model applies a constant instead: comparing the BUFG and BUFH
+builds shows `IBUF+ccio + arc + fwd` is invariant at -1.452/-0.817 ns -- the
+arc anti-correlates perfectly with the forward route, i.e. it is constructed,
+not measured. The task-4d2 "property of the tool's model" conclusion was
+right; this is the mechanism.
+
+Escapes tested and closed: manual generated-clock re-declaration leaves the
+arc intact (measured); `COMPENSATION=EXTERNAL` is rejected for any on-chip
+feedback loop ([Timing 38-290], measured); PHASESHIFT_MODE does not bear on
+the ZHOLD insertion arc (UG906 Table 18).
+
+### 2. The physical margins, and why 0 degrees was wrong
+
+Replacing the arc with the measured `-fb` gives the true capture-edge
+position relative to the data transition:
+
+```
+fast:  1.200 + 0.913 + 0.973 - 0.936 = +0.950 ns
+slow:  1.200 + 2.569 + 2.041 - 1.974 = +2.636 ns
+```
+
+The input-side IBUF+route spread (~1.66 ns corner-to-corner) passes straight
+through a deskew loop -- only the fb-vs-fwd mismatch cancels -- which is the
+term every reading in Step 2c missed. Same-corner pairing (one die sits at
+one corner at a time), TsetupR = TholdR = 1.0 ns about the PHY's nominal
+1.2 ns delayed edge, IDDR tsu = -0.011 / thold = 0.191:
+
+```
+setup margin = 1.0 + skew + tsu      hold margin = 1.0 - skew - thold
+skew_fast = 0.687   skew_slow = 1.140
+```
+
+Hold fails at slow corner by ~0.33 ns with the output at 0 degrees: the
+capture edge lands after the next bit can arrive. The feasible shift window
+is s in [-1.676, -0.331]; centred at **s = -1.000 ns**, which on this VCO is
+exactly **CLKOUT0_PHASE = -45.000** -- one grid step of 5 degrees, legal.
+
+Predicted margins after trim: setup +0.676/+1.129, hold +1.122/+0.669 ns;
+worst ~+0.5 ns after clock uncertainty. Bench fine-trim remains available in
+111.1 ps steps or via the KSZ9031RNX MMD pad-skew registers.
+
+### 3. What this means for STA sign-off
+
+Vivado will still fail the five RX input-delay checks after the trim --
+about 1 ns worse than task-4d's numbers, since WAVEFORM-mode phase moves the
+modeled edge too. R20's RX half is signed off by this derivation plus bench
+measurement. `scripts/build.tcl` gate 2 now fences exactly those five IDDR
+endpoints (count asserted, envelope bounded at -5.000 ns, any other
+violation refusing as before) instead of letting them fail the whole build.
