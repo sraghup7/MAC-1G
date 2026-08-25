@@ -27,6 +27,8 @@ similar on Linux). Raw Ethernet needs **Npcap** on Windows or **root** on Linux.
 | `gem_records.py` | Parses the status line `gem_stat_report` prints, and subtracts two of them. Pure standard library. |
 | `test_gem_records.py` | Its tests, which run with no board, no serial port and nothing installed. |
 | `gem_host.py` | The bring-up commands, one per B.5 step. |
+| `test_gem_host.py` | Tests for the pass/fail decisions inside `gem_host.py` (`evaluate_rx`, `check_echo_frame`, `evaluate_corrupt`, `detect_anomalies`, ...), isolated from Scapy, the serial port and each command's I/O. |
+| `test_gem_host_commands.py` | Tests for the commands themselves (`cmd_rx`, `cmd_echo`, `cmd_corrupt`, `cmd_soak`) against fakes standing in for `StatusPort` and Scapy — including a fake board that misbehaves, on the same "plant the defect and watch the check catch it" principle the RTL gates in the top-level README use. |
 | `requirements.txt` | Scapy and pyserial, both imported lazily so `monitor` works without Scapy. |
 
 Run the tests with:
@@ -35,12 +37,22 @@ Run the tests with:
 python -m unittest discover -s sw/host
 ```
 
-They are part of `make check`, and they are worth having because **the record
-format is a contract between two languages**. `rtl/gem_stat_report.v` prints it
-and `gem_records.py` reads it, and nothing else in the build looks at both. The
-two fixtures those tests parse are lines the design actually printed, copied out
-of the simulation logs of `tb_gem_stat_report` and `tb_gem_top` — so if the RTL's
-format changes, this fails, which is the only thing keeping the halves together.
+They are part of `make check`, and they are worth having for two reasons.
+**The record format is a contract between two languages**: `rtl/gem_stat_report.v`
+prints it and `gem_records.py` reads it, and nothing else in the build looks at
+both. The two fixtures `test_gem_records.py` parses are lines the design
+actually printed, copied out of the simulation logs of `tb_gem_stat_report` and
+`tb_gem_top` — so if the RTL's format changes, this fails, which is the only
+thing keeping the halves together.
+
+**And `gem_host.py` is what declares bring-up successful.** Every other check in
+this repository is proven able to fail before it is trusted (the README's gate
+table); until `test_gem_host.py` and `test_gem_host_commands.py` existed, this
+was the one exception — `evaluate_rx`, `check_echo_frame`, `evaluate_corrupt`
+and the commands built on them had never executed. A bug here does not cause a
+build failure, a lint warning or a red simulation; it causes a `PASS` at the
+bench that shouldn't be one, or a `FAIL` chasing a bug that is actually in this
+file.
 
 ---
 

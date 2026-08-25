@@ -44,6 +44,7 @@ import random
 import sys
 import time
 from dataclasses import dataclass
+from typing import Iterable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -84,21 +85,36 @@ class StatusPort:
         self._ser.readline()
 
     def read_record(self, tries: int = 4) -> gr.Record:
-        for _ in range(tries):
-            line = self._ser.readline().decode("ascii", errors="replace")
-            if not line.strip():
-                continue
-            try:
-                return gr.parse(line)
-            except gr.RecordError:
-                continue
-        raise TimeoutError(
-            "no complete status record arrived. The board prints one a second: "
-            "check the port, the baud (115200 8N1), and that the design is out "
-            "of reset -- the lock LED tells you the last of those")
+        lines = (self._ser.readline().decode("ascii", errors="replace")
+                 for _ in range(tries))
+        return _read_record_from_lines(lines, tries)
 
     def close(self) -> None:
         self._ser.close()
+
+
+def _read_record_from_lines(lines: Iterable[str], tries: int) -> gr.Record:
+    """The retry/skip decision `read_record` makes, isolated from the port.
+
+    Blank lines (the readline timeout firing) and torn lines (the port opened
+    mid-record) are expected and skipped; anything else exhausting `tries`
+    means the board is not talking, not that this host got unlucky.
+    """
+    seen = 0
+    for line in lines:
+        seen += 1
+        if seen > tries:
+            break
+        if not line.strip():
+            continue
+        try:
+            return gr.parse(line)
+        except gr.RecordError:
+            continue
+    raise TimeoutError(
+        "no complete status record arrived. The board prints one a second: "
+        "check the port, the baud (115200 8N1), and that the design is out "
+        "of reset -- the lock LED tells you the last of those")
 
 
 # --------------------------------------------------------------------------
@@ -140,6 +156,26 @@ def _expected_reply_payload(sent: bytes) -> bytes:
 # --------------------------------------------------------------------------
 # B.5 step 4 -- receive only, counters
 # --------------------------------------------------------------------------
+def evaluate_rx(d: dict[str, int], expected_count: int) -> tuple[bool, list[str]]:
+    """Did exactly `expected_count` good frames arrive and nothing else move.
+
+    Traffic sent by `rx` is all well-formed, so rx_ok must match the count
+    exactly -- short means a drop, long means something else is on the wire --
+    and every error counter must stay at zero, because one bad-classified
+    frame among otherwise-correct counting is the classifier miscounting.
+    """
+    ok = True
+    messages = []
+    if d["rx_ok"] != expected_count:
+        ok = False
+        messages.append(f"rx_ok advanced by {d['rx_ok']}, expected {expected_count}")
+    for name in ("rx_bad", "rx_runt", "rx_over", "rx_rxer"):
+        if d[name]:
+            ok = False
+            messages.append(f"{name} advanced by {d[name]} on traffic that was all good")
+    return ok, messages
+
+
 def cmd_rx(args) -> int:
     Ether, Raw, sendp, _sniff, _conf = _scapy()
     port = StatusPort(args.port)
@@ -162,14 +198,9 @@ def cmd_rx(args) -> int:
     d = gr.deltas(before, after)
     print(f"delta:  {gr.format_deltas(d)}")
 
-    ok = True
-    if d["rx_ok"] != args.count:
-        ok = False
-        print(f"FAIL rx_ok advanced by {d['rx_ok']}, expected {args.count}")
-    for name in ("rx_bad", "rx_runt", "rx_over", "rx_rxer"):
-        if d[name]:
-            ok = False
-            print(f"FAIL {name} advanced by {d[name]} on traffic that was all good")
+    ok, messages = evaluate_rx(d, args.count)
+    for m in messages:
+        print(f"FAIL {m}")
 
     print("PASS step 4: every frame was received and classified good" if ok else "FAIL step 4")
     return 0 if ok else 1
@@ -178,6 +209,29 @@ def cmd_rx(args) -> int:
 # --------------------------------------------------------------------------
 # B.5 step 6 -- echo round trip
 # --------------------------------------------------------------------------
+def check_echo_frame(sent_payload: bytes, got_payload: bytes,
+                      reply_dst: str, expected_src: str) -> tuple[bool, bool]:
+    """(mismatched, bad_swap) for one echoed frame.
+
+    `got_payload` is compared against the pad-extended expectation, not the
+    raw sent payload, because gem_echo returns the NIC's pad along with it.
+    Address comparison is case-insensitive because Scapy renders MACs
+    lower-case regardless of how the caller typed them.
+    """
+    want = _expected_reply_payload(sent_payload)
+    mismatched = got_payload[:len(want)] != want
+    bad_swap = reply_dst.lower() != expected_src.lower()
+    return mismatched, bad_swap
+
+
+def evaluate_echo(result: EchoResult) -> bool:
+    """Drops alone are expected (gem_echo buffers one frame and refuses the
+    rest by design); what must be zero is corruption, and at least one frame
+    must have come back or nothing was actually checked.
+    """
+    return result.mismatched == 0 and result.bad_swap == 0 and result.returned > 0
+
+
 def cmd_echo(args) -> int:
     Ether, Raw, sendp, sniff, _conf = _scapy()
     rng = random.Random(args.seed)
@@ -200,11 +254,13 @@ def cmd_echo(args) -> int:
 
         reply = replies[0]
         got = bytes(reply[Raw].load) if reply.haslayer(Raw) else b""
-        want = _expected_reply_payload(bytes(payload))
-        if got[:len(want)] != want:
+        mismatched, bad_swap = check_echo_frame(bytes(payload), got,
+                                                 reply[Ether].dst, args.src)
+        if mismatched:
+            want = _expected_reply_payload(bytes(payload))
             result.mismatched += 1
             print(f"  frame {i}: payload differs -- sent {want[:16].hex()}..., got {got[:16].hex()}...")
-        if reply[Ether].dst.lower() != args.src.lower():
+        if bad_swap:
             result.bad_swap += 1
             print(f"  frame {i}: reply addressed to {reply[Ether].dst}, expected {args.src}")
 
@@ -214,7 +270,7 @@ def cmd_echo(args) -> int:
     # Drops are expected and are not a failure: gem_echo buffers one frame and
     # refuses what arrives while it is busy, which is arithmetic rather than a
     # defect (see that module's header). What must be zero is corruption.
-    ok = (result.mismatched == 0 and result.bad_swap == 0 and result.returned > 0)
+    ok = evaluate_echo(result)
     if result.returned < result.sent:
         print(f"note: {result.sent - result.returned} frame(s) did not come back. "
               f"The echo path holds one frame at a time and drops the rest by design; "
@@ -226,6 +282,25 @@ def cmd_echo(args) -> int:
 # --------------------------------------------------------------------------
 # B.5 step 7 -- corruption, as far as a PC can produce it
 # --------------------------------------------------------------------------
+def evaluate_corrupt(d: dict[str, int], count: int) -> tuple[bool, list[str]]:
+    """At least `count` oversize frames counted, and recovery seen (R10).
+
+    Both are "at least" checks, not exact ones: other traffic already on the
+    segment advancing rx_over or rx_ok is not a defect this command can rule
+    out, and is not what it is checking for.
+    """
+    ok = True
+    messages = []
+    if d["rx_over"] < count:
+        ok = False
+        messages.append(f"rx_over advanced by {d['rx_over']}, expected at least {count}")
+    if d["rx_ok"] < count:
+        ok = False
+        messages.append(f"rx_ok advanced by {d['rx_ok']} -- the receive path did not recover "
+                         f"and count the good frames that followed (R10)")
+    return ok, messages
+
+
 def cmd_corrupt(args) -> int:
     Ether, Raw, sendp, _sniff, _conf = _scapy()
     port = StatusPort(args.port)
@@ -254,14 +329,9 @@ def cmd_corrupt(args) -> int:
     d = gr.deltas(before, after)
     print(f"delta:  {gr.format_deltas(d)}")
 
-    ok = True
-    if d["rx_over"] < args.count:
-        ok = False
-        print(f"FAIL rx_over advanced by {d['rx_over']}, expected at least {args.count}")
-    if d["rx_ok"] < args.count:
-        ok = False
-        print(f"FAIL rx_ok advanced by {d['rx_ok']} -- the receive path did not recover "
-              f"and count the good frames that followed (R10)")
+    ok, messages = evaluate_corrupt(d, args.count)
+    for m in messages:
+        print(f"FAIL {m}")
 
     print()
     print("NOT TESTED FROM HERE, and not because they are untested:")
@@ -279,6 +349,31 @@ def cmd_corrupt(args) -> int:
 # --------------------------------------------------------------------------
 # B.5 step 8 -- the soak, and the reason the readout is a UART
 # --------------------------------------------------------------------------
+def detect_anomalies(previous: gr.Record, current: gr.Record) -> list[str]:
+    """What, if anything, is wrong between two consecutive records.
+
+    Link-down is edge-triggered on purpose: a link that was already down and
+    stays down must not report a fresh anomaly on every record for hours, and
+    the link coming back up is not itself an anomaly -- only the transition
+    from up to down is.
+    """
+    anomalies = []
+    d = gr.deltas(previous, current)
+    if any(d[n] for n in ("rx_bad", "rx_runt", "rx_over", "rx_rxer", "tx_urun", "tx_rej")):
+        anomalies.append(gr.format_deltas(d))
+    if previous.link_up and not current.link_up:
+        anomalies.append("link went down")
+    return anomalies
+
+
+def evaluate_soak(anomaly_count: int, records: int) -> bool:
+    """No anomalies, and more than one reading -- a single record proves
+    nothing, which would be exactly the "watched it and it looked fine" test
+    the checklist warns against.
+    """
+    return anomaly_count == 0 and records > 1
+
+
 def cmd_soak(args) -> int:
     port = StatusPort(args.port)
     deadline = time.time() + args.hours * 3600.0
@@ -304,15 +399,10 @@ def cmd_soak(args) -> int:
             records += 1
             log.write(f"{time.strftime('%H:%M:%S')} {' '.join(f'{k}={v}' for k, v in current.values.items())}\n")
 
-            d = gr.deltas(previous, current)
-            if any(d[n] for n in ("rx_bad", "rx_runt", "rx_over", "rx_rxer", "tx_urun", "tx_rej")):
+            for msg in detect_anomalies(previous, current):
                 anomalies += 1
-                print(f"{time.strftime('%H:%M:%S')} {gr.format_deltas(d)}")
-                log.write(f"# anomaly: {gr.format_deltas(d)}\n")
-            if previous.link_up and not current.link_up:
-                anomalies += 1
-                print(f"{time.strftime('%H:%M:%S')} link went down")
-                log.write("# anomaly: link down\n")
+                print(f"{time.strftime('%H:%M:%S')} {msg}")
+                log.write(f"# anomaly: {msg}\n")
             previous = current
     except KeyboardInterrupt:
         print("interrupted")
@@ -326,7 +416,7 @@ def cmd_soak(args) -> int:
     log.write(f"# ended {time.strftime('%Y-%m-%d %H:%M:%S')}, {records} records, {anomalies} anomalies\n")
     log.close()
 
-    ok = anomalies == 0 and records > 1
+    ok = evaluate_soak(anomalies, records)
     print("PASS step 8: no divergence" if ok else "FAIL step 8: see the log")
     return 0 if ok else 1
 
