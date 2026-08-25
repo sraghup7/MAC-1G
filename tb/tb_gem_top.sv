@@ -97,7 +97,25 @@ module tb_gem_top;
     );
 
     always #(CLK50_HALF_NS * 1ns) clk50 = ~clk50;
-    always #(RXCLK_HALF_NS * 1ns) rx_clk = ~rx_clk;
+
+    // The recovered receive clock, and the switch that takes it away.
+    //
+    // A LINK DROP IS NOT A RESET, and the difference is the whole point of
+    // criteria D6 and D7. Pressing the reset key stops both domains; pulling
+    // the cable stops only this clock. tx_clk keeps running, the deskew MMCM
+    // loses lock, rx_rst_n asserts and tx_rst_n does not -- the one case in
+    // which the async FIFO's two halves can reset asymmetrically, which is
+    // exactly the window the Stage 6 part 2 review found could drain FIFO
+    // memory onto the AXI-S port as a well-formed frame. Section 4 above
+    // cannot reach it: a board reset takes both halves down together.
+    //
+    // Gated rather than free-running so that window is reachable here. It
+    // parks low, which is what an unplugged cable leaves on the pin.
+    logic rx_clk_en = 1'b1;
+    always #(RXCLK_HALF_NS * 1ns) begin
+        if (rx_clk_en) rx_clk = ~rx_clk;
+        else           rx_clk = 1'b0;
+    end
 
     //----------------------------------------------------------------------
     // Stimulus and capture, both at the pins
@@ -333,9 +351,40 @@ module tb_gem_top;
     endtask
 
     //----------------------------------------------------------------------
+    // Criterion D6's instrument: beats accepted on the RX AXI-S port
+    //
+    // Counted on u_dut.tx_clk, and that is not an arbitrary choice. The RX
+    // AXI-S port is the async FIFO's READ side (gem_mac.v: rd_clk = tx_clk),
+    // and tx_clk keeps running through a link drop. That is precisely why the
+    // defect is reachable at all: a read side still clocked, holding stale
+    // Gray pointers against a write side whose pointers were zeroed, sees
+    // empty deassert and drains FIFO memory -- which has no reset, because it
+    // infers as RAM -- onto this port. It arrives as well-formed AXI-S, so
+    // nothing downstream can tell it from a real frame. Counting handshakes
+    // here, on the read side's own clock, is the only place it is visible.
+    //
+    // tready is included in the condition rather than assumed: a beat is a
+    // beat only when both sides agree, and counting tvalid alone would report
+    // stalled cycles as delivered octets.
+    //----------------------------------------------------------------------
+    int  rx_axis_beats = 0;
+    bit  rx_axis_watch = 1'b0;
+
+    always @(posedge u_dut.tx_clk) begin
+        if (rx_axis_watch && u_dut.rx_tvalid === 1'b1 && u_dut.rx_tready === 1'b1) begin
+            rx_axis_beats++;
+        end
+    end
+
+    //----------------------------------------------------------------------
     // The run
     //----------------------------------------------------------------------
     int  rx_ok_reported;
+    // Counter snapshots for criteria D6 and D7. Sized from the design's own
+    // counter width rather than int, so a comparison can never be a
+    // truncation artifact.
+    logic [`GEM_COUNTER_WIDTH-1:0] rx_ok_before, rx_badfcs_before;
+    logic [`GEM_COUNTER_WIDTH-1:0] rx_runt_before, rx_oversize_before, rx_rxer_before;
     int  mark_words, mark_records;
     bit  reset_hit_tx;
     bit  ok;
@@ -537,6 +586,210 @@ module tb_gem_top;
 
         $display("[gem_tb] gem_top: reset asserted mid-frame%s, %0d frames echoed after recovery",
                  reset_hit_tx ? " (and mid-transmission)" : "", echoes_seen);
+
+        //--------------------------------------------------------------
+        // 6. Criterion D6: FIFO integrity across a link drop
+        //
+        //    The defect this exists to catch produces WELL-FORMED AXI-S
+        //    output, which is what makes it invisible to every other check
+        //    in this file: frames still arrive, the echo path still works,
+        //    the counters still move. Only the fact that octets appear on
+        //    the read side while the write side is held in reset gives it
+        //    away, and only if something is watching that port on tx_clk.
+        //
+        //    Sequence: get a frame in flight so the FIFO holds octets, pull
+        //    the clock mid-frame, and assert that nothing at all is handed
+        //    to the AXI-S port until the link is back and a real frame
+        //    arrives. rx_path_rst_n is what makes that true -- it takes the
+        //    read half down with the write half. Remove it from gem_mac.v
+        //    and this check is the one that fails.
+        //--------------------------------------------------------------
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+
+        // Drop mid-frame: the FIFO must hold octets for there to be debris
+        // to drain. Bounded hunt, then assert we actually caught a frame --
+        // dropping the link in the inter-frame gap would prove nothing.
+        for (i = 0; i < 4000 && rgmii_rx_ctl !== 1'b1; i++) begin
+            @(posedge rx_clk);
+        end
+
+        note_check();
+        if (rgmii_rx_ctl !== 1'b1) begin
+            report_fail("gem_top",
+                "meant to drop the link mid-frame and no frame was in flight -- this run proved nothing about FIFO integrity");
+        end
+
+        // Let a few octets land in the FIFO before the clock goes away.
+        repeat (8) @(posedge rx_clk);
+
+        rx_axis_beats = 0;
+        rx_axis_watch = 1'b1;
+        rx_clk_en     = 1'b0;      // the cable comes out
+
+        // The PHY stops driving with it. Everything from here is judged on
+        // tx_clk, which is still running -- that is the point.
+        drv_start = 1'b0;
+
+        // Long enough for the read side to have drained the whole FIFO if it
+        // were free to: the pointer range is 2**(AW+1) = 128 entries, so 500
+        // tx_clk cycles is comfortably more than the defect would need.
+        repeat (500) @(posedge u_dut.tx_clk);
+
+        note_check();
+        if (u_dut.rx_mmcm_locked !== 1'b0) begin
+            report_fail("gem_top",
+                "the deskew MMCM still reports lock with its input clock stopped -- the link-drop event never reached it, so nothing below is testing what it claims");
+        end
+
+        note_check();
+        if (u_dut.rx_path_rst_n !== 1'b0) begin
+            report_fail("gem_top",
+                "the link dropped and rx_path_rst_n stayed high -- the FIFO's read half is still live against a reset write half, which is the corruption window itself");
+        end
+
+        note_check();
+        if (rx_axis_beats != 0) begin
+            report_fail("gem_top", $sformatf(
+                "%0d octet(s) were handed to the RX AXI-S port while the link was down -- FIFO memory is being drained onto the port as a fabricated frame (criterion D6)",
+                rx_axis_beats));
+        end
+
+        // The cable goes back in.
+        rx_clk_en = 1'b1;
+        wait (u_dut.rx_mmcm_locked === 1'b1);
+        wait (u_dut.rx_path_rst_n === 1'b1);
+        repeat (20) @(posedge u_dut.tx_clk);
+
+        // ... and the next genuine frame must arrive intact. Judged on the
+        // counters, which survive a link drop (gem_stats runs on tx_clk with
+        // tx_rst_n, and tx_rst_n does not assert here), so a clean advance of
+        // exactly the good-frame count with no error counter moving is the
+        // whole statement: received, classified and counted correctly.
+        rx_axis_watch = 1'b0;
+
+        rx_ok_before       = u_dut.stat_rx_ok;
+        rx_badfcs_before   = u_dut.stat_rx_badfcs;
+        rx_runt_before     = u_dut.stat_rx_runt;
+        rx_oversize_before = u_dut.stat_rx_oversize;
+        rx_rxer_before     = u_dut.stat_rx_rxer;
+
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+        wait (drv_done === 1'b1);
+        repeat (4000) @(posedge rx_clk);
+
+        note_check();
+        if (u_dut.stat_rx_ok - rx_ok_before != n_good_in) begin
+            report_fail("gem_top", $sformatf(
+                "after the link came back rx_ok advanced by %0d for a replay of %0d good frames -- the receive path did not recover cleanly from the drop (criterion D6)",
+                u_dut.stat_rx_ok - rx_ok_before, n_good_in));
+        end
+
+        note_check();
+        if (u_dut.stat_rx_badfcs   != rx_badfcs_before   ||
+            u_dut.stat_rx_runt     != rx_runt_before     ||
+            u_dut.stat_rx_oversize != rx_oversize_before ||
+            u_dut.stat_rx_rxer     != rx_rxer_before) begin
+            report_fail("gem_top",
+                "an RX error counter moved while replaying known-good frames after a link drop -- the recovered path is mis-classifying (criterion D6)");
+        end
+
+        // The measured count, not a hardcoded zero: on a failing run this line
+        // prints beside the failure and must not contradict it.
+        $display("[gem_tb] gem_top: link dropped mid-frame, %0d octet(s) leaked to the AXI-S port, %0d good frames replayed clean",
+                 rx_axis_beats, n_good_in);
+
+        //--------------------------------------------------------------
+        // 7. Criterion D7: no phantom statistics events
+        //
+        //    gem_pulse_sync carries each RX event across to tx_clk as a
+        //    toggle. Reset the source half and not the destination half and
+        //    the toggle returns to 0 underneath a destination chain still
+        //    holding 1 -- the edge detector sees a transition that no event
+        //    caused and counts it. Five synchronisers, so up to five
+        //    fabricated counter increments per link flap, on a design whose
+        //    entire bring-up story is reading those counters over UART.
+        //
+        //    Drop the link with NOTHING in flight, so any movement at all is
+        //    fabricated by definition.
+        //
+        //    PARITY IS THE WHOLE TEST, and it is easy to get wrong in a way
+        //    that makes this check decoration. `toggle` flips once per event
+        //    and resets to 0, so a phantom edge exists only when it is
+        //    sitting at 1 -- i.e. after an ODD number of events. Dropping the
+        //    link after the 12-frame replay above would leave every toggle at
+        //    0, the defect would produce nothing, and this check would pass
+        //    against broken RTL. So one further good frame is driven first,
+        //    deliberately, to make rx_ok's toggle odd before the drop.
+        //    Measured: with dst_rst_n reverted to tx_rst_n and an even count
+        //    this check passes; with an odd count it fails.
+        //--------------------------------------------------------------
+        rx_ok_before = u_dut.stat_rx_ok;
+
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+
+        // Exactly one more good frame, then stop the PHY mid-stream.
+        for (i = 0; i < 20000 && u_dut.stat_rx_ok == rx_ok_before; i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (u_dut.stat_rx_ok - rx_ok_before != 1) begin
+            report_fail("gem_top", $sformatf(
+                "meant to leave the event toggles at odd parity and rx_ok advanced by %0d -- this run cannot expose a phantom event (criterion D7)",
+                u_dut.stat_rx_ok - rx_ok_before));
+        end
+
+        drv_start = 1'b0;
+        drv_rst_n = 1'b0;
+        repeat (200) @(posedge rx_clk);     // let the path go fully idle
+
+        note_check();
+        if (u_dut.rx_tvalid === 1'b1) begin
+            report_fail("gem_top",
+                "meant to drop the link with nothing in flight and the RX port is still handing over octets -- this run cannot attribute a counter move to a phantom event");
+        end
+
+        rx_ok_before       = u_dut.stat_rx_ok;
+        rx_badfcs_before   = u_dut.stat_rx_badfcs;
+        rx_runt_before     = u_dut.stat_rx_runt;
+        rx_oversize_before = u_dut.stat_rx_oversize;
+        rx_rxer_before     = u_dut.stat_rx_rxer;
+
+        rx_clk_en = 1'b0;
+        repeat (200) @(posedge u_dut.tx_clk);
+        rx_clk_en = 1'b1;
+        wait (u_dut.rx_mmcm_locked === 1'b1);
+        wait (u_dut.rx_path_rst_n === 1'b1);
+        repeat (200) @(posedge u_dut.tx_clk);
+
+        note_check();
+        if (u_dut.stat_rx_ok       != rx_ok_before       ||
+            u_dut.stat_rx_badfcs   != rx_badfcs_before   ||
+            u_dut.stat_rx_runt     != rx_runt_before     ||
+            u_dut.stat_rx_oversize != rx_oversize_before ||
+            u_dut.stat_rx_rxer     != rx_rxer_before) begin
+            report_fail("gem_top", $sformatf(
+                "an RX counter moved across a link drop with nothing in flight -- phantom statistics event (criterion D7). ok %0d->%0d badfcs %0d->%0d runt %0d->%0d over %0d->%0d rxer %0d->%0d",
+                rx_ok_before, u_dut.stat_rx_ok,
+                rx_badfcs_before, u_dut.stat_rx_badfcs,
+                rx_runt_before, u_dut.stat_rx_runt,
+                rx_oversize_before, u_dut.stat_rx_oversize,
+                rx_rxer_before, u_dut.stat_rx_rxer));
+        end
+
+        $display("[gem_tb] gem_top: link flapped idle, all five RX counters unmoved");
 
         $display("[gem_tb] gem_top: %0d good frames in, %0d frames echoed back, %0d matched",
                  n_good_in, echoes_seen, matched);
