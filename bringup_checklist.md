@@ -71,7 +71,9 @@ Load `gem_top`.
 - [ ] **`led[2]` blinks at about 1.9 Hz** — the heartbeat, which is a counter on
       `tx_clk`. A stopped clock and wedged logic look identical on every other
       indicator; this distinguishes them.
-- [ ] Optionally confirm 125 MHz on `GTX_CLK` with a scope or an ILA.
+- [ ] Optionally confirm 125 MHz on `GTX_CLK` with a scope. (`make debug`'s
+      ILA probes the RX pipeline, not this clock — see step 4 for where it
+      does apply.)
 
 **If `led[0]` never lights:** the MMCM is not locking, which means `clk50` is not
 arriving. Check Y18 and the oscillator before anything else — no logic in this
@@ -134,6 +136,15 @@ simulation can see this, which is why it is called out here.
 **If `rx_ok` advances but the error counters do too:** the data is arriving and
 being corrupted, which points at skew rather than mapping. Go to the pad-skew
 registers (MMD `2h`, register `8h`) before doubting the design.
+
+**To see which of these it is rather than guess:** `make debug` builds
+`build/gem_top_debug.bit` and `.ltx` with an ILA on the RX pipeline — the
+RGMII byte stream and `gm_dv`/`gm_er` as `gem_rgmii_rx` delivers them, the SFD
+hunter's `state` (stuck at `ST_HUNT` means no SFD is ever being found, which
+is the nibble-swap symptom above), the RX FIFO's write pointer and its
+full/drop flags, and the deskew MMCM's lock. Load both files in Hardware
+Manager alongside the normal bitstream; never flash it as the production
+image.
 
 ---
 

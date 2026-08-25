@@ -17,7 +17,7 @@ PYTHON    ?= python
 BUILD_DIR := build
 SIM_DIR   := sim
 
-.PHONY: help synth oocsynth impl bitstream program clean \
+.PHONY: help synth oocsynth impl bitstream debug program clean \
         model vectors vectors-frozen vectors-check lint sim regress regress-all \
         check clean-sim
 
@@ -44,6 +44,10 @@ Verification (Stage 3):
 Build (Stage 2 / Stage 6):
   make synth impl bitstream program      the board (gem_top)
   make bitstream TOP=skeleton_top        the Stage 2 blinker, for B.5 step 1
+  make debug             gem_top + an RX-pipeline ILA, for bring-up only --
+                          writes build/gem_top_debug.bit and .ltx, never the
+                          shipped bitstream (gem_top only; refuses on TOP=
+                          skeleton_top, which has no RX pipeline to probe)
 
 Build (Stage 4 step 6):
   make oocsynth         gem_mac out of context: area, timing, B.2 budget
@@ -87,11 +91,15 @@ vectors-check:
 lint:
 	$(PYTHON) scripts/lint.py
 
-# The host tooling's own tests. Pure standard library and about a millisecond,
-# so there is no reason for them not to be in `check`: they guard the record
-# format, which is a contract between rtl/gem_stat_report.v and
-# sw/host/gem_records.py that nothing else in this build looks at both sides of.
-# Their fixtures are lines the design actually printed in simulation.
+# The host tooling's own tests. Pure standard library and a few milliseconds,
+# so there is no reason for them not to be in `check`: test_gem_records.py
+# guards the record format, a contract between rtl/gem_stat_report.v and
+# sw/host/gem_records.py that nothing else in this build looks at both sides
+# of, with fixtures that are lines the design actually printed in simulation.
+# test_gem_host.py and test_gem_host_commands.py guard gem_host.py itself --
+# the B.5 pass/fail decisions and the commands that make them -- against
+# StatusPort and Scapy fakes, so real hardware is never on the critical path
+# of trusting that a "PASS" from bring-up means what it says.
 hosttest:
 	$(PYTHON) -m unittest discover -s sw/host -t sw/host
 
@@ -143,6 +151,9 @@ impl:
 
 bitstream:
 	$(PYTHON) scripts/build.py bitstream $(TOP)
+
+debug:
+	$(PYTHON) scripts/build.py debug $(TOP)
 
 program: bitstream
 	$(PYTHON) scripts/build.py program $(BUILD_DIR)/$(TOP).bit

@@ -15,6 +15,7 @@ install path, and the symptom would be `make regress` working while
 Usage:
     python scripts/build.py synth              # gem_top, the board
     python scripts/build.py bitstream skeleton_top
+    python scripts/build.py debug               # gem_top + the RX-pipeline ILA
     python scripts/build.py program build/gem_top.bit
     python scripts/build.py oocsynth            # whole MAC, out of context
     python scripts/build.py oocsynth gem_crc32  # one module
@@ -35,6 +36,7 @@ TARGETS = {
     "synth":     "scripts/build.tcl",
     "impl":      "scripts/build.tcl",
     "bitstream": "scripts/build.tcl",
+    "debug":     "scripts/build.tcl",
     "program":   "scripts/program.tcl",
     # Stage 4 step 6: one module, out of context, area and rough timing against
     # the Stage 1 estimate. Takes the module name as an extra argument and
