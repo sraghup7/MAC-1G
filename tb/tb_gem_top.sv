@@ -376,6 +376,31 @@ module tb_gem_top;
         end
     end
 
+    // Criterion D8's instrument: is the RX port mid-frame, and did the frame
+    // it was carrying ever get terminated?
+    //
+    // "Mid-frame" means a beat has been accepted and it was not the last one.
+    // d8_saw_tlast latches any terminating beat while armed, so section 8 can
+    // ask the only question that distinguishes the two abort behaviours the
+    // design doc offered: when the link vanishes underneath a frame, does the
+    // port close it in band or simply stop talking?
+    bit rx_in_frame   = 1'b0;
+    bit d8_watch      = 1'b0;
+    bit d8_saw_tlast  = 1'b0;
+
+    always @(posedge u_dut.tx_clk) begin
+        if (u_dut.rx_path_rst_n !== 1'b1) begin
+            rx_in_frame <= 1'b0;
+        end else if (u_dut.rx_tvalid === 1'b1 && u_dut.rx_tready === 1'b1) begin
+            rx_in_frame <= (u_dut.rx_tlast !== 1'b1);
+        end
+
+        if (d8_watch && u_dut.rx_tvalid === 1'b1 && u_dut.rx_tready === 1'b1 &&
+            u_dut.rx_tlast === 1'b1) begin
+            d8_saw_tlast <= 1'b1;
+        end
+    end
+
     //----------------------------------------------------------------------
     // The run
     //----------------------------------------------------------------------
@@ -790,6 +815,102 @@ module tb_gem_top;
         end
 
         $display("[gem_tb] gem_top: link flapped idle, all five RX counters unmoved");
+
+        //--------------------------------------------------------------
+        // 8. Criterion D8: what a link event does to a frame in flight
+        //
+        //    THIS TEST PINS BEHAVIOUR THAT IS ACCEPTED, NOT BEHAVIOUR THAT
+        //    IS DESIRABLE, and the distinction matters to whoever trips it
+        //    next. Step 3b of the deskew design offered two ways for the RX
+        //    port to end a frame the link took away underneath it:
+        //
+        //      (a) stop mid-frame -- tvalid simply drops, no terminating
+        //          beat, the consumer sees a frame that never ends
+        //      (b) close it in band -- a final beat with tlast=1 and
+        //          tuser=1, so the consumer is told the frame is bad
+        //
+        //    The owner chose (a) for v1 (V-25, B.4a's amendment): it is what
+        //    falls out of resetting gem_rx_egress, and resetting it was
+        //    itself the lesser evil -- leaving it out let egress stall on
+        //    fifo_empty and then resume the old frame using the NEXT frame's
+        //    octets, splicing two frames into one well-formed lie.
+        //
+        //    So this asserts (a) happens, and (a) is the weaker option. If
+        //    someone implements (b), THIS CHECK IS SUPPOSED TO FAIL: that is
+        //    the whole point of pinning it. Update B.4a and V-25 and invert
+        //    the check -- do not quietly widen it to accept both, which
+        //    would leave the port's contract undefined again.
+        //--------------------------------------------------------------
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        drv_start = 1'b1;
+
+        // FIRST, PROVE THE INSTRUMENT. The check below passes when no tlast
+        // is seen -- which is also exactly what a broken watcher does. A
+        // mistyped hierarchical name or a watcher that never arms would sail
+        // through and report the abort behaviour confirmed without having
+        // observed anything. So arm it against ordinary traffic, where tlast
+        // certainly occurs, and require it to latch before trusting its
+        // silence later. This repository already measures SVA vacuity for
+        // the same reason: a property with nothing to evaluate is not a
+        // passing property.
+        d8_saw_tlast = 1'b0;
+        d8_watch     = 1'b1;
+        for (i = 0; i < 20000 && !d8_saw_tlast; i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (!d8_saw_tlast) begin
+            report_fail("gem_top",
+                "the tlast watcher never fired on ordinary traffic -- it cannot be trusted to stay silent during the abort, so criterion D8's result below would be vacuous");
+        end
+
+        // Wait for the AXI-S port itself to be mid-frame. Section 6 timed its
+        // drop on rgmii_rx_ctl -- the wire -- which is a different instant:
+        // the RX pipeline is 13 cycles deep and the FIFO adds more, so a
+        // frame on the pins is not yet a frame on the port.
+        d8_watch     = 1'b0;
+        d8_saw_tlast = 1'b0;
+        for (i = 0; i < 20000 && !rx_in_frame; i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (!rx_in_frame) begin
+            report_fail("gem_top",
+                "meant to drop the link with a frame in flight on the RX AXI-S port and the port was never mid-frame -- this run proved nothing about the abort behaviour (criterion D8)");
+        end
+
+        d8_watch  = 1'b1;
+        rx_clk_en = 1'b0;               // the cable comes out mid-frame
+        drv_start = 1'b0;
+
+        repeat (200) @(posedge u_dut.tx_clk);
+
+        note_check();
+        if (u_dut.rx_tvalid === 1'b1) begin
+            report_fail("gem_top",
+                "the RX port is still asserting tvalid after the link went away -- it is offering octets no PHY delivered (criterion D8)");
+        end
+
+        note_check();
+        if (d8_saw_tlast) begin
+            report_fail("gem_top",
+                "the RX port terminated the interrupted frame with tlast -- that is Step 3b option (b), the clean in-band abort, and this design is documented as option (a). If option (b) was implemented deliberately, this check is the one that is out of date: update B.4a and V-25 and invert it (criterion D8)");
+        end
+
+        // Put the link back so the run ends with the board in a working
+        // state rather than a torn one.
+        rx_clk_en = 1'b1;
+        wait (u_dut.rx_mmcm_locked === 1'b1);
+        wait (u_dut.rx_path_rst_n === 1'b1);
+        repeat (20) @(posedge u_dut.tx_clk);
+        d8_watch = 1'b0;
+
+        $display("[gem_tb] gem_top: frame in flight on the RX port aborted without tlast (option (a), as documented)");
 
         $display("[gem_tb] gem_top: %0d good frames in, %0d frames echoed back, %0d matched",
                  n_good_in, echoes_seen, matched);

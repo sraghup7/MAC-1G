@@ -5,11 +5,25 @@ an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's Micrel
 KSZ9031RNX PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
-**Status: Stage 5 complete.** The MAC is written. Thirteen
-modules across three clock domains, lint clean, and **every run green** against a
-reference model that was finished before the first line of it existed — including
-600-frame random sweeps in both directions and a loopback that feeds the design's
-own transmit pins back to its receive pins across an independent clock.
+**Status: Stages 1–7 complete; the board is not yet in hand.** The MAC is
+written, constrained, placed, routed and gated: `make bitstream` produces
+`build/gem_top.bit` behind nine refusing gates, and `make check` runs 29 of 29
+scenarios green against a reference model that was finished before the first
+line of the RTL existed — including 600-frame random sweeps in both directions
+and a loopback that feeds the design's own transmit pins back to its receive
+pins across an independent clock.
+
+**One number on this page needs its caveat read, not skimmed.** Post-route
+timing is **WNS −3.109 ns**, and that is a *deliberate, fenced* state rather
+than a design that misses timing. The five RGMII receive input checks are
+waived: task 4e measured the routed deskew feedback path against the arc
+Vivado's ZHOLD model applies and proved those numbers are ~3.1 ns of tool
+artifact, not silicon. Everything else — TX, fabric, every other path group —
+closes positive, and gate 2 refuses on any violation outside those five named
+endpoints. The full reasoning, the fences, and the real slow-corner hold miss
+that was hiding *underneath* the artifact are below. **R20's receive half is
+signed off by derivation and closes on the bench, not in the tool** — bring-up
+step 5 is the authoritative check, and until it runs this is the honest state.
 
 Stage 5 is integration, and two of its blocks are in. The **clock and reset
 module** (`rtl/gem_clk_rst.v`), which the specification had described as
@@ -46,13 +60,14 @@ terminal — frames in, round trips, corruption, and a four-hour soak that write
 file you can diff — while [`bringup_checklist.md`](bringup_checklist.md) is the
 order to do it all in, with what each failure would mean.
 
-**Stage 6 is under way.** `make synth`/`impl`/`bitstream` now build `gem_top`
+**Stage 6 built the board.** `make synth`/`impl`/`bitstream` build `gem_top`
 against `constrs/` by default (`TOP=skeleton_top` still builds the Stage 2
-blinker, for B.5 step 1) — `build/gem_top.bit` writes clean, WNS +1.249 ns /
-WHS +0.052 ns post-route. A new gate refuses the build outright on any
+blinker, for B.5 step 1). A gate refuses the build outright on any
 `CRITICAL WARNING`, which a constraint matching no port produces; it caught the
 tree's own defect on the first run, 68 of them, from `constrs/` already
-describing the board while the build still targeted the blinker.
+describing the board while the build still targeted the blinker. Post-route
+slack is **WNS −3.109 ns / WHS +0.049 ns** — the negative figure being the
+five waived RX input checks described above and nothing else.
 
 **RGMII RX timing: signed off by derivation, bench check pending.** The RGMII
 I/O delay constraints (V-2) are written, corrected, and wired into the real
@@ -233,10 +248,11 @@ Other useful entry points:
 - `make vectors` — regenerate every scenario from its seed
 - `make regress-all` — includes the two large random sweeps (~760k cycles)
 - `make synth` / `impl` / `bitstream` — `gem_top` against real constraints,
-  seven gates (critical-warning cleanliness before and after implementation,
-  the RX capture-clock anchor, two latch checks, constraint coverage, and
-  slack — where the five RGMII RX input checks are waived under the fenced
-  task-4e derivation and everything else must pass outright).
+  nine gates (critical-warning cleanliness before and after implementation,
+  the RX capture-clock anchor, two latch checks, constraint coverage, slack
+  — where the five RGMII RX input checks are waived under the fenced task-4e
+  derivation and everything else must pass outright — CDC via `report_cdc`,
+  and physical verification via `report_drc` and route status).
   `TOP=skeleton_top` builds the Stage 2 blinker instead.
 - `make oocsynth` — the whole MAC synthesised alone: area, slack, and the B.2
   budget checked rather than assumed (Stage 4 step 6). `M=gem_crc32` does one

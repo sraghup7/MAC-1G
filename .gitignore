@@ -33,6 +33,11 @@ vivado*.backup*
 *.rpt
 *.ltx
 clockInfo.txt
+# One-off timing exports saved by hand from the Vivado GUI during the Stage 6
+# part 2 RX investigation. Nothing in scripts/ regenerates them, and what they
+# were used to establish is committed in docs/reports/stage6-part2/ -- so they
+# are scratch, kept locally if useful and never tracked.
+tight_setup_hold_pins.txt
 build/
 
 # Third-party vendor docs (downloaded reference material, not ours to redistribute)
