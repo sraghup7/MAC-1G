@@ -116,6 +116,7 @@ pipeline sum predicted, stage for stage.
 | Verification plan | [`verification_plan.md`](verification_plan.md) — every requirement traced to a named test |
 | Coding standard | [`coding_standard.md`](coding_standard.md) — the RTL conventions and what enforces each |
 | Transmit datapath | [`Documents/Golden Model Transmit Path.html`](Documents/Golden%20Model%20Transmit%20Path.html) |
+| Known issues | [`docs/reports/stage9/known-issues.md`](docs/reports/stage9/known-issues.md) — everything still blocked on hardware, in one place |
 
 ---
 

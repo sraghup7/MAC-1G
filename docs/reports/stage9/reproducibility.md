@@ -80,4 +80,8 @@ install. It is the reproducibility half of Stage 9, not the portability half.
 A different machine, or a different tool version, is a separate question — and
 `fpga_project_flow.md` is explicit that tool version is part of a release's
 identity ("a design that closed timing in one may not in the next"). Recording
-the tool version alongside a tag is Stage 9's next item and is not done yet.
+the tool version alongside a tag is Stage 9's next item, closed by the
+`v0.9.0-pre-bringup` tag itself: its annotation carries the full Vivado build
+string (`vivado -version`'s SW/IP/SharedData build lines), not just a version
+number, and states the deliberate `-1L`/`-2I` part mismatch alongside it so
+neither is read as a typo later.

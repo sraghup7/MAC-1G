@@ -252,10 +252,13 @@ Stage 8 is complete and what remains is Stage 9: release and handoff.
 
 ## What this checklist cannot tell you
 
-Three things are settled only by the bench, and each is tracked as an open item:
+Four things are settled only by the bench, and each is tracked as an open item
+— full reasoning for all of them, plus why they are a bench question rather
+than a coverage gap, in `docs/reports/stage9/known-issues.md`:
 
 | Item | What is unresolved | Closes at |
 |---|---|---|
 | **V-2** | R14's 1.2222 ns `GTX_CLK` skew is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by only 58 ps | step 5, with a scope |
 | **V-6** | The golden CRC has never been checked against a real capture | step 5, in Wireshark |
+| **V-22** | Three of R10's four RX error classes cannot be provoked from a PC — only oversize reaches the wire malformed | not scoped to any step; needs a second transmitter |
 | Bank 16 VCCIO | Assumed 3.3 V from the manual's general rule; the schematic labels the bank but supplies it from the power tree | step 1, if the LEDs behave |

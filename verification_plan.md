@@ -322,6 +322,10 @@ something real has run through them.
 
 ## Open items
 
+Every row here that is still open is blocked on hardware, not on more
+verification work — `docs/reports/stage9/known-issues.md` is the consolidated,
+bring-up-facing view of exactly those rows, with the closed ones filtered out.
+
 | # | Item | Why it is open | Plan |
 |---|---|---|---|
 | **V-1** | ~~TX behaviour when the user stalls mid-frame is unspecified~~ | **Closed — resolved in spec B.4b as cut-through with abort on underrun.** Store-and-forward was rejected: buffering a max frame before starting costs 12.14 µs of transmit latency and a BRAM the B.2 table does not carry, in a design whose premise is latency. On a mid-payload stall the MAC emits the FCS over what it has sent, bitwise inverted, with TX_ER across those four cycles, counts `stat_tx_underrun`, and discards the rest rather than resuming. Modelled by `gem.abortedFrame`, exercised by the `tx_underrun` scenario, and pinned down by `tAbort`'s 10 tests. | — |
