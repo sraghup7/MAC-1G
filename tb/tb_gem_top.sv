@@ -46,6 +46,7 @@ module tb_gem_top;
 
     import gem_tb_pkg::*;
 
+
     localparam real CLK50_HALF_NS = 10.0;   // 50 MHz board oscillator
     localparam real RXCLK_HALF_NS = 4.0;    // 125 MHz recovered receive clock
 
@@ -218,6 +219,47 @@ module tb_gem_top;
     endfunction
 
     //----------------------------------------------------------------------
+    // Criterion D9's fixture (V-25): a hand-built frame's RGMII cycle-words,
+    // for when the point is exactly which addresses arrive, not whichever
+    // ones a committed vector happens to carry. Good frames only -- DV=1,
+    // ER=0 the whole way, so every octet's word is 12'h300 | octet, per
+    // rgmii_bfm.sv's layout (bit 9 = CTL fall = DV^ER, bit 8 = CTL rise =
+    // DV, bits 7:0 = data). model/+gem/rgmiiEncode.m is the source of truth
+    // this mirrors; tb_rgmii_bfm.sv's own self-test is what holds the two to
+    // the same encoding.
+    //----------------------------------------------------------------------
+    function automatic void build_frame_words(
+        input  logic [47:0] da,
+        input  logic [47:0] sa,
+        input  logic [15:0] etype,
+        input  logic [7:0]  payload[$],
+        ref    logic [11:0] out_q[$]
+    );
+        logic [7:0]  body[$];
+        logic [31:0] fcs;
+        int i;
+
+        for (i = 0; i < 6; i++) body.push_back(da[47-8*i -: 8]);
+        for (i = 0; i < 6; i++) body.push_back(sa[47-8*i -: 8]);
+        body.push_back(etype[15:8]);
+        body.push_back(etype[7:0]);
+        foreach (payload[i]) body.push_back(payload[i]);
+        while (body.size() < `GEM_HEADER_BYTES + `GEM_MIN_PAYLOAD_BYTES) begin
+            body.push_back(8'h00);
+        end
+
+        fcs = crc32(body, body.size());
+
+        repeat (`GEM_PREAMBLE_BYTES) out_q.push_back(12'h300 | `GEM_PREAMBLE_OCTET);
+        out_q.push_back(12'h300 | `GEM_SFD_OCTET);
+        foreach (body[i]) out_q.push_back(12'h300 | body[i]);
+        out_q.push_back(12'h300 | fcs[7:0]);
+        out_q.push_back(12'h300 | fcs[15:8]);
+        out_q.push_back(12'h300 | fcs[23:16]);
+        out_q.push_back(12'h300 | fcs[31:24]);
+    endfunction
+
+    //----------------------------------------------------------------------
     // What went in
     //----------------------------------------------------------------------
     beat_t in_beats [];
@@ -384,9 +426,13 @@ module tb_gem_top;
     // ask the only question that distinguishes the two abort behaviours the
     // design doc offered: when the link vanishes underneath a frame, does the
     // port close it in band or simply stop talking?
-    bit rx_in_frame   = 1'b0;
-    bit d8_watch      = 1'b0;
-    bit d8_saw_tlast  = 1'b0;
+    bit rx_in_frame    = 1'b0;
+    bit d8_watch       = 1'b0;
+    bit d8_saw_tlast   = 1'b0;
+    // What tuser read on the FIRST tlast beat seen while armed -- captured
+    // once (guarded by !d8_saw_tlast in the same cycle d8_saw_tlast latches)
+    // so a later, unrelated tlast cannot overwrite the abort beat's own value.
+    bit d8_abort_tuser = 1'b0;
 
     always @(posedge u_dut.tx_clk) begin
         if (u_dut.rx_path_rst_n !== 1'b1) begin
@@ -395,9 +441,10 @@ module tb_gem_top;
             rx_in_frame <= (u_dut.rx_tlast !== 1'b1);
         end
 
-        if (d8_watch && u_dut.rx_tvalid === 1'b1 && u_dut.rx_tready === 1'b1 &&
-            u_dut.rx_tlast === 1'b1) begin
-            d8_saw_tlast <= 1'b1;
+        if (d8_watch && !d8_saw_tlast && u_dut.rx_tvalid === 1'b1 &&
+            u_dut.rx_tready === 1'b1 && u_dut.rx_tlast === 1'b1) begin
+            d8_saw_tlast   <= 1'b1;
+            d8_abort_tuser <= u_dut.rx_tuser;
         end
     end
 
@@ -414,6 +461,10 @@ module tb_gem_top;
     bit  reset_hit_tx;
     bit  ok;
     int  i;
+
+    // Criterion D9's fixture (V-25): built once, reused for both halves.
+    logic [11:0] d9_words[$];
+    frame_t      d9_frame_a, d9_frame_b;
 
     initial begin
         begin_scenario("gem_top");
@@ -819,27 +870,19 @@ module tb_gem_top;
         //--------------------------------------------------------------
         // 8. Criterion D8: what a link event does to a frame in flight
         //
-        //    THIS TEST PINS BEHAVIOUR THAT IS ACCEPTED, NOT BEHAVIOUR THAT
-        //    IS DESIRABLE, and the distinction matters to whoever trips it
-        //    next. Step 3b of the deskew design offered two ways for the RX
-        //    port to end a frame the link took away underneath it:
+        //    Step 3b of the deskew design offered two ways for the RX port to
+        //    end a frame the link took away underneath it: stop mid-frame
+        //    with no terminating beat (option (a), the v1 choice, tracked as
+        //    V-25 while open), or close it in band with tlast=1, tuser=0 so
+        //    the consumer is told the frame is bad (option (b)). V-25 is now
+        //    closed on (b) -- see B.4a's amendment for why (a)'s own
+        //    "resetting makes the failure loud" argument did not survive
+        //    contact with gem_echo, the one consumer that exists.
         //
-        //      (a) stop mid-frame -- tvalid simply drops, no terminating
-        //          beat, the consumer sees a frame that never ends
-        //      (b) close it in band -- a final beat with tlast=1 and
-        //          tuser=1, so the consumer is told the frame is bad
-        //
-        //    The owner chose (a) for v1 (V-25, B.4a's amendment): it is what
-        //    falls out of resetting gem_rx_egress, and resetting it was
-        //    itself the lesser evil -- leaving it out let egress stall on
-        //    fifo_empty and then resume the old frame using the NEXT frame's
-        //    octets, splicing two frames into one well-formed lie.
-        //
-        //    So this asserts (a) happens, and (a) is the weaker option. If
-        //    someone implements (b), THIS CHECK IS SUPPOSED TO FAIL: that is
-        //    the whole point of pinning it. Update B.4a and V-25 and invert
-        //    the check -- do not quietly widen it to accept both, which
-        //    would leave the port's contract undefined again.
+        //    So this now asserts (b): the port must deliver exactly one
+        //    tlast beat, and that beat's tuser must read 0. If this ever
+        //    regresses to (a), THIS CHECK IS SUPPOSED TO FAIL -- that is the
+        //    whole point of pinning it.
         //--------------------------------------------------------------
         drv_rst_n = 1'b0;
         repeat (4) @(posedge rx_clk);
@@ -897,9 +940,16 @@ module tb_gem_top;
         end
 
         note_check();
-        if (d8_saw_tlast) begin
+        if (!d8_saw_tlast) begin
             report_fail("gem_top",
-                "the RX port terminated the interrupted frame with tlast -- that is Step 3b option (b), the clean in-band abort, and this design is documented as option (a). If option (b) was implemented deliberately, this check is the one that is out of date: update B.4a and V-25 and invert it (criterion D8)");
+                "the RX port never terminated the interrupted frame with tlast -- V-25 is closed on option (b), the clean in-band abort, so a silent drop is now the regression (criterion D8)");
+        end
+
+        note_check();
+        if (d8_saw_tlast && d8_abort_tuser !== 1'b0) begin
+            report_fail("gem_top", $sformatf(
+                "the abort beat's tuser read %b, expected 0 (bad) -- tuser=1 here is not merely inconsistent with R9's good/bad convention, gem_echo commits a frame on rx_tuser, so this value would make it transmit the truncated fragment as good (criterion D8)",
+                d8_abort_tuser));
         end
 
         // Put the link back so the run ends with the board in a working
@@ -910,7 +960,179 @@ module tb_gem_top;
         repeat (20) @(posedge u_dut.tx_clk);
         d8_watch = 1'b0;
 
-        $display("[gem_tb] gem_top: frame in flight on the RX port aborted without tlast (option (a), as documented)");
+        $display("[gem_tb] gem_top: frame in flight on the RX port closed in band, tuser=%b (option (b), V-25)", d8_abort_tuser);
+
+        //--------------------------------------------------------------
+        // 9. Criterion D9: the frame AFTER the one the link took away
+        //
+        //    D8 asks whether the MAC closes an interrupted frame correctly.
+        //    This asks a different question, at a different place: whether
+        //    gem_echo -- reset by tx_rst_n, not rx_path_rst_n, so its own
+        //    per-frame state (in_frame, wr_idx, hdr) survives a link event
+        //    untouched -- recovers once the abort beat closes that state out.
+        //    Before V-25, it did not: in_frame stuck open forever, so the
+        //    next real frame's first octet was read as a continuation of the
+        //    dead one, and the board could echo back a frame wearing the OLD
+        //    frame's DA/SA with a payload that is old fragment + new frame
+        //    concatenated. That is silent corruption at the only consumer
+        //    that exists -- B.4a's amendment now leads with exactly this.
+        //
+        //    A DEDICATED FIXTURE, NOT rx_clean_sweep. Every frame in that
+        //    vector shares one DA/SA/EtherType, so a stale hdr is byte-for-
+        //    byte identical to a fresh one -- the corruption this criterion
+        //    exists to catch would be structurally present but invisible to
+        //    any comparison against it. Frame A (interrupted) and frame B
+        //    (sent fresh after recovery) below are built with deliberately
+        //    different addresses and payload patterns, so leakage from A
+        //    into B's reply is a checkable mismatch, not a coincidence.
+        //
+        //    THE DROP POINT IS NOT ARBITRARY, in two ways. First, hdr only
+        //    goes stale if frame A's own header had already been captured
+        //    and the deframer had moved past it (is_header false once
+        //    wr_idx >= 14, gem_echo.v's own commit logic) -- dropping inside
+        //    the first 14 octets exercises a different, uninteresting path.
+        //    Second, frame A is built long (500 payload octets) specifically
+        //    so the drop cannot be absorbed by the async FIFO's own
+        //    buffering: a short interrupted frame can fully drain out with
+        //    its own real tlast before rx_path_rst_n catches up, which looks
+        //    identical to a clean abort from this test's vantage point and
+        //    proves nothing about the abort mechanism (measured directly
+        //    during development, against the ~60-octet frames rx_clean_sweep
+        //    carries).
+        //
+        //    gem_echo's `busy` at frame A's OWN first beat matters here, not
+        //    just in_frame: `drop_this <= busy` latches there and does not
+        //    update again until first_beat next fires -- which, if in_frame
+        //    is stuck, is not until this whole scenario is over. Starting
+        //    frame A while echo is still busy with something left over from
+        //    D8 makes drop_this latch 1, and the corrupted frame this
+        //    criterion exists to catch is then silently dropped rather than
+        //    transmitted -- passing D9 for the wrong reason. So this waits
+        //    for echo to be genuinely idle first.
+        //--------------------------------------------------------------
+        for (i = 0; i < 20000 && (u_dut.u_echo.busy !== 1'b0); i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (u_dut.u_echo.busy !== 1'b0) begin
+            report_fail("gem_top",
+                "gem_echo never went idle before this criterion's frame started -- drop_this would latch against leftover busy-ness rather than this frame's own state, and the run would prove nothing (criterion D9)");
+        end
+
+        d9_frame_a.da    = 48'hAAAA_AAAA_AAAA;
+        d9_frame_a.sa    = 48'hA1A1_A1A1_A1A1;
+        d9_frame_a.etype = 16'h88B5;
+        d9_frame_a.good  = 1'b0;   // never expected to echo -- it is interrupted
+        d9_frame_a.payload = {};
+        for (i = 0; i < 500; i++) d9_frame_a.payload.push_back(8'hA0 + (i % 16));
+
+        d9_frame_b.da    = 48'hBBBB_BBBB_BBBB;
+        d9_frame_b.sa    = 48'hB2B2_B2B2_B2B2;
+        d9_frame_b.etype = 16'h88B5;
+        d9_frame_b.good  = 1'b1;
+        d9_frame_b.payload = {};
+        for (i = 0; i < 100; i++) d9_frame_b.payload.push_back(8'hB0 + (i % 16));
+
+        d9_words = {};
+        build_frame_words(d9_frame_a.da, d9_frame_a.sa, d9_frame_a.etype,
+                           d9_frame_a.payload, d9_words);
+
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        u_drv.words = new [d9_words.size()];
+        foreach (d9_words[k]) u_drv.words[k] = d9_words[k];
+        u_drv.n_words = d9_words.size();
+        drv_start = 1'b1;
+
+        // Wait for the AXI-S port to be well past the header -- 20 beats
+        // clears octet 14 with margin, and frame A's 500-octet payload
+        // leaves hundreds more behind the drop point either way.
+        rx_axis_beats = 0;
+        rx_axis_watch = 1'b1;
+        for (i = 0; i < 20000 && rx_axis_beats <= 20; i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (rx_axis_beats <= 20) begin
+            report_fail("gem_top",
+                "meant to drop the link 20+ octets into frame A's payload and the port never reached that many beats -- this run proved nothing about criterion D9");
+        end
+
+        d8_watch      = 1'b1;
+        d8_saw_tlast  = 1'b0;
+        rx_clk_en     = 1'b0;      // the cable comes out, well past the header
+        drv_start     = 1'b0;
+        rx_axis_watch = 1'b0;
+
+        for (i = 0; i < 200 && !d8_saw_tlast; i++) begin
+            @(posedge u_dut.tx_clk);
+        end
+
+        note_check();
+        if (!d8_saw_tlast) begin
+            report_fail("gem_top",
+                "the abort beat did not arrive within 200 cycles of this (independently timed) drop -- criterion D9 cannot proceed without it");
+        end
+        d8_watch = 1'b0;
+
+        // The link comes back, and frame B must be judged against a mark
+        // taken AFTER the abort -- anything captured before it belongs to
+        // frame A, not this one.
+        rx_clk_en = 1'b1;
+        wait (u_dut.rx_mmcm_locked === 1'b1);
+        wait (u_dut.rx_path_rst_n === 1'b1);
+        repeat (20) @(posedge u_dut.tx_clk);
+
+        mark_words  = u_mon.n_words;
+        echoes_seen = 0;
+        matched     = 0;
+
+        d9_words = {};
+        build_frame_words(d9_frame_b.da, d9_frame_b.sa, d9_frame_b.etype,
+                           d9_frame_b.payload, d9_words);
+
+        // rgmii_driver's busy/idx only clear on its OWN reset (rgmii_bfm.sv)
+        // -- drv_start=0 above did not stop it, it froze mid-frame when
+        // rx_clk_en went low, same as everything else on that clock. Without
+        // this pulse it would resume frame A's tail from exactly where it
+        // froze, not send frame B, which is a different (and uninteresting)
+        // scenario from the one this criterion is asking about.
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        u_drv.words = new [d9_words.size()];
+        foreach (d9_words[k]) u_drv.words[k] = d9_words[k];
+        u_drv.n_words = d9_words.size();
+        drv_start = 1'b1;
+        wait (drv_done === 1'b1);
+        repeat (2000) @(posedge rx_clk);
+
+        // Two distinct claims, checked separately on purpose: "nothing came
+        // back" (echo dropped frame B) and "something wrong came back" (echo
+        // spliced frame A's stale state onto it) are different failures, and
+        // a check that only asked "does it match" would report the first as
+        // a silent pass. check_transmitted() below searches only GOOD
+        // frames -- frame A is good=0 because it is never supposed to be
+        // echoed at all, so if its address or payload leaks into what gets
+        // transmitted, the result matches neither entry, and the failure
+        // check_transmitted reports names the actual (wrong) DA/SA/payload
+        // it saw, not a generic difference.
+        in_frames.push_back(d9_frame_a);
+        in_frames.push_back(d9_frame_b);
+        check_transmitted(mark_words);
+
+        note_check();
+        if (echoes_seen == 0) begin
+            report_fail("gem_top",
+                "nothing was echoed after a link event interrupted frame A past its header -- gem_echo's state did not recover (criterion D9)");
+        end
+
+        $display("[gem_tb] gem_top: frame after a link event echoed clean, %0d matched (criterion D9)", matched);
 
         $display("[gem_tb] gem_top: %0d good frames in, %0d frames echoed back, %0d matched",
                  n_good_in, echoes_seen, matched);

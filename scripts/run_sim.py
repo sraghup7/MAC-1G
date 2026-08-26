@@ -52,6 +52,9 @@ RTL_SOURCES = [
     "rtl/gem_rx_deframe.v",
     "rtl/gem_rx_fifo.v",
     "rtl/gem_rx_egress.v",
+    # V-25: closes a frame the link took away in band. Downstream of
+    # gem_rx_egress; must be listed after it for anyone reading top-down.
+    "rtl/gem_rx_abort.v",
     "rtl/gem_stats.v",
     "rtl/gem_mdio.v",
     "rtl/gem_mac.v",

@@ -43,6 +43,8 @@
 //
 //   sys_clk = tx_clk (B.7 item 3)
 //     u_rx_egress    9  registered AXI-S egress
+//     u_rx_abort        additive, V-25: closes a frame the link took away in
+//                       band, rather than leaving the port to just go quiet
 //     u_ev_*            one toggle synchroniser per RX counter event
 //     u_stats           R17's counters
 //     u_mdio            R16's management interface
@@ -307,19 +309,44 @@ module gem_mac (
     // reset was traced worse than resetting it: egress would stall mid-frame
     // on fifo_empty and then resume the old frame with the new frame's
     // octets, emitting a well-formed frame spliced from two different ones.
-    // Resetting makes the failure loud instead: tvalid drops mid-frame, and
-    // B.4a now says that is what a link event looks like on this port.
+    // Resetting instead makes the failure visible at this boundary -- and
+    // gem_rx_abort below turns that into a proper closing beat before it
+    // reaches the port, rather than leaving the port itself to just go quiet
+    // (B.4a, V-25).
+    wire [7:0] egress_tdata;
+    wire       egress_tvalid, egress_tlast, egress_tuser;
+
     gem_rx_egress u_rx_egress (
         .clk        (tx_clk),
         .rst_n      (rx_path_rst_n),
         .fifo_empty (fifo_empty),
         .fifo_dout  (fifo_dout),
         .fifo_rd    (fifo_rd),
+        .m_tdata    (egress_tdata),
+        .m_tvalid   (egress_tvalid),
+        .m_tready   (rx_axis_tready),
+        .m_tlast    (egress_tlast),
+        .m_tuser    (egress_tuser)
+    );
+
+    // Closes a frame the link took away in band, instead of leaving the port
+    // to just go quiet mid-frame (B.4a's amendment, V-25). rx_path_rst_n
+    // arrives as an ordinary input here, not this module's reset -- see
+    // gem_rx_abort's header for why that asymmetry is required rather than
+    // incidental.
+    gem_rx_abort u_rx_abort (
+        .clk        (tx_clk),
+        .rst_n      (tx_rst_n),
+        .link_rst_n (rx_path_rst_n),
+        .e_tdata    (egress_tdata),
+        .e_tvalid   (egress_tvalid),
+        .e_tlast    (egress_tlast),
+        .e_tuser    (egress_tuser),
         .m_tdata    (rx_axis_tdata),
         .m_tvalid   (rx_axis_tvalid),
-        .m_tready   (rx_axis_tready),
         .m_tlast    (rx_axis_tlast),
-        .m_tuser    (rx_axis_tuser)
+        .m_tuser    (rx_axis_tuser),
+        .m_tready   (rx_axis_tready)
     );
 
     //======================================================================

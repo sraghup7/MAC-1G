@@ -797,16 +797,39 @@ genuinely ambiguous in v0.2, and each is now binding on the Stage 4 RTL.
 
 A consequence of (1) is the four-cycle FCS holdback added to B.1b's latency sum.
 
-**Amendment (Stage 6 part 2, owner decision (a)): rule 2 now has a second carve-out.**
-On a link event, the receive domain resets (`rx_path_rst_n`), and a frame in flight
-on this port aborts **without `tlast`**: `rx_axis_tvalid` simply drops mid-frame.
-Resetting egress was traced better than the alternative — an un-reset egress resumes
-the old frame with the new frame's octets and emits a well-formed frame spliced from
-two different ones, which is silent corruption; the reset makes the failure loud.
-A consumer holding per-frame state therefore sees a frame that starts and never ends
-on every link flap; in v1 that consumer is the bring-up echo path only. The clean
-fix — an in-band abort beat carrying `tlast=1, tuser=1( bad)` — is scheduled as its
-own task before anything real consumes this port (verification plan open item).
+**Amendment (Stage 6 part 2, owner decision (a); superseded below): rule 2 gained a
+second carve-out.** On a link event, the receive domain resets (`rx_path_rst_n`), and
+a frame in flight on this port aborted **without `tlast`**: `rx_axis_tvalid` simply
+dropped mid-frame. Resetting egress was traced better than the alternative — an
+un-reset egress resumes the old frame with the new frame's octets and emits a
+well-formed frame spliced from two different ones, which is silent corruption; the
+reset was reasoned to make the failure loud instead.
+
+**Amendment superseded (V-25): the loud-failure argument did not survive contact with
+the one consumer that exists.** `gem_echo` holds per-frame state and is reset by
+`tx_rst_n`, not `rx_path_rst_n` (deliberately — R17's counters have to survive a link
+flap) — so a silent `tvalid` drop leaves its `in_frame` flag stuck open across the
+event. The next genuinely new frame, once the link recovers, is not lost: it is
+spliced onto that stale state and echoed back wearing the *previous* frame's DA/SA,
+with a payload that is the old fragment concatenated with the new one. That is
+exactly the silent-corruption failure mode this rule's own reasoning was written to
+avoid — just relocated one frame later and one module downstream, where nothing was
+watching for it.
+
+**Rule 2 now reads: every frame ends with exactly one `tlast`, full stop, including
+one a link event cuts short.** A frame in flight when `rx_path_rst_n` lands is closed
+with a synthetic beat — `tlast=1, tuser=0` (bad; R9's single good/bad bit, no second
+meaning) — rather than left to trail off. `tdata` on that beat is `8'h00`, the same
+convention `gem_rx_egress` already uses when nothing is loaded. `gem_rx_abort`
+(downstream of `gem_rx_egress`, in `tx_clk`, reset only by `tx_rst_n` so it survives
+the event it is watching for) is what generates it; see that module's header for why
+the abort cannot be produced by `gem_rx_egress` itself. No new R17 counter — this
+presents as an ordinary bad frame, the same as the four classes already sharing that
+one bit, and `rx_mmcm_locked` already tells a host a link just dropped at the record
+level. Verification is V-25 (`verification_plan.md`) and `tb_gem_top` criteria D8/D9,
+including the concrete evidence for the corruption paragraph above: a dedicated
+two-frame fixture, not `rx_clean_sweep`, because that vector's frames all share one
+header and cannot make a stale one visible.
 
 ## B.4b TX underrun contract (resolved in Stage 3)
 
