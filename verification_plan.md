@@ -1,10 +1,13 @@
 # `gem_mac` — Verification Plan
 
-Document status: v1.5 — Stage 4 complete, **Stage 5 complete**, Stage 6's
-static-timing half recorded where it landed (R14, R20): the clock/reset block,
-R17's UART readout, the echo path, the board top level and the host tooling are all
-built and tested, V-20 and V-21 are closed, and the review that closed ten risks
-added the DDR primitive self-test and vacuity reporting. Versioned alongside the RTL.
+Document status: v1.6 — **Stages 1–7 complete**; Stage 9's reproducibility
+check has passed and its known issues are consolidated
+(`docs/reports/stage9/`). Everything here that can be settled without
+hardware is green: the clock/reset block, R17's UART readout, the echo path,
+the board top level, the host tooling, the fenced RX I/O waiver (V-24/V-26),
+and the in-band RX abort (V-25). What remains open is exactly what
+`docs/reports/stage9/known-issues.md` lists — bench questions, not coverage
+gaps. Versioned alongside the RTL.
 
 This is how "are we done?" gets answered with evidence instead of opinion. Every
 requirement in [`spec/PROJECT_SPEC.md`](spec/PROJECT_SPEC.md) B.2 appears below
@@ -36,19 +39,19 @@ python scripts/run_sim.py
 | `make hosttest` | the host tooling's own tests (`sw/host`), no board and no dependencies | **the gate** on the record format, which is a contract between `rtl/gem_stat_report.v` and `sw/host/gem_records.py` that nothing else in this build reads both halves of |
 | `make check` | model, vectors-check, lint, hosttest, regress | the whole thing, in the order that makes a failure diagnosable |
 
-Stage 2's build carries three more gates, inside `scripts/build.tcl`:
+The build's gates live inside `scripts/build.tcl` (`synth`/`impl`/`bitstream`)
+and `scripts/synth_module.tcl` (`oocsynth`) — nine in all:
 
 | Command | What it does | Gate |
 |---|---|---|
-| `make synth` | non-project synthesis | **gate 1**: any surviving inferred latch refuses the build · **gate 1b**: so does a `Synth 8-327` inference warning, which catches a latch optimised away before gate 1 could see it |
-| `make oocsynth` | the whole MAC synthesised alone (Stage 4 step 6) | the latch gates, plus **gate 4**: a memory that dissolved into flip-flops (`Synth 8-4767`), plus area against B.2's budget and 125 MHz before placement |
-| `make oocsynth` | `gem_mac` alone, out of context (Stage 4 step 6) | **gates**: both latch gates, negative post-synthesis slack at 125 MHz, and any B.2 resource line exceeded |
-| `make impl` | place and route | **gate 2**: WNS or WHS below zero refuses · **gate 3**: `check_timing` refuses on unclocked registers, unconstrained internal endpoints, multiple clocks or loops |
-| `make bitstream` | writes `build/skeleton_top.bit` | inherits every gate above |
-| `make program` | loads the board | Stage 7; needs hardware |
+| `make synth` | non-project synthesis of `gem_top` against `constrs/` | **gate 0**: any `CRITICAL WARNING` refuses the build · **gate 1**: any surviving inferred latch refuses · **gate 1b**: so does a `Synth 8-327` inference warning, which catches a latch optimised away before gate 1 could see it |
+| `make impl` | place and route | **gate 0b**: critical warnings counted again after implementation · **gate 1c**: the derived RX capture-clock anchor must resolve to exactly one clock · **gate 3**: `check_timing` refuses on unclocked registers, unconstrained internal endpoints, multiple clocks or loops · **gate 2**: negative setup or hold slack refuses, except exactly the five RX input checks waived under the fenced task-4e derivation (count asserted, setup-only, −3.500 ns envelope) |
+| `make bitstream` | writes `build/gem_top.bit` (`TOP=skeleton_top` builds the Stage 2 blinker instead) | inherits every gate above, plus **gate 4**: `report_cdc` against the asserted crossing inventory, and physical verification via `report_drc` and route status |
+| `make oocsynth` | `gem_mac` (or one module via `-M=`) synthesised alone, out of context | both latch gates, negative post-synthesis slack at 125 MHz, any B.2 resource line exceeded, and the memory gate: an array that dissolved into flip-flops (`Synth 8-4767`) |
+| `make program` | loads the board | needs hardware |
 
-All eight gates have been made to fail on purpose. See V-4, V-13, V-14 and V-18
-for what each canary was and what it caught.
+All nine gates have been made to fail on purpose. See V-4, V-13, V-14, V-18,
+V-24 and V-26 for what each canary was and what it caught.
 
 > `make` is not on PATH by default on Windows, but Vivado bundles GNU Make at
 > `<Vivado>/gnuwin/bin/make.exe` — use that, or run the underlying commands
@@ -169,7 +172,7 @@ debug loops:
 | R19 | Three clock domains, zero undeclared CDC | one async FIFO and five toggle synchronisers, and nothing else crossing; `tb_gem_rx_fifo` runs the FIFO across two unrelated clock rates; `tb_gem_mac_loopback` re-emits on an independent `rx_clk`; `gem_reset_sync` ×3 in `gem_clk_rst`, one per domain, checked by `tb_gem_clk_rst`; `report_cdc` at Stage 6 | sim + unit + tool | **green** (structural + sim) — `report_cdc` is Stage 6, and it now has the reset synchronisers to look at as well |
 | R20 | WNS ≥ 0 at 125 MHz, RGMII I/O constrained | `scripts/synth_module.tcl` (WNS +1.897 ns post-synthesis, out of context, refuses on negative — re-measured after the MDIO sampling fix), `scripts/build.tcl` gates 2 and 3 | tool + derivation | **partial → signed off by derivation, bench pending** — TX/fabric meet timing outright (WNS +0.058 ns post-route). On the five RX input pins, task-4e proved Vivado's ZHOLD model freezes the deskewed capture-clock arrival at a routing-independent constant (~2.3 ns of phantom spread): STA there can never be meaningful, so those five endpoints are waived by gate 2 under a fenced derivation (`CLKOUT0_PHASE = −45°`, predicted worst physical margin +0.669 ns) and get their authoritative check at bench bring-up. Gate 2 refuses on any other violation, on a waiver endpoint count ≠ 5, past a −3.500 ns envelope, and — since the audit in V-26 — on **any** hold violation at those pins, the waiver being setup-only. Evidence: `docs/reports/stage6-part2/task-4e-report.md` |
 | R21 | RX MAC-added latency ≤ 32 cycles | `tb_gem_mac_rx` measures SFD→first beat on **every frame of every RX scenario** | sim | **green** — **13 cycles**, on every frame of every scenario, exactly B.1b's bottom-up prediction |
-| R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 7 tops linted, zero warnings, five justified suppressions (`gem_oddr` COMBDLY, `gem_rx_deframe` UNUSEDSIGNAL, `gem_mac` UNUSED, `gem_top` UNUSED, `gem_rx_fifo` SYNCASYNCNET) |
+| R22 | Verilator lint clean, zero warnings | `make lint` (`scripts/lint.py`), Verilator 5.032 | tool | **green** — 8 tops linted, zero warnings, five justified suppressions (`gem_oddr` COMBDLY, `gem_rx_deframe` UNUSEDSIGNAL, `gem_mac` UNUSED, `gem_top` UNUSED, `gem_rx_fifo` SYNCASYNCNET) |
 | R23 | Zero inferred latches | `scripts/build.tcl` gates 1 and 1b, and the same two in `scripts/synth_module.tcl` | tool | **green** |
 | R24 | Bit-exact vs the golden model; no negative slack | `make regress` + the slack gates | sim + tool | **green** — 29 of 29 runs pass; WNS +1.897 ns out of context at 125 MHz (re-measured at the Stage 7 close) |
 
@@ -231,13 +234,13 @@ From B.4, checked mechanically rather than by reading the table and hoping:
 | Scenario generation | 18 / 18, every generator self-check agrees with the model |
 | Committed vectors vs the model | **48 / 48 files current** |
 | Per-module testbenches | **8 / 8** — `tb_gem_crc32`, `tb_gem_rx_fifo`, `tb_gem_mdio` (Stage 4 step 4), `tb_gem_clk_rst`, `tb_gem_uart_tx`, `tb_gem_stat_report`, `tb_gem_echo`, `tb_gem_top` (Stage 5) |
-| Host record parser (`make hosttest`) | **15 / 15 passing** — including counter wrap modulo 2³², a truncated line, and an unknown field being an error rather than a skip |
-| **Board-level round trip** (`tb_gem_top`) | **passing**, 60 checks — 12 good frames in on RGMII, 6 echoed back with addresses exchanged and a valid FCS the testbench computed itself, 6 dropped by the echo buffer's stated policy. `rx_ok` in the UART record agrees with the frames sent, and the readout reports no link with no PHY on the bus |
+| Host tooling (`make hosttest`) | **64 / 64 passing** — the record parser (counter wrap modulo 2³², a truncated line, an unknown field being an error rather than a skip) plus `gem_host.py`'s own pass/fail decisions and commands, tested against fakes standing in for the serial port and Scapy |
+| **Board-level round trip** (`tb_gem_top`) | **passing**, 102 checks — 12 good frames in on RGMII, 6 echoed back with addresses exchanged and a valid FCS the testbench computed itself, 6 dropped by the echo buffer's stated policy; plus the link-drop criteria: D6 (zero fabricated FIFO octets), D7 (zero phantom counter events), D8/D9 (a frame in flight when the link drops closes in band with one synthetic beat — `tlast=1, tuser=0` — and the *consumer* recovers; V-25). `rx_ok` in the UART record agrees with the frames sent, and the readout reports no link with no PHY on the bus |
 | **Reset asserted mid-operation** (`tb_gem_top`) | **passing** — the board's reset is asserted with a frame arriving *and* a frame leaving, while the link partner keeps sending, then released. The design must relock, restart its counters from zero and count a full replay exactly. This is the case the reset architecture creates: `tx_rst_n` waits for MMCM lock and `rx_rst_n` deliberately does not, so the two domains always release at different moments, and `gem_rx_fifo` straddles that boundary with a reset from each side |
 | BFM self-test | **passing** — 3572 checks, including burst segmentation |
 | TX driver self-test | **passing** — 35 checks, 3 of 3 stalls landed where the stimulus asked |
 | **DDR primitive branch** (`ddr_prim_selftest`) | **passing**, 96 checks — the Xilinx IDDR/ODDR code that synthesis builds and every other simulation skips, run against unisims_ver with the KSZ9031RNX's RX_CLK skew modelled, so IDDR's Q1/Q2 nibble mapping (the thing V-17 got wrong) is held by a test. Demonstrated to fail by planting the inversion |
-| Verilator lint (R22) | **passing** — 7 tops, zero warnings, five justified suppressions |
+| Verilator lint (R22) | **passing** — 8 tops, zero warnings, five justified suppressions |
 | Build gates (R20, R23) | **passing** — latch, slack and constraint-coverage gates green |
 | **Frozen regression vs `gem_mac`** | **16 / 16 passing** (29 / 29 runs in total, per-module, board-level, DDR-primitive and loopback included) |
 | Random sweeps | **2 / 2** — 600 frames each |

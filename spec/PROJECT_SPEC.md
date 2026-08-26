@@ -34,7 +34,9 @@ everything else. Versioned alongside the RTL.
   reports the five RX checks negative by ~3.1 ns of artifact; **R20's RX
   half is signed off by derivation plus bench measurement**, not WNS.
 * Gate 2 reshaped: it waives exactly the five RX IDDR input endpoints (count
-  asserted — four or six refuse), bounds the waiver at −5.000 ns, refuses on
+  asserted — four or six refuse), bounds the waiver at −5.000 ns as written here
+  (since tightened to −3.500 ns and made setup-only by the V-26 audit — hold
+  refuses at those pins unconditionally), refuses on
   any other violating path named individually, and refuses if violations
   cannot be fully enumerated. Demonstrated refusing both ways before
   trusted.
@@ -319,10 +321,14 @@ every simulation and fails on the bench.
 
 ## B.1a Top-level architecture
 
-`gem_mac` is nine modules across three clock domains. Dataflow diagram: [`spec/block_diagram.md`](block_diagram.md).
-Stage 4 implements them as thirteen files — the extra four are the two DDR I/O cells,
+`gem_mac` is ten modules across three clock domains. Dataflow diagram: [`spec/block_diagram.md`](block_diagram.md).
+Stage 4 implemented them as thirteen files — the extra four were the two DDR I/O cells,
 the pulse synchroniser the counters cross on, and the CRC accumulator, which is one
 module instantiated twice rather than two implementations of the same arithmetic.
+The tenth module arrived at V-25's close: `gem_rx_abort`, downstream of the egress
+register, closes a frame a link event took away with an in-band synthetic beat
+(`tlast=1, tuser=0`) instead of leaving the port to go quiet mid-frame — see B.4a's
+amendment and module 9's description below.
 
 **One port was added in Stage 4**, and it is the only change to the interface the
 Stage 3 stub froze: `gtx_clk_shifted`, an input carrying the MMCM's second output.
@@ -361,7 +367,12 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
    the stream (R9's cut-through contract, detailed in `Documents/Bad bitstream handle.md`);
    classifies runt/oversize/bad-FCS/RX_ER (R10) with one counter per class (R17).
 9. **RX async FIFO** (rx_clk → sys_clk, depth derivation in B.3a) **→ AXI-S egress
-   register**, verdict on `tuser` at the `tlast` beat (R9).
+   register → `gem_rx_abort`**, verdict on `tuser` at the `tlast` beat (R9). The
+   abort module (V-25) watches the handshake downstream of the egress register and,
+   when a link event resets the receive domain with a frame open on this port, closes
+   it in band with one synthetic beat — `tlast=1, tuser=0`, `tdata=8'h00` — so every
+   frame ends with exactly one `tlast` (B.4a's rule 2 as amended); it is reset by
+   `tx_rst_n` only, so it survives the event it exists to observe.
 
 **Shared:**
 - **MDIO master** — register-level request interface *and* a sequencer that polls

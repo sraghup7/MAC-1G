@@ -136,7 +136,9 @@ pipeline registers alone. This design resets everything in the datapath,
 including the FCS holdback — but not the FIFO's memory (see the rule above) and
 not the DDR cells, which carry `INIT` on the primitive and an `initial` in the
 model rather than a reset. The cost is real in principle and measured at zero
-here — 745 LUTs and 788 FFs against budgets of 2000 and 3000, WNS +2.262 ns —
+here — 743 LUTs and 793 FFs against budgets of 2000 and 3000, WNS +1.897 ns
+(re-measured at the Stage 7 close; the Stage-4 snapshot read 745/788/+2.262,
+the delta being `gem_mdio`'s input synchroniser) —
 and the benefit is that every register has a defined value at time zero, so a
 simulation that starts mid-frame cannot produce X-propagation that reads like a
 data bug. Revisit if timing ever gets tight; it is not tight.

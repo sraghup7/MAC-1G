@@ -5,7 +5,9 @@ an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's Micrel
 KSZ9031RNX PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
-**Status: Stages 1–7 complete; the board is not yet in hand.** The MAC is
+**Status: Stages 1–7 complete; Stage 9's reproducibility check has passed and its
+known issues are consolidated (`docs/reports/stage9/`); the board is not yet in hand —
+Stage 8 bring-up is all that remains.** The MAC is
 written, constrained, placed, routed and gated: `make bitstream` produces
 `build/gem_top.bit` behind nine refusing gates, and `make check` runs 29 of 29
 scenarios green against a reference model that was finished before the first
@@ -152,11 +154,12 @@ Run `make help` for the full target list.
 
 ```
 spec/         the specification, versioned alongside the RTL
-model/        MATLAB golden model, stimulus generator, 70 tests, committed vectors
+model/        MATLAB golden model, stimulus generator, 72 tests, committed vectors
 rtl/          the design: 13 MAC modules, one per file, plus the shared
               parameters — and, from Stage 5, 3 that clock and reset it, 2
               that read its counters out over a serial pin, an echo path and
-              the board top level
+              the board top level; from Stage 6 part 2 an RX deskew MMCM,
+              and from V-25's close an in-band RX abort (gem_rx_abort)
 tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
@@ -249,12 +252,16 @@ Other useful entry points:
 - `make vectors` — regenerate every scenario from its seed
 - `make regress-all` — includes the two large random sweeps (~760k cycles)
 - `make synth` / `impl` / `bitstream` — `gem_top` against real constraints,
-  nine gates (critical-warning cleanliness before and after implementation,
-  the RX capture-clock anchor, two latch checks, constraint coverage, slack
-  — where the five RGMII RX input checks are waived under the fenced task-4e
-  derivation and everything else must pass outright — CDC via `report_cdc`,
-  and physical verification via `report_drc` and route status).
-  `TOP=skeleton_top` builds the Stage 2 blinker instead.
+   nine gates (critical-warning cleanliness before and after implementation,
+   the RX capture-clock anchor, two latch checks, constraint coverage, slack
+   — where the five RGMII RX input checks are waived under the fenced task-4e
+   derivation and everything else must pass outright — CDC via `report_cdc`,
+   and physical verification via `report_drc` and route status).
+   `TOP=skeleton_top` builds the Stage 2 blinker instead.
+- `make debug` — `gem_top` with an ILA wired into the RX pipeline
+  (`build/gem_top_debug.bit` + `.ltx`). Bring-up diagnostics only; see
+  `bringup_checklist.md` step 4 for what it probes. Never flash it as the
+  production image.
 - `make oocsynth` — the whole MAC synthesised alone: area, slack, and the B.2
   budget checked rather than assumed (Stage 4 step 6). `M=gem_crc32` does one
   module.

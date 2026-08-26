@@ -38,7 +38,7 @@ flowchart TB
 
     MAC -->|rx_axis: DA..pad + verdict| ECHO
     ECHO -->|tx_axis: payload,\ntuser = swapped header| MAC
-    MAC -->|8 counters, link, speed, phy_id| REPORT
+    MAC -->|13-field record: 8 counters,\nlink, speed, phy_id, phyok, rxlock| REPORT
     REPORT -->|characters| UART --> UARTPIN(["uart_tx\nG16"])
 
     MAC <-->|RGMII, 4-bit DDR| RGMIIPINS(["RGMII pins, bank 15\nTXD/TX_CTL/GTX_CLK\nRXD/RX_CTL/RX_CLK"])
@@ -101,7 +101,7 @@ flowchart LR
 
     ARB --> ODDR_TX --> PHY
     PHY --> IDDR_RX
-    CRCRX --> FIFO --> RXOUT["AXI-S egress reg"]
+    CRCRX --> FIFO --> RXOUT["AXI-S egress reg"] --> ABORT["gem_rx_abort (V-25)\ncloses a frame the link\ntook away: one synthetic beat,\ntlast=1, tuser=0"]
 
     MDIO <-->|MDC/MDIO| PHY
     REG -.status/counters.-> READOUT["gem_stat_report + gem_uart_tx\n(R17, B.7 item 5 — board diagram)"]
