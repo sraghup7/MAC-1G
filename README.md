@@ -68,8 +68,12 @@ blinker, for B.5 step 1). A gate refuses the build outright on any
 `CRITICAL WARNING`, which a constraint matching no port produces; it caught the
 tree's own defect on the first run, 68 of them, from `constrs/` already
 describing the board while the build still targeted the blinker. Post-route
-slack is **WNS −3.109 ns / WHS +0.049 ns** — the negative figure being the
-five waived RX input checks described above and nothing else.
+slack is **WNS −3.109 ns / WHS +0.097 ns** — the negative figure being the
+five waived RX input checks described above and nothing else. Re-measured
+after V-25 added `gem_rx_abort`: WNS is unchanged to the last digit (it is
+the same routing-independent ZHOLD constant task-4e derived, not a
+coincidence), and WHS moved from +0.049 ns, a genuine shift from the extra
+logic rather than noise.
 
 **RGMII RX timing: signed off by derivation, bench check pending.** The RGMII
 I/O delay constraints (V-2) are written, corrected, and wired into the real
