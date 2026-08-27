@@ -330,6 +330,47 @@ def check_echo_frame(sent_payload: bytes, got_payload: bytes,
     return mismatched, bad_swap
 
 
+def echo_diff_octets(want: bytes, got: bytes, limit: int = 8):
+    """Which octets of an echoed payload came back wrong, and what followed each.
+
+    Returns `(index, want_octet, got_octet, next_want_octet)` per differing
+    octet, capped at `limit`; `got_octet` is None where the reply ran short,
+    and `next_want_octet` is None at the end of the payload.
+
+    `next_want_octet` is in here rather than left to the reader because
+    B.5-TX-1's signature is stated in terms of it: the falling-edge (high)
+    nibble taking the value of the FOLLOWING rising-edge (low) nibble
+    (docs/reports/stage9/known-issues.md). A differing octet on its own cannot
+    show that, and the caller has the following octet right there.
+
+    THIS REPLACED A PRINT THAT TRUNCATED BOTH PAYLOADS TO THEIR FIRST 16
+    OCTETS. That was survivable while a quarter of every frame was wrong, but
+    once SLEW/DRIVE cut the rate to ~2%, the surviving corruption sat past
+    octet 16 and every reported line showed two identical prefixes -- the tool
+    said "payload differs" and then displayed no difference. Characterising
+    the residual was impossible until this was fixed, which is the kind of gap
+    worth naming rather than working around.
+
+    A reply shorter than expected counts every missing octet as differing
+    instead of quietly comparing only the overlap.
+    """
+    out = []
+    for i in range(len(want)):
+        g = got[i] if i < len(got) else None
+        if g == want[i]:
+            continue
+        out.append((i, want[i], g, want[i + 1] if i + 1 < len(want) else None))
+        if len(out) == limit:
+            break
+    return out
+
+
+def echo_diff_count(want: bytes, got: bytes) -> int:
+    """How many octets differ in total, including any the reply never sent."""
+    n = sum(1 for i in range(min(len(want), len(got))) if want[i] != got[i])
+    return n + max(0, len(want) - len(got))
+
+
 def evaluate_echo(result: EchoResult) -> bool:
     """Drops alone are expected (gem_echo buffers one frame and refuses the
     rest by design); what must be zero is corruption, and at least one frame
@@ -365,7 +406,16 @@ def cmd_echo(args) -> int:
         if mismatched:
             want = _expected_reply_payload(bytes(payload))
             result.mismatched += 1
-            print(f"  frame {i}: payload differs -- sent {want[:16].hex()}..., got {got[:16].hex()}...")
+            diffs = echo_diff_octets(want, got)
+            total = echo_diff_count(want, got)
+            shown = "  ".join(
+                "[{}] {:02x}->{} (next {})".format(
+                    idx, w,
+                    "--" if g is None else "{:02x}".format(g),
+                    "--" if nxt is None else "{:02x}".format(nxt))
+                for idx, w, g, nxt in diffs)
+            more = "" if total <= len(diffs) else "  +{} more".format(total - len(diffs))
+            print(f"  frame {i}: payload differs in {total} octet(s): {shown}{more}")
         if bad_swap:
             result.bad_swap += 1
             print(f"  frame {i}: reply addressed to {reply[Ether].dst}, expected {args.src}")

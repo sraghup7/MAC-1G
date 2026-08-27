@@ -193,6 +193,51 @@ class TestCheckEchoFrame(unittest.TestCase):
         self.assertTrue(bad_swap)
 
 
+class TestEchoDiffOctets(unittest.TestCase):
+    """The print these back exists to characterise B.5-TX-1's residual.
+
+    The predecessor truncated both payloads to 16 octets, so once the mismatch
+    rate fell to ~2% every reported line showed two identical prefixes. These
+    tests pin the properties that made it useless.
+    """
+
+    def test_identical_payloads_have_no_diffs(self):
+        self.assertEqual(gh.echo_diff_octets(b"", b""), [])
+        self.assertEqual(gh.echo_diff_count(b"", b""), 0)
+
+    def test_reports_index_values_and_following_octet(self):
+        want = bytes([0x79, 0x7a, 0x7b, 0x7c])
+        got = bytes([0x79, 0xfa, 0x7b, 0x7c])
+        self.assertEqual(gh.echo_diff_octets(want, got), [(1, 0x7a, 0xfa, 0x7b)])
+
+    def test_finds_corruption_past_octet_16(self):
+        # The exact failure that made the old print useless: identical first
+        # 16 octets, damage at 42. A truncating report showed nothing at all.
+        want = bytes(range(64))
+        got = bytearray(want)
+        got[42] ^= 0x80
+        diffs = gh.echo_diff_octets(want, bytes(got))
+        self.assertEqual(diffs, [(42, 42, 42 ^ 0x80, 43)])
+
+    def test_next_octet_is_none_at_end_of_payload(self):
+        want = bytes([0x10, 0x11])
+        got = bytes([0x10, 0x99])
+        self.assertEqual(gh.echo_diff_octets(want, got), [(1, 0x11, 0x99, None)])
+
+    def test_short_reply_counts_missing_octets_as_differing(self):
+        want = bytes([1, 2, 3, 4])
+        got = bytes([1, 2])
+        self.assertEqual(gh.echo_diff_count(want, got), 2)
+        self.assertEqual([d[0] for d in gh.echo_diff_octets(want, got)], [2, 3])
+        self.assertIsNone(gh.echo_diff_octets(want, got)[0][2])
+
+    def test_limit_caps_the_listing_but_not_the_count(self):
+        want = bytes(64)
+        got = bytes([0xFF] * 64)
+        self.assertEqual(len(gh.echo_diff_octets(want, got, limit=3)), 3)
+        self.assertEqual(gh.echo_diff_count(want, got), 64)
+
+
 class TestEvaluateEcho(unittest.TestCase):
 
     def test_all_returned_and_correct_is_ok(self):
