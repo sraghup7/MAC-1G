@@ -75,6 +75,27 @@ set_property IOSTANDARD   LVCMOS33 [get_ports rgmii_rx_clk]
 set_property IOSTANDARD   LVCMOS33 [get_ports {rgmii_rxd[*]}]
 set_property IOSTANDARD   LVCMOS33 [get_ports rgmii_rx_ctl]
 
+# B.5-TX-1 experiment: these six TX outputs took Vivado's default SLEW SLOW,
+# which was never set explicitly. On a 125 MHz DDR source-synchronous
+# interface with a 4 ns nibble, SLOW's edge rate is a significant fraction of
+# the unit interval, and rise/fall times are not symmetric under SLOW -- that
+# asymmetry displaces one clock edge relative to the other by a per-bit,
+# intermittent amount, matching the falling-edge-nibble-sampled-late signature
+# in B.5-TX-1 (docs/reports/stage9/known-issues.md) in a way the CLOCK1_PHASE
+# sweep (d8e48aa) could not, since phase moves both edges together.
+set_property SLEW FAST [get_ports rgmii_gtx_clk]
+set_property SLEW FAST [get_ports {rgmii_txd[*]}]
+set_property SLEW FAST [get_ports rgmii_tx_ctl]
+
+# SLEW FAST alone (measured on hardware) cut the B.5-TX-1 payload mismatch
+# rate from ~16.7/100 to ~2.7/100 but did not reach zero: right mechanism,
+# insufficient margin. DRIVE is the other edge-rate lever on these pins;
+# raising it from the default 12 to 16 pushes further in the same direction
+# (more drive current, steeper edges), rather than fighting SLEW FAST.
+set_property DRIVE 16 [get_ports rgmii_gtx_clk]
+set_property DRIVE 16 [get_ports {rgmii_txd[*]}]
+set_property DRIVE 16 [get_ports rgmii_tx_ctl]
+
 #############################################################################
 # PHY management and reset — bank 15
 #############################################################################

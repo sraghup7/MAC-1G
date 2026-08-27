@@ -293,6 +293,51 @@ which is the more likely reading given only one edge is affected. **Do not
 retune the phase before that sweep says it is the right lever**; B.5-RX-1's
 whole history is a careful derivation adjusted in the wrong dimension.
 
+### `SLEW FAST` + `DRIVE`, run 2026-08-27 — mechanism confirmed, not yet a fix
+
+Following the phase sweep's conclusion above (duty-cycle/edge-rate, not phase),
+checked `constrs/pins.xdc`: the six RGMII TX ports (`rgmii_gtx_clk`,
+`rgmii_txd[3:0]`, `rgmii_tx_ctl`) set only `PACKAGE_PIN` and `IOSTANDARD`, never
+`SLEW` or `DRIVE`, so all six took Vivado's default `SLEW SLOW DRIVE 12`. On a
+125 MHz DDR interface with a 4 ns nibble, `SLOW`'s edge rate is a significant
+fraction of the unit interval, and rise/fall times are asymmetric under `SLOW`
+— that asymmetry displaces one clock edge relative to the other, fitting every
+observation the phase sweep could not: one edge only, per-bit and intermittent,
+immune to phase, worse on high-transition bytes.
+
+Baseline reconfirmed same-session before touching anything (3× `echo --count
+100`): returned 72/75/75, mismatches 14/15/21 — consistent with the phase-sweep
+baseline above.
+
+**`SLEW FAST`** on the six TX ports (build clean, WNS +0.347 ns, WHS +0.033 ns
+— no regression from the committed +0.336 ns): mismatches fell to 2/1/5 across
+three `--count 100` runs, all 100 returned each time — a ~9× reduction. Step 4
+re-confirmed PASS.
+
+**`SLEW FAST` + `DRIVE 16`** (same direction as `SLEW FAST` — more drive
+current, steeper edges — rather than `DRIVE 8` which would push the opposite
+way): 2/5/3 at `--count 100`, then **14/500 = 2.8%** at `--count 500`. That
+matches `SLEW FAST` alone (2.7%) closely enough to call it noise — `DRIVE 16`
+added no measurable further improvement. Step 4 re-confirmed PASS again.
+
+| configuration | mismatch rate |
+|---|---|
+| baseline (`SLEW SLOW`/`DRIVE 12`, Vivado defaults) | ~24% (14–21 of 72–75 returned, and separately 18–20 of 71–83 above) |
+| `SLEW FAST` | ~2.7% (1–5 of 100, 3 runs) |
+| `SLEW FAST` + `DRIVE 16` | ~2.8% (14 of 500) |
+
+**Conclusion.** The edge-rate/rise-fall-asymmetry hypothesis is confirmed as
+the dominant mechanism — not phase (settled above), not fabric logic, but I/O
+driver characteristics on the TX pins. `SLEW FAST` closes roughly 9/10 of the
+gap; the residual **~2.8% mismatch rate is real, reproducible across a 500-frame
+run, and not moved by `DRIVE 16`**, the only other edge-rate lever `pins.xdc`
+exposes on these ports. Both properties are committed as a partial mitigation.
+**B.5-TX-1 remains open** for whatever accounts for the last ~2.8% — the more
+likely next lever is the still-not-started I/O DELAY work against the
+JL2121(D)'s confirmed 2 ns RXDLY/TXDLY straps (V-2,
+`docs/reports/stage9/rgmii-jl2121-retiming-report.md`), not further tuning of
+`SLEW`/`DRIVE`.
+
 ## Bring-up status after B.5-RX-1 (2026-08-27)
 
 | step | state |
@@ -300,7 +345,7 @@ whole history is a careful derivation adjusted in the wrong dimension.
 | 1–3 | PASS (unchanged) |
 | **4 — receive** | **PASS** on the shipped bitstream. See § B.5-RX-1. |
 | 5 — transmit / FCS | **Blocked on tooling.** Wireshark is not installed on this machine and a Windows NIC does not expose the FCS to a capture. Closes with B.5-TX-1. |
-| **6 — round trip** | **FAIL.** See § B.5-TX-1. |
+| **6 — round trip** | **FAIL, improved.** `SLEW FAST` + `DRIVE 16` on the TX pins cut the payload-mismatch rate from ~24% to ~2.8% (500-frame run) — mechanism confirmed (TX I/O edge rate), residual not yet explained. See § B.5-TX-1. |
 | **7 — corruption** | **PASS, fully, 2026-08-27** — counters and both physical checks (`led[3]` = **LED4** lit by the oversize frames, dark again after **KEY1**, with every counter confirmed back at zero over UART). `rx_over +20` for 20 oversize frames and `rx_ok +22` for the 20 good frames sent after them plus 2 ambient — R10's recovery property on real hardware, with `rx_bad`/`rx_runt`/`rx_rxer` all still 0. Required enabling **Jumbo Frame = 4088 Bytes** on the `Ethernet` adapter (MTU 1500 → 4074): `GEM_MAX_FRAME_BYTES` is 1518, and a non-jumbo NIC caps a raw frame at 1514 + 4 FCS = exactly 1518, so no frame it can send is ever oversize. That is a host setting, not a repo change, and it is reversible — `bringup_checklist.md` step 7 now carries the command and the silent-failure warning. |
 | 8 — soak | Not started; it is the acceptance test for a working round trip and step 6 does not pass yet. |
 
