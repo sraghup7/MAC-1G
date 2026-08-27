@@ -338,7 +338,51 @@ JL2121(D)'s confirmed 2 ns RXDLY/TXDLY straps (V-2,
 `docs/reports/stage9/rgmii-jl2121-retiming-report.md`), not further tuning of
 `SLEW`/`DRIVE`.
 
-### Per-line `DRIVE` trim — B.5-TX-1 down ~320x, and still not fixed
+### B.5-TX-1 IS FIXED — the TX clock phase was wrong, 2026-08-27
+
+**`CLKOUT1_PHASE` 70 -> 60. Step 6 passes. 0 payload errors in 12000 frames,
+with the per-line DRIVE trims removed.**
+
+Swept on the real board at uniform `SLEW FAST` / `DRIVE 16`:
+
+| phase | errors / frames | WNS | |
+|---|---|---|---|
+| 55.0 | 0 / 4000 | +0.019 ns | gate 2 nearly refuses |
+| **60.0** | **0 / 12000** | +0.130 ns | **committed** |
+| 65.0 | 3 / 4000 | +0.241 ns | |
+| 70.0 | 11 / 1000 | +0.322 ns | the old value |
+| 80.0 | 3626 / 2000 | +0.574 ns | ~27% of frames corrupt |
+
+**The WNS column rises monotonically as the hardware gets worse.** Setup slack
+against the TX output-delay constraint is *anti-correlated* with whether the
+link works, because that constraint models FPGA-internal skew only —
+`Documents/RGMII I-O Timing Derivation.md` says so outright: "board trace
+length/skew is not in this budget because B.1b never had trace-length data to
+put there." The real limit is that missing term. **`+70.000` was partly chosen
+for having more margin than `+60.000`, which is optimising the wrong number in
+the wrong direction.** Warnings to that effect are now at the constraint itself
+and in `rtl/gem_mmcm.v`.
+
+**The per-line DRIVE trims are removed.** They reached 0.075% by holding
+`txd[3]` and `txd[2]` a drive step slower — real, causal, and treating a
+symptom: they were compensating skew the wrong phase was producing. They were
+also board-specific calibration that nothing could validate. At the right
+phase they had nothing left to correct.
+
+**What was not established:** the working window's lower edge. Gate 2 refuses
+below ~55 degrees, so 60.0 is confirmed clean but **not confirmed centred** —
+one 5-degree step (111 ps) above a clean 55.0 and one step below a dirty 65.0.
+If this drifts on another board or a temperature corner, 55.0 is the direction
+to move, and the constraint is what blocks going further.
+
+**How it was found, since the method transfers:** `CLKOUT1_PHASE` was used as a
+*measuring instrument*. Phase moves the clock against all data equally, so the
+per-line failure histogram at a bad phase ranks the lines by skew. At 80
+degrees that ranking was TXD[3] 2748, TXD[2] 801, TXD[0] 397, TXD[1] 82 — the
+exact order the DRIVE trims had needed, arrived at independently. That was the
+substitute for the oscilloscope this bench does not have.
+
+### Superseded: per-line `DRIVE` trim — B.5-TX-1 down ~320x, and still not fixed
 
 **`SLEW` and `DRIVE` are per-PORT, which reopened a lever the section below
 declared exhausted.** There is no `ODELAYE2` on this device, so per-pin *delay*

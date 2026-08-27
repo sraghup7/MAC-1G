@@ -23,7 +23,42 @@
 //             Drives exactly one thing: the ODDR that forwards GTX_CLK to
 //             the PHY.
 //
-// CORRECTION (B.5 bring-up, 2026-08-27): CLKOUT1_PHASE IS NOW +70.000
+// SECOND CORRECTION (B.5 bring-up, 2026-08-27, from a hardware sweep):
+// CLKOUT1_PHASE IS +60.000, NOT +70.000. The +70.000 derivation below is
+// sound about the FPGA-internal asymmetry it cancels, and still wrong,
+// because that asymmetry is not the only skew in the path -- the board's
+// own TXD-vs-GTX_CLK trace skew is, and no FPGA-side derivation can see it.
+// constrs/rgmii_timing.xdc says so in its own words: "board trace
+// length/skew is not in this budget because B.1b never had trace-length
+// data to put there."
+//
+// Swept on the real board, uniform SLEW FAST / DRIVE 16, echo payload
+// mismatches per frames sent:
+//
+//   phase    errors / frames    WNS        note
+//   55.0       0 / 4000       +0.019 ns    gate 2 nearly refuses
+//   60.0       0 / 12000      +0.130 ns    <-- committed
+//   65.0       3 / 4000       +0.241 ns
+//   70.0      11 / 1000       +0.322 ns    the old value
+//   80.0    3626 / 2000       +0.574 ns    ~27% of frames corrupt
+//
+// READ THAT WNS COLUMN AGAIN. It rises monotonically as the hardware gets
+// WORSE. Setup slack against the TX output-delay constraint is ANTI-
+// CORRELATED with whether the link actually works, because the constraint
+// models FPGA-internal skew only and the real limit is board skew it cannot
+// see. +70.000 was partly chosen by having more margin than +60.000 had.
+// Optimising that number optimises the wrong thing, and on this interface
+// it optimises it in the wrong direction. Do not retune this phase by
+// looking at WNS; retune it with gem_host.py echo and thousands of frames.
+//
+// The lower edge of the working window was never found: gate 2 refuses below
+// about 55 degrees, so 60.000 is confirmed clean but NOT confirmed centred.
+// It sits one 5-degree grid step (111 ps) above 55.0 which is also clean, and
+// one step below 65.0 which is not. If this ever drifts -- a different board,
+// a temperature corner -- 55.0 is the direction to move, and the constraint
+// is what stands in the way of going further.
+//
+// FIRST CORRECTION (B.5 bring-up, 2026-08-27): CLKOUT1_PHASE was +70.000
 // (+1.5556 ns), NOT -55.000 (-1.2222 ns). Everything from here through "HOW
 // THE OLD -55.000 VALUE WAS ARRIVED AT" describes Stage 6's derivation, now
 // known to have solved the wrong problem, and the correct one it should have
@@ -266,7 +301,7 @@ module gem_mmcm (
         .CLKOUT0_PHASE      (0.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .CLKOUT1_DIVIDE     (9),         // 125 MHz, GTX_CLK copy
-        .CLKOUT1_PHASE      (70.000),    // +1.5556 ns advance; measured, see header
+        .CLKOUT1_PHASE      (60.000),    // +1.3333 ns; measured on hardware, see header
         .CLKOUT1_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),
         .STARTUP_WAIT       ("FALSE")

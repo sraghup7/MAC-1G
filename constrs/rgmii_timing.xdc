@@ -103,6 +103,21 @@ create_generated_clock -name rgmii_gtx_clk_gen \
 
 set tx_data_ports [get_ports {rgmii_txd[*] rgmii_tx_ctl}]
 
+# WARNING (B.5 bring-up, 2026-08-27): SETUP SLACK AGAINST THESE FOUR
+# CONSTRAINTS IS ANTI-CORRELATED WITH WHETHER THE TX LINK ACTUALLY WORKS.
+# Measured on hardware across a CLKOUT1_PHASE sweep -- WNS rose monotonically
+# (+0.019, +0.130, +0.241, +0.322, +0.574 ns) while the echo payload error
+# rate rose with it (0, 0, 0.075%, 1.1%, ~27%). The reason is stated plainly
+# a few lines up and in Documents/RGMII I-O Timing Derivation.md: this budget
+# models FPGA-INTERNAL skew only, because "board trace length/skew is not in
+# this budget -- B.1b never had trace-length data to put there." The real
+# limit on this board is that missing term, and it moves the opposite way.
+#
+# So these checks passing is necessary and NOT sufficient, and improving the
+# number is not an improvement. Never retune rtl/gem_mmcm.v's CLKOUT1_PHASE
+# by maximising WNS here -- that is how it ended up at +70.000, which built
+# with more margin than the +60.000 that actually works. Retune it with
+# sw/host/gem_host.py echo over thousands of frames instead.
 set_output_delay -clock rgmii_gtx_clk_gen -max 0.500 $tx_data_ports
 set_output_delay -clock rgmii_gtx_clk_gen -min -0.500 $tx_data_ports -add_delay
 set_output_delay -clock rgmii_gtx_clk_gen -max 0.500 -clock_fall $tx_data_ports -add_delay
