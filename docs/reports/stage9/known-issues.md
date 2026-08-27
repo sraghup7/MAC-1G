@@ -236,7 +236,54 @@ signature is misleading. **The `CLKOUT1_PHASE` sweep below settles this without
 needing to see an FCS at all:** if the mismatch rate moves with TX clock phase,
 the corruption is at the pins and the first horn is right.
 
-**The discriminating experiment, before any fix:** sweep
+### The `CLKOUT1_PHASE` sweep, run 2026-08-27 — phase is NOT the fix
+
+Swept the real board, rebuilding and reprogramming at each point. `CLKOUT1_PHASE`
+is on a 5° grid (45/`CLKOUT1_DIVIDE`(9)), and TX ODDR setup slack tracks it
+exactly 1:1 in ns (1° = 8 ns/360 = 22.2 ps), which is itself a useful check that
+the constraint is doing what it claims.
+
+| phase | TX ODDR setup slack | build | `echo --count 100` |
+|---|---|---|---|
+| 25° | −0.664 ns | **refused** | — |
+| 50° | −0.109 ns | **refused** | — |
+| 60° | +0.114 ns | pass | returned 100, **mismatches 24 / 21 / 27** |
+| **70°** (committed) | +0.336 ns | pass | returned 83, **mismatches 20** |
+| 115° | > +0.891 ns | pass | **returned 0** — nothing recognisable comes back |
+
+Three things fall out, and the third is the important one.
+
+1. **The corruption is at the pins, not in the fabric.** A phase change destroyed
+   it completely at 115°. Fabric logic does not care about TX clock phase. This
+   settles the contradiction recorded above in favour of the nibble signature:
+   the FCS on those frames is wrong and the adapter is passing bad-FCS frames
+   under WinPcap promiscuous mode.
+2. **STA setup and the hardware want opposite directions.** Setup slack improves
+   as phase rises; the hardware gets worse. That is the signature of a **hold**
+   failure at the PHY, which is what "the falling nibble already advanced to the
+   next one" means. The gate refuses below ~55°, so the setup constraint is
+   actively fencing off the direction the hardware wants.
+3. **But phase is not the lever anyway.** 60° and 70° give the *same* ~24%
+   mismatch rate (24/100, 21/100, 27/100 against 20/83). 0.22 ns of movement
+   changes nothing; 1 ns destroys everything. **Phase moves both clock edges
+   together, and only ONE edge is ever wrong** — so no phase value can fix it,
+   exactly as B.5-RX-1's ±111 ps sweep could not fix a whole-UI framing error.
+
+`CLKOUT1_PHASE` was returned to the committed `70.000` and the board reprogrammed
+there (`gem_mmcm.v` byte-identical to baseline, WNS back to the documented
++336 ps, step 4 re-confirmed PASS). **No speculative value was left in the tree.**
+
+**Where to look next, in order.** The remaining explanation consistent with every
+observation is a **fixed displacement of the falling edge** — duty-cycle
+distortion. `CLKOUT1_DIVIDE` is **9**, an odd divide, where an MMCM reaches 50%
+only through its edge control at half-VCO-period (0.444 ns) resolution; the same
+is true of `CLKOUT0_DIVIDE` for `tx_clk`, which launches TXD. Worth checking the
+*achieved* duty on both outputs before anything else, then whether an even divide
+(a different VCO multiplier reaching 125 MHz on an even divisor) removes it. That
+is a real design change, not a parameter tweak, and it should not start until the
+duty numbers are actually read off the implemented MMCM.
+
+**Superseded — the original recommendation, kept because it was run:** sweep
 `rtl/gem_mmcm.v`'s `CLKOUT1_PHASE` (currently `+70.000`, a derived value — see
 that file's header and `docs/reports/stage9/rgmii-jl2121-retiming-report.md`)
 and watch the mismatch rate. If it moves, this is phase and the derivation
