@@ -163,6 +163,75 @@ carry it; `sw/host/test_gem_host.py` and `test_gem_host_commands.py` cover it,
 including that a drop still fails on a busy segment and that a quiet control
 window still rejects an over-count.
 
+## B.5-TX-1: V-2 closes badly — the TX falling-edge nibble is sampled late
+
+**Found 2026-08-27, the first time step 6 was ever runnable.** Step 4 had never
+passed before B.5-RX-1, so nothing had ever round-tripped through this board.
+With receive working, `gem_host.py echo --count 100` returns frames whose
+payloads are wrong:
+
+    sent 100, returned 83, payload mismatches 20, address swap wrong 0
+    FAIL step 6
+
+**Receive is not implicated.** Across the same runs the board reports
+`rx_ok +141`, `rx_bad 0`, `rx_runt 0`, `rx_over 0`, `rx_rxer 0` — every frame
+the board took in passed its own FCS check. The damage is downstream of that.
+
+**The signature is exact.** Every corrupted bit is the falling-edge (high)
+nibble taking the value of the **following** rising-edge (low) nibble in that
+bit position, and the low nibble is never touched. Checked against every
+corrupted byte the run reported: **13 of 13**, no exceptions.
+
+| sent | got | high nibble | following low nibble | bits flipped |
+|---|---|---|---|---|
+| `17` | `97` | `0001` → `1001` | `1000` | `1000` |
+| `2b` | `ab` | `0010` → `1010` | `1100` | `1000` |
+| `ad` | `ed` | `1010` → `1110` | `1110` | `0100` |
+| `a4` | `f4` | `1010` → `1111` | `0101` | `0101` |
+| `e4` | `f4` | `1110` → `1111` | `0101` | `0001` |
+
+That is the PHY sampling the falling-edge nibble late enough that some bits
+have already advanced to the next nibble. It is per-bit and intermittent,
+which is what differing trace/pin delays across TXD[3:0] would produce.
+
+**What it is not.** Reproduced identically on the debug bitstream and on the
+shipped one, so it is not ILA routing pressure. `tx_urun` stays 0, so it is not
+the egress FIFO. A pure phase error would hit both edges; **only the falling
+edge is ever wrong**, which points at the falling-edge launch specifically —
+duty cycle rather than phase. Worth noting `rtl/gem_mmcm.v`'s `CLKOUT1_DIVIDE`
+is **9**, an odd divide, where 50% duty needs the MMCM's edge control rather
+than falling out of the divider.
+
+**Unresolved, and it matters.** These frames reach the host at all, which means
+either the corruption happens *before* CRC generation (so the FCS is valid over
+corrupted data) or the NIC is passing frames whose FCS is bad. The nibble-level
+signature says the former is implausible — fabric logic does not produce
+"falling nibble takes the following rising nibble" — but that has not been
+proven, and it cannot be with the tooling on this machine: **Wireshark is not
+installed**, and Windows NICs do not hand the FCS to a capture. Settling it is
+also exactly what step 5 asks for, so step 5 and this item close together.
+
+**The discriminating experiment, before any fix:** sweep
+`rtl/gem_mmcm.v`'s `CLKOUT1_PHASE` (currently `+70.000`, a derived value — see
+that file's header and `docs/reports/stage9/rgmii-jl2121-retiming-report.md`)
+and watch the mismatch rate. If it moves, this is phase and the derivation
+needs redoing. If it does not move — as the RX ±111 ps sweep did not move
+B.5-RX-1 — then phase is the wrong knob and the falling-edge launch itself is,
+which is the more likely reading given only one edge is affected. **Do not
+retune the phase before that sweep says it is the right lever**; B.5-RX-1's
+whole history is a careful derivation adjusted in the wrong dimension.
+
+## Bring-up status after B.5-RX-1 (2026-08-27)
+
+| step | state |
+|---|---|
+| 1–3 | PASS (unchanged) |
+| **4 — receive** | **PASS** on the shipped bitstream. See § B.5-RX-1. |
+| 5 — transmit / FCS | **Blocked on tooling.** Wireshark is not installed on this machine and a Windows NIC does not expose the FCS to a capture. Closes with B.5-TX-1. |
+| **6 — round trip** | **FAIL.** See § B.5-TX-1. |
+| 7 — corruption | **Blocked on host config, board behaviour correct.** The oversize half never reached the wire: the `Ethernet` adapter is MTU 1500 with Jumbo Frame *Disabled*, so the NIC dropped the 1600-octet frames and `rx_over 0` is right. The good-frame half worked — `rx_ok` advanced by exactly the 20 sent plus 2 ambient. Enabling jumbo frames is an adapter setting, not a repo change. |
+| 8 — soak | Not started; it is the acceptance test for a working round trip and step 6 does not pass yet. |
+
 ## What already closed, so this page isn't mistaken for the whole list
 
 Closing V-25 does not shrink this table — it closed a *different* kind of
