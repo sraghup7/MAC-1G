@@ -58,7 +58,7 @@ module gem_rgmii_rx (
         .q_fall (ctl_fall)
     );
 
-    assign gm_byte = {d_fall, d_rise};    // {high nibble, low nibble}
+    assign gm_byte = {d_rise, d_fall};    // {high nibble, low nibble}: JL2121(D)
     assign gm_dv   = ctl_rise;
     assign gm_er   = ctl_rise ^ ctl_fall;
 

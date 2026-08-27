@@ -89,24 +89,19 @@ module gem_iddr (
     // rising edge, one cycle later. Q1 is the rising-edge capture and Q2 the
     // falling-edge one.
     //
-    // WHICH HALF LANDS ON Q1, which an earlier revision of this file claimed
-    // could not be settled from a datasheet. It can, and the datasheet is
-    // B.1b's own citation: the KSZ9031RNX adds 1.2 ns to RX_CLK relative to
-    // RXD by default, which walks the clock into the middle of the data eye.
-    // The rising edge therefore samples the nibble the PHY launched on ITS
-    // rising edge -- the low nibble -- so Q1 is the low nibble and Q2 the high
-    // one. The same mapping is what reference/verilog-ethernet's
-    // rgmii_phy_if.v uses in the field (Q1 -> rxd[3:0], rx_dv = ctl_1).
+    // WHICH HALF LANDS ON Q1: the board's PHY is a JLSemi JL2121(D)
+    // (spec/PROJECT_SPEC.md A.2), whose RXDLY strap is populated for +2.000 ns
+    // (Manuals/AX7035B_UG.pdf Table 8-1). On an 8 ns RGMII period, 2 ns is
+    // exactly half a unit interval (4 ns), so the delayed RX_CLK rising edge
+    // aligns with the PHY's FALLING-edge launch -- the HIGH nibble. Thus Q1
+    // (rising-edge capture) = HIGH nibble, Q2 (falling-edge capture) = LOW
+    // nibble. This is the OPPOSITE of the KSZ9031RNX's 1.2 ns default, and
+    // the mapping in gem_rgmii_rx.v is {d_rise, d_fall} = {Q1, Q2} = {high, low}.
     //
-    // This was wrong once, and wrong in the direction that costs a bring-up
-    // session: the mapping was carried over from the behavioural model above,
-    // whose phase convention is correct for the testbench's clock-aligned
-    // launch and NOT for a PHY that delays the clock. Every received octet
-    // would have arrived nibble-swapped -- an SFD of 0xD5 reading as 0x5D, so
-    // the hunter would never find a frame -- and gm_dv would have been carrying
-    // DV ^ RX_ER. Simulation cannot see it, because simulation runs the branch
-    // above. What is genuinely left for the bench is confirming the PHY's delay
-    // is present at all (V-2), not deciding which wire goes where.
+    // An earlier revision (for KSZ9031RNX) had the opposite mapping and was
+    // wrong for this board: every received octet would arrive nibble-swapped
+    // (SFD 0xD5 reading as 0x5D), and the SFD hunter would never find a frame.
+    // Simulation cannot see this (V-2) because it runs the behavioural branch.
     wire q1, q2;
 
     IDDR #(
