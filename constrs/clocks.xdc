@@ -13,28 +13,32 @@ create_clock -name clk50 -period 20.000 [get_ports clk50]
 # Stage 5: the design's real clocks
 #############################################################################
 #
-# rx_clk is recovered by the KSZ9031RNX's CDR from the link partner and driven
+# rx_clk is recovered by the JL2121(D)'s CDR from the link partner and driven
 # in on RX_CLK. It is asynchronous to everything the MMCM makes (R19, B.1b) --
 # different oscillators, no phase relationship, and the FIFO in gem_rx_fifo is
 # the only place multi-bit data crosses between them.
-create_clock -name rgmii_rx_clk -period 8.000 -waveform {1.200 5.200} \
+create_clock -name rgmii_rx_clk -period 8.000 -waveform {2.000 6.000} \
     [get_ports rgmii_rx_clk]
 
-# The 1.200 ns waveform shift is not cosmetic. It is the KSZ9031RNX's default
-# RX_CLK delay (B.1b: 1.2 ns typical relative to RXD/RX_DV, out of reset, no
-# MDIO write), declared relative to the idealised zero-delay launch reference
-# that constrs/rgmii_timing.xdc calls rgmii_rx_clk_virt. It is a modelling
-# phase, not a claim about an externally observable absolute: this clock has no
+# CORRECTION (B.5 bring-up, 2026-08-27): this waveform was 1.200/5.200, the
+# KSZ9031RNX's assumed default RX_CLK delay. B.5 found the physical chip is a
+# JLSemi JL2121(D) (spec/PROJECT_SPEC.md A.2's correction), whose RXDLY strap
+# is confirmed populated for +2.000 ns, not 1.200 (Manuals/AX7035B_UG.pdf
+# Table 8-1) -- a fixed board-strap value, not a continuously-adjustable
+# default. The waveform shift is not cosmetic. It is that 2.000 ns, declared
+# relative to the idealised zero-delay launch reference that
+# constrs/rgmii_timing.xdc calls rgmii_rx_clk_virt. It is a modelling phase,
+# not a claim about an externally observable absolute: this clock has no
 # defined phase relationship to anything else in the design -- it is grouped
 # asynchronous to clk50's tree below, and every rx_clk-internal
 # register-to-register check is expressed against this clock's own edges, so
 # shifting all of them together changes none of those checks. The one place the
 # number is load-bearing is the RX input-delay check in
 # constrs/rgmii_timing.xdc, which reads it as "the real clock's edges arrive
-# 1.200 ns after where the PHY's own undelayed edges would be". Do not drop the
+# 2.000 ns after where the PHY's own undelayed edges would be". Do not drop the
 # waveform without re-deriving that file's RX section with it.
 #
-# The input delays in constrs/rgmii_timing.xdc are derived from this 1.200 and
+# The input delays in constrs/rgmii_timing.xdc are derived from this 2.000 and
 # the RGMII v2.0 receive window; the two files must change together.
 #
 # EXPECTED RED ON THE RX INPUT-DELAY CHECKS -- READ BEFORE "FIXING" THEM.

@@ -40,11 +40,13 @@
 // populated for +2 ns (Manuals/AX7035B_UG.pdf Table 8-1), not a
 // register-adjustable ~1.2 ns default. Q1/Q2's qualitative pairing (rising
 // edge lands in the low nibble) is unaffected by the exact ns value as long
-// as SKEW stays inside the valid capture window, so this test still exercises
-// the right branch -- but SKEW itself, and whether 1.0-2.0 ns is even the
-// right window for this chip, are KSZ9031RNX-sourced and gate on the same
-// RGMII AC-timing re-derivation (JL2121(D) datasheet Chapter 4.7) as
-// R14/R20. Not changed here without that derivation behind it.
+// as SKEW stays inside the valid capture window, so this test would still
+// exercise the right branch at the old value -- but SKEW is now set to 2.0,
+// the confirmed board strap, rather than an arbitrary boundary point of the
+// old assumed KSZ9031RNX window. The RGMII v2.0 window itself
+// (TsetupR_min/TholdR_min = 1.0 ns each) did not change between chips --
+// Documents/RGMII I-O Timing Derivation.md and rtl/gem_rx_mmcm.v have the
+// full re-derivation -- so 2.0 sits inside it exactly as 1.0 did.
 //
 // Self-contained by construction: it shares no package with the other
 // testbenches because it compiles into a different library than they do.
@@ -58,7 +60,7 @@ module tb_gem_ddr_io;
 
     localparam real TCK       = 8.0;   // 125 MHz
     localparam real TCO_DATA  = 0.3;   // PHY-style launch delay after the edge
-    localparam real SKEW      = 1.0;   // RX_CLK delay, inside TsetupR/TholdR
+    localparam real SKEW      = 2.0;   // RX_CLK delay: confirmed JL2121(D) RXDLY strap
 
     logic clk = 1'b0;
     always #(TCK/2.0) clk = ~clk;

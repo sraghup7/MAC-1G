@@ -21,7 +21,7 @@ flowchart TB
     KEY1(["KEY1\nM13, clear counters"]) --> GLUE
 
     subgraph CLKRST["gem_clk_rst — B.1b"]
-        MMCM["gem_mmcm\nMMCME2_BASE + 2 BUFG\nCLKOUT0 125 MHz = tx_clk\nCLKOUT1 −55° = 1.222 ns = gtx_clk_shifted"]
+        MMCM["gem_mmcm\nMMCME2_BASE + 2 BUFG\nCLKOUT0 125 MHz = tx_clk\nCLKOUT1 +70° = 1.5556 ns advance = gtx_clk_shifted"]
         RSTS["gem_reset_sync ×3\nasync assert, sync deassert\ntx waits on LOCKED, rx must not"]
         PHYHOLD["PHY reset hold\n≥ 10 ms counted on clk50 (tSR)"]
     end
@@ -66,9 +66,11 @@ material) and the argument is V-21.
 Three clock domains: `tx_clk` (125 MHz, also `sys_clk` for v1), `gtx_clk_shifted`
 (125 MHz, phase-shifted copy of `tx_clk`, I/O-only), and `rx_clk` (125 MHz,
 recovered by the PHY, deskewed by the second MMCM, asynchronous to the other
-two). See B.1b for the clocking/reset rationale (TX phase −55° = 1.222 ns, the
-measured-best legal grid point in the PHY's window — see
-`Documents/RGMII I-O Timing Derivation.md` §5) and B.3a for the derived numbers.
+two). See B.1b for the clocking/reset rationale (TX phase +70° = 1.5556 ns
+advance, re-derived for the JL2121(D) to cancel a measured FPGA-internal
+clock-forwarding asymmetry — see
+`docs/reports/stage9/rgmii-jl2121-retiming-report.md`) and B.3a for the
+derived numbers.
 
 ```mermaid
 flowchart LR
@@ -82,7 +84,7 @@ flowchart LR
         TXIN --> ASM --> CRCTX --> ARB
     end
 
-    subgraph GTXCLK["gtx_clk_shifted (I/O only, −55° = 1.222 ns from tx_clk)"]
+    subgraph GTXCLK["gtx_clk_shifted (I/O only, +70° = 1.5556 ns advance from tx_clk)"]
         ODDR_TX["ODDR: TXD[3:0], TX_CTL,\nGTX_CLK pin"]
     end
 

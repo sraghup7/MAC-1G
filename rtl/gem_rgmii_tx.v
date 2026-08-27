@@ -12,9 +12,19 @@
 // fabric logic. A clock that leaves the chip through ordinary logic has an
 // unpredictable, uncharacterisable delay relative to the data it clocks; one
 // forwarded through an output register in the IOB has the same launch path as
-// the data, which is what makes R14's shift number mean anything. The shift
-// itself is not made here: gtx_clk_shifted is a second MMCM output, phase
-// shifted per B.1b, and this cell only puts it on a pin.
+// the data, which is what makes any skew claim about it meaningful.
+//
+// gtx_clk_shifted is a second MMCM output, kept structurally independent of
+// tx_clk's own BUFG rather than sharing it, and now advanced 1.5556 ns ahead
+// of tx_clk (rtl/gem_mmcm.v's header has the full correction and the
+// post-route measurement behind that number). The JL2121(D)'s TXDLY strap
+// delays the clock internally at the PHY, so this design no longer aims for
+// the PHY's TsetupT/TholdT window the way B.1b's original -55 deg shift did
+// -- the 1.5556 ns here exists to cancel a measured FPGA-internal asymmetry
+// (GTX_CLK is itself forwarded through an extra ODDR+OBUF hop that tx_clk's
+// own launch reference does not carry), landing TXC and TXD/TX_CTL close
+// together at the FPGA's own pins, which is what the PHY's non-delay-mode
+// TskewT spec (±500 ps) actually asks for.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -22,8 +32,9 @@
 module gem_rgmii_tx (
     input  wire       tx_clk,
 
-    // The 125 MHz clock phase-shifted -55 deg = 1.222 ns from tx_clk (B.1b). Only ever
-    // used to clock the GTX_CLK forwarding cell below.
+    // The 125 MHz clock from the MMCM's second output, advanced 1.5556 ns
+    // ahead of tx_clk (rtl/gem_mmcm.v). Only ever used to clock the GTX_CLK
+    // forwarding cell below.
     input  wire       gtx_clk_shifted,
 
     // GMII-style stream, one octet per cycle

@@ -50,6 +50,21 @@
 //     fast:  1.200 + 0.913 + 0.973 - 0.936 = +2.150 ns after the data transition
 //     slow:  1.200 + 2.569 + 2.041 - 1.974 = +3.836 ns
 //
+// CORRECTION (B.5 bring-up, 2026-08-27): "1.200" above is the KSZ9031RNX's
+// assumed default RX_CLK delay, and B.5 found the physical chip is a JLSemi
+// JL2121(D) instead (spec/PROJECT_SPEC.md A.2's correction), whose RXDLY
+// strap is confirmed populated for +2.000 ns, not 1.200 (Manuals/
+// AX7035B_UG.pdf Table 8-1). Re-running task 4e's exact formula with 2.000 in
+// place of 1.200 gives fast = 2.000+0.913+0.973-0.936 = +2.950 ns, slow =
+// 2.000+2.569+2.041-1.974 = +4.636 ns after the data transition -- but every
+// downstream margin number is UNCHANGED, because this module's fb-vs-fwd
+// arithmetic only depends on the FPGA's own clock-network insertion delay,
+// not on what absolute delay the PHY chose: the "residual" relative to the
+// PHY's own delayed edge (+0.950 fast / +2.636 slow, worked out below) is the
+// same either way, and margins are computed from that residual. So
+// CLKOUT0_PHASE stays -45.000 -- see the setup/hold numbers a few lines down,
+// none of which changed.
+//
 // The input-side IBUF+route spread (~1.66 ns corner-to-corner) passes straight
 // through a deskew loop -- only the fb-vs-fwd mismatch cancels -- so at slow
 // corner the capture edge lands past the next bit's earliest arrival: hold
@@ -64,8 +79,10 @@
 // arrival at a constant independent of the routed feedback path (task-4e).
 // R20's RX half is signed off by this derivation plus bench measurement, not
 // by WNS; scripts/build.tcl gate 2 encodes exactly that split. Fine trim on
-// the bench moves in k x VCO_period/8 = 111.1 ps steps (or the KSZ9031RNX's
-// MMD pad-skew registers) and must remain an exact multiple of 5 degrees.
+// the bench moves in k x VCO_period/8 = 111.1 ps steps -- the JL2121(D) has
+// no MDIO-programmable pad-skew register (the option named here before B.5
+// assumed the KSZ9031RNX); its RX delay is the RXDLY strap above, fixed at
+// board population -- and must remain an exact multiple of 5 degrees.
 //
 // STARTUP_WAIT IS "FALSE", AND THAT IS LOAD-BEARING. TRUE would hold the whole
 // device out of startup until this MMCM locks -- and its input clock does not
@@ -79,7 +96,7 @@
 // the placement or the pin, never the property.
 //
 // REF_JITTER1 = 0.010 is the primitive default, NOT a measurement: the
-// KSZ9031RNX's recovered-clock jitter is not a number this project has. The
+// JL2121(D)'s recovered-clock jitter is not a number this project has. The
 // part's ceiling (DS181 MMCM_FINJITTER, "< 20% of period or 1 ns") is 0.125 UI
 // at 8 ns. Acceptance criterion A in the design document requires the timing
 // run at BOTH values; passing at 0.010 alone is an optimistic number built on

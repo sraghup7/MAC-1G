@@ -65,11 +65,13 @@
 // Documents/RX Clock Deskew Design.md Step 3b for what happens without it:
 // up to 127 octets of fabricated frame data per link drop.
 //
-// gtx_clk_shifted is the second MMCM output, phase shifted -55 deg = 1.222 ns from
-// tx_clk (B.1b), and it exists as a port because the shift cannot be made
-// anywhere else. R14's whole mechanism is that GTX_CLK leaves the chip a
-// deliberate 1.222 ns later than the data it clocks; the cell that forwards it
-// therefore needs a clock this module does not otherwise have. It is an
+// gtx_clk_shifted is the second MMCM output, phase shifted +70 deg = 1.5556 ns
+// ahead of tx_clk (re-derived for the JL2121(D), rtl/gem_mmcm.v's header and
+// docs/reports/stage9/rgmii-jl2121-retiming-report.md), and it exists as a
+// port because the shift cannot be made anywhere else. R14's mechanism is
+// that GTX_CLK leaves the chip a deliberate 1.5556 ns ahead of the data it
+// clocks; the cell that forwards it therefore needs a clock this module does
+// not otherwise have. It is an
 // additive port -- every Stage 3 testbench elaborates unchanged, leaving it
 // unconnected, and the only consequence is that rgmii_gtx_clk does not toggle
 // in simulations that never look at it.
@@ -88,8 +90,9 @@ module gem_mac (
     // crossing. Asserts with rx_rst_n; releases after it.
     input  wire         rx_path_rst_n,
 
-    // Second MMCM output, phase-shifted -55 deg (1.222 ns) from tx_clk (B.1b/R14). Drives
-    // only the GTX_CLK forwarding cell.
+    // Second MMCM output, phase-shifted +70 deg (1.5556 ns advance) from tx_clk
+    // (B.1b/R14, re-derived for the JL2121(D)). Drives only the GTX_CLK
+    // forwarding cell.
     input  wire         gtx_clk_shifted,
 
     // ---- RGMII to the KSZ9031RNX (R13, R14) -------------------------------

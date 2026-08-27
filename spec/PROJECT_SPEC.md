@@ -312,11 +312,22 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 >   register-access mechanism at all: `RXDLY`/`TXDLY` (pins 25/24) are
 >   **hardware strap pins**, each adding a fixed 0 or 2 ns, sampled once at
 >   reset — not written at runtime. That escalation path does not exist on
->   this chip. **The strap states are now confirmed, not a schematic
->   unknown**: `AX7035B_UG.pdf` Table 8-1 states both `RXDLY` and `TXDLY` are
->   populated to add their 2 ns option (not left at 0 ns). This is the input
->   the RGMII timing re-derivation below needs; the re-derivation itself is
->   still not done.
+>   this chip. **The strap states are confirmed** (`AX7035B_UG.pdf` Table 8-1:
+>   both `RXDLY` and `TXDLY` populated to add their 2 ns option) **and the
+>   RGMII timing budget has been re-derived and confirmed against a real
+>   post-route build** —
+>   `docs/reports/stage9/rgmii-jl2121-retiming-report.md` has the full
+>   derivation. RX needed only its numeric reference point corrected (the
+>   deskew MMCM's phase trim itself, `CLKOUT0_PHASE = -45.000`, turned out
+>   unchanged — proven algebraically and then confirmed by a build reporting
+>   the identical WNS task 4e originally measured). TX needed its whole
+>   mechanism re-derived: the first attempt (launching `GTX_CLK` at the same
+>   phase as `tx_clk`, reasoning the PHY's TXDLY strap would handle the rest)
+>   measured a real TX hold failure post-route, traced to a ~1.1 ns
+>   FPGA-internal clock-forwarding asymmetry the datasheet alone would not
+>   have predicted. The corrected value, `CLKOUT1_PHASE = +70.000`
+>   (`rtl/gem_mmcm.v`), was found by sweeping the phase grid and measuring
+>   setup/hold slack at each point, and closes TX setup by +336 ps post-route.
 > - **`PHY_ADDR` is confirmed too, and was wrong.** The same table gives the
 >   `ADR0`/`ADR1`/`ADR2` strap pins as "PHY Address 001" — decimal 1, not the
 >   0 `rtl/gem_mdio.v` defaulted to (documented there as a guess). **Fixed** —
@@ -326,18 +337,15 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 >   unless disabled over MDIO (nothing here does); 0 was never actually
 >   selecting the strapped PHY.
 >
-> Every other KSZ9031RNX-sourced *numeric* claim in this document (the 1.2 ns
-> RX default delay used to centre the deskew MMCM's phase, the RGMII timing
-> budget's `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, the PHY reset hold
-> time `tSR`) is a KSZ9031RNX datasheet figure applied to a JL2121(D) board and
-> is still **unconfirmed pending a JL2121(D)-specific re-derivation** — not
-> necessarily wrong, since the RGMII v2.0 windows both chips claim to meet are
-> the same standard's numbers, but sourced to the wrong datasheet until checked
-> against the JL2121(D)'s own AC specifications (Chapter 4.7, in
-> `DS009-JL2121(D)-v1.09-Preliminary`). This did not block B.5 steps 3-6, which
-> proceed on Clause 22 registers alone (vendor-independent), but it must be
-> resolved before trusting the pad-skew escalation path or the RX deskew
-> MMCM's timing-closure claims.
+> The RX default delay, the `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, and
+> the RXDLY/TXDLY strap delays are now re-derived and confirmed against the
+> JL2121(D)'s own datasheet and a real post-route build (above, and
+> `docs/reports/stage9/rgmii-jl2121-retiming-report.md` in full). **The PHY
+> reset hold time (`tSR`, ≥10 ms) is the one KSZ9031RNX-sourced figure still
+> outstanding** — not necessarily wrong, since it is a generous margin rather
+> than a tight one, but sourced to the wrong datasheet until checked against
+> the JL2121(D)'s own reset timing (Chapter 4.7.1). This did not block B.5
+> steps 3-6, which proceed on Clause 22 registers alone (vendor-independent).
 
 Why it wins: cheapest board with fabric-attached gigabit, ships with schematics and Ethernet
 demo RTL, and the 35T is comfortably large for a MAC (budget in Part B shows <10%
@@ -409,8 +417,9 @@ amendment and module 9's description below.
 
 **One port was added in Stage 4**, and it is the only change to the interface the
 Stage 3 stub froze: `gtx_clk_shifted`, an input carrying the MMCM's second output.
-R14's mechanism is that GTX_CLK leaves the chip a deliberate 1.222 ns after the data it
-clocks, so the cell that forwards it needs a clock the MAC does not otherwise have;
+R14's mechanism is that GTX_CLK leaves the chip a deliberate 1.5556 ns ahead of the data
+it clocks (re-derived for the JL2121(D), A.2's B.5 correction — see
+`docs/reports/stage9/rgmii-jl2121-retiming-report.md`), so the cell that forwards it needs a clock the MAC does not otherwise have;
 the alternative is to move that cell outside `gem_mac`, which puts half of the RGMII
 output stage somewhere B.1a does not describe. The addition is backward compatible —
 every Stage 3 testbench elaborates unchanged, leaving it unconnected.
@@ -487,7 +496,7 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 | Clock | Freq | Source | Drives |
 |---|---|---|---|
 | `tx_clk` | 125 MHz | MMCM, locked to the board's 50 MHz oscillator | TX datapath, register block, `sys_clk` (= `tx_clk`, B.7 item 3) |
-| `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted −55° (1.222 ns) from `tx_clk` — the committed value; see Documents/RGMII I-O Timing Derivation.md §5 for why not the 1.6 ns centre | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
+| `gtx_clk_shifted` | 125 MHz | Same MMCM, second output (`CLKOUT1`), phase-shifted **+70° (1.5556 ns) advance** from `tx_clk` — re-derived for the JL2121(D), `docs/reports/stage9/rgmii-jl2121-retiming-report.md` §2 | Only the ODDR driving the `GTX_CLK` pin — a delayed copy for I/O timing, not an independent logic domain |
 | `rx_clk` | 125 MHz nominal | Recovered by the KSZ9031RNX's CDR from the link partner's transmit clock, driven in on `RX_CLK` | The RX deskew MMCM only (Stage 6 part 2) — **asynchronous to `tx_clk`** |
 | `rx_clk_deskew` | 125 MHz | Second MMCM, feedback deskewed against the raw pin clock | RGMII input capture, SFD hunt, deframe, CRC check, classify, FIFO write side — the whole receive domain. See B.7 item 6 and `Documents/RX Clock Deskew Design.md` |
 
@@ -506,19 +515,21 @@ unconfirmed against that chip's own datasheet pending a re-derivation:**
   eye, and invariant under every IDELAY or phase choice. The fix was a deskew MMCM
   (`Documents/RX Clock Deskew Design.md`), not an IDELAY; its outcome is recorded
   in the v0.14 changelog and `docs/reports/stage6-part2/`.
-- **TX:** the datasheet is explicit that the PHY does **not** add delay on its `GTX_CLK`/
-  `TX_EN`/`TXD` inputs — *"the KSZ9031RNX does not add any delay locally... and expects
-  the GTX_CLK delay to be provided on-chip by the MAC."* Required window at the PHY pins:
-  `TsetupT`/`TholdT` = 1.2–2.0 ns. Mechanism: the MMCM's second output (`gtx_clk_shifted`
-  above), phase-shifted **−55° = 1.222 ns of the 8 ns period** from `tx_clk`, feeds the
-  ODDR driving `GTX_CLK`. The committed value is a measured choice, not the window's
-  naive centre: −72°/1.6 ns was never achievable on this VCO's phase grid, and the
-  sweep across every legal grid point inside the PHY window (task-2b/2d/2e, recorded in
-  `Documents/RGMII I-O Timing Derivation.md` §5) put −55° on the 1125 MHz VCO's exact
-  5° grid with the best measured post-route margin — worst TX setup +0.058 ns, hold
-  +1.645 ns. Fallback: the PHY's `GTX_CLK` pad-skew
-  register (MMD `2h`, reg `8h`, bits `[9:5]`) can add up to +1.38 ns if the MMCM phase
-  alone proves insufficient once measured on the bench (ILA or scope on `GTX_CLK`/`TXD0`).
+- **TX:** this paragraph described the KSZ9031RNX-assumed mechanism (PHY adds no TX-side
+  delay, MAC generates all of it) until B.5 found the real chip is a JLSemi JL2121(D)
+  with its `TXDLY` strap confirmed populated — the PHY *does* add the delay internally,
+  and the FPGA's job changed from "hit the PHY's 1.2–2.0 ns window" to "launch `GTX_CLK`
+  and `TXD`/`TX_CTL` close together at the FPGA's own pins" (the JL2121(D)'s `TskewT` spec,
+  ±500 ps). The mechanism is still the MMCM's second output (`gtx_clk_shifted` above),
+  now phase-shifted **+70° = 1.5556 ns of the 8 ns period, advanced ahead of** `tx_clk`
+  rather than delayed behind it — a value found by sweeping the phase grid and measuring
+  post-route, not by hitting the PHY's window: the first attempt (0°, no shift) measured
+  a real TX hold failure from an FPGA-internal clock-forwarding asymmetry the datasheet
+  gave no reason to expect. Full derivation, the swept measurements, and why the old
+  −55°/1.222 ns value doesn't apply any more: `docs/reports/stage9/
+  rgmii-jl2121-retiming-report.md` §2. Post-route: worst TX setup +0.336 ns, hold
+  +1.167 ns. There is no MDIO pad-skew register on this chip to fall back on if that
+  proves insufficient on the bench — see A.2's correction.
 
 **R21 latency budget — bottom-up check** (previously asserted as "generous," now summed):
 
@@ -638,14 +649,16 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 - **R13 [M]** RGMII v2.0 to the PHY: 4-bit DDR data + control at 125 MHz each direction,
   1000 Mbps mode only. (10/100 fallback explicitly out of scope — see B.7.)
 - **R14 [M]** The clock-to-data skew required by RGMII is provided by a deliberate,
-  documented mechanism, resolved in B.1b: **RX** relies on the KSZ9031RNX's default
-  1.2 ns PHY-side delay plus the deskew MMCM's −45° capture trim (this number is
-  sourced to the wrong chip's datasheet — see A.2's B.5 correction, JL2121(D)
-  not KSZ9031RNX); **TX** is generated FPGA-side via a
-  second MMCM output phase-shifted −55° (1.222 ns, the measured-best legal grid point
-  in the PHY's window — see `Documents/RGMII I-O Timing Derivation.md` §5)
-  relative to `tx_clk`, driving `GTX_CLK` through an ODDR — constrained in
-  XDC, and never left to luck.
+  documented mechanism, resolved in B.1b and re-derived for the JL2121(D) in
+  `docs/reports/stage9/rgmii-jl2121-retiming-report.md` (A.2's B.5 correction):
+  **RX** relies on the PHY's confirmed 2.0 ns `RXDLY`-strap delay plus the deskew
+  MMCM's −45° capture trim (unchanged in value from the KSZ9031RNX-era derivation,
+  confirmed by post-route measurement); **TX** is generated FPGA-side via a
+  second MMCM output phase-shifted +70° (1.5556 ns, advanced ahead of `tx_clk` —
+  cancelling a measured FPGA-internal clock-forwarding asymmetry, not hitting
+  the PHY's window directly, since the JL2121(D)'s `TXDLY` strap now does that
+  internally — see the retiming report §2) relative to `tx_clk`, driving
+  `GTX_CLK` through an ODDR — constrained in XDC, and never left to luck.
 - **R15 [M]** User side: 8-bit AXI-Stream-style handshake per direction —
   `tdata[7:0], tvalid, tready, tlast` plus `tuser` (TX: DA/SA/EtherType sideband at SOF;
   RX: good/bad at EOF). Registered, no combinational paths through the handshake.
@@ -691,7 +704,7 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
 | FFs | ≤ 3,000 | **788** | 41,600 | pipeline + CDC + counters |
 | BRAM36 | ≤ 4 | **0** | 50 | 2 async FIFOs + ILA capture |
 | DSP | 0 | **0** | 90 | nothing multiplies here |
-| MMCM | 2 | **0** (in `gem_mac`) · **1** crystal + **1** RX deskew (in `gem_clk_rst`) | 5 | two MMCMs: crystal (tx_clk 125 MHz + gtx_clk_shifted ≈1.222 ns, B.1b) and RX deskew (125 MHz, feedback-compensated — see B.7 item 6) |
+| MMCM | 2 | **0** (in `gem_mac`) · **1** crystal + **1** RX deskew (in `gem_clk_rst`) | 5 | two MMCMs: crystal (tx_clk 125 MHz + gtx_clk_shifted ≈1.5556 ns advance, re-derived for the JL2121(D) — `docs/reports/stage9/rgmii-jl2121-retiming-report.md`) and RX deskew (125 MHz, feedback-compensated — see B.7 item 6) |
 
 The measured column is `make oocsynth`: `gem_mac` synthesised alone, out of context,
 at Stage 4 step 6 — the step B.7's closing paragraph names as where these numbers stop
@@ -781,7 +794,7 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 | RX FIFO drift term | `2 × 100 ppm × 1518 B ≈ 0.3 B` | worst-case relative skew (`tx_clk` vs. recovered `rx_clk`) accumulated over one max-length frame (12.14 µs) — negligible, because the FIFO drains every IFG rather than absorbing sustained rate mismatch |
 | RX FIFO sync-latency term | ~4 bytes | dual-flop gray-code pointer synchronizer, 2 destination-clock cycles of pointer visibility delay, rounded up with margin |
 | **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.m`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
-| TX `GTX_CLK` phase shift | −55° = 1.222 ns | best measured legal grid point inside the KSZ9031RNX's `TsetupT`/`TholdT` window (1.2–2.0 ns, datasheet Table 19): the 1125 MHz VCO's 5° grid puts −55° exactly on 1.222 ns, and the post-route sweep (task-2e) measured it at worst setup +0.058 ns — ahead of both the 1.2000 ns window edge (which sits on the floor and costs 26 ps of extra VCO jitter) and every other grid point — see `Documents/RGMII I-O Timing Derivation.md` §5 and B.1b |
+| TX `GTX_CLK` phase shift | +70° = 1.5556 ns advance | re-derived for the JL2121(D) (A.2's B.5 correction): the PHY's `TXDLY` strap now provides the clock-to-data margin internally, so this shift exists to cancel a measured ~1.1 ns FPGA-internal clock-forwarding asymmetry (GTX_CLK's own extra ODDR+OBUF hop) rather than to hit a PHY-side window. Found by sweeping the 1125 MHz VCO's 5° grid and measuring post-route setup+hold slack (constant sum ≈1.502 ns at every point); +70° clears TX setup by +336 ps, hold by +1.167 ns — see `docs/reports/stage9/rgmii-jl2121-retiming-report.md` §2. The old −55°/1.222 ns value (`Documents/RGMII I-O Timing Derivation.md` §5) solved a different problem for the wrong chip and no longer applies |
 | RX capture delay | 1.2 ns (PHY default, no FPGA action) | KSZ9031RNX default RX_CLK-to-RXD delay, inside `TsetupR`/`TholdR` (1.0–2.0 ns) — see B.1b |
 | PHY reset hold time | ≥ 10 ms | KSZ9031RNX datasheet `tSR`: stable supply → reset de-assertion |
 | MDC max frequency | 2.5 MHz | IEEE 802.3-2022 Clause 22 MII management interface ceiling (R16) |

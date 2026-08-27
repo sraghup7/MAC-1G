@@ -6,14 +6,21 @@ which cites the KSZ9031RNX datasheet (Microchip Rev 2.2) Table 19.
 > **Correction (B.5 bring-up, 2026-08-27): the board's PHY is not a
 > KSZ9031RNX.** It is a JLSemi JL2121(D) — confirmed by MDIO PHY-ID read
 > against the JLSemi datasheet, not just marking-matching; see
-> `spec/PROJECT_SPEC.md` A.2's B.5 correction. Every numeric window this
-> document derives against (`TsetupR`/`TholdR`/`TsetupT`/`TholdT`) is a
-> KSZ9031RNX datasheet figure and is **not yet re-checked against the
-> JL2121(D)'s own AC specifications** (`DS009-JL2121(D)-v1.09-Preliminary`
-> Chapter 4.7). The escalation path in "If 58 ps proves insufficient on the
-> bench" below is affected more than the numbers are: it names an MDIO
-> pad-skew register the JL2121(D) does not have. See that section's own
-> correction note for what the real fallback is.
+> `spec/PROJECT_SPEC.md` A.2's B.5 correction. **Re-derived and confirmed by a
+> real post-route build** in
+> `docs/reports/stage9/rgmii-jl2121-retiming-report.md` — read that report
+> before this one for the current numbers; what follows below this note is
+> largely superseded, kept for its record of the KSZ9031RNX-era reasoning
+> rather than edited in place. Headline results: `TsetupR_min`/`TholdR_min`
+> turned out identical between the two chips (1.0 ns each), so the RX section
+> below needed only its `Delta` term corrected (1.2 → 2.0 ns) and its deskew
+> MMCM phase trim needed no change at all, confirmed by a post-route WNS
+> matching task 4e's original measurement bit-for-bit. The TX section's
+> mechanism changed entirely — the JL2121(D)'s TXDLY strap delays the clock
+> internally at the PHY, not the FPGA — and the first attempt at the new
+> phase shift (0 degrees) measured a real TX hold failure the datasheet alone
+> did not predict; the retiming report has the swept, measured fix
+> (`CLKOUT1_PHASE = +70.000`, not 0 and not the old `-55.000`).
 
 ## RX: rgmii_rxd[3:0], rgmii_rx_ctl, sampled by rgmii_rx_clk
 
@@ -267,13 +274,20 @@ silicon. The bench is still the final word, which is V-2's remaining half.
 > at all. **Both strap states are now known**, not a schematic unknown: the
 > real AX7035B manual (`Manuals/AX7035B_UG.pdf` Table 8-1, obtained after
 > this correction was first written) confirms `RXDLY` and `TXDLY` are both
-> populated to add their 2 ns option. If 58 ps proves insufficient on this
-> board, the fallback is a board-level rework of a strap resistor to a
-> different configuration, not an MDIO transaction -- and the 58 ps figure
-> itself needs re-deriving against the JL2121(D)'s own AC timing (datasheet
-> Chapter 4.7) with these confirmed 2 ns delays before it can be trusted as
-> the number to beat. The rest of this section is kept for its record of what
-> was tried against the wrong chip, not as a procedure to execute.
+> populated to add their 2 ns option. **The re-derivation is done** —
+> `docs/reports/stage9/rgmii-jl2121-retiming-report.md` has it — and the
+> number to beat is no longer 58 ps. The design now launches `GTX_CLK`
+> advanced 1.5556 ns ahead of `tx_clk` (`rtl/gem_mmcm.v`, `CLKOUT1_PHASE =
+> +70.000`) to cancel a measured FPGA-internal clock-forwarding asymmetry, not
+> to hit the PHY's window directly, and clears TX setup by a measured
+> **+336 ps** post-route — a real margin the KSZ9031RNX-era architecture never
+> reached. If that proves insufficient on the bench, the fallback is still a
+> board-level strap rework (no MDIO register exists on this chip, as above),
+> not a phase-shift retune: the retiming report's swept table shows phase
+> shift alone has already been pushed to its measured ceiling for this
+> mechanism. The rest of this section is kept for its record of what was
+> tried against the wrong chip and the wrong mechanism, not as a procedure to
+> execute.
 
 This is the fallback B.1b already names as R14's escape hatch. **It is
 documented here, not implemented.** Nothing in the design drives it today, and

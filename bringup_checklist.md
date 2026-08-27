@@ -184,32 +184,33 @@ comes back.
 - [ ] Compare a frame byte for byte against what was sent.
 
 **If nothing is transmitted:** check `GTX_CLK` and `TXD0` on a scope. R14's
-mechanism puts a deliberate 1.2222 ns delay on `GTX_CLK` relative to the data,
-and **no simulation in this project can confirm it** — that is open item
-**V-2**, and this is where it closes. The MMCM is asked for −55.000° of the 8 ns
-period, which its 1125 MHz VCO can produce exactly, and which lands near the
-bottom of the datasheet's 1.2–2.0 ns window rather than in its middle — Stage 6
-part 2 measured the design and found its own TX setup check improves as the
-shift shrinks, so the centre is not the best point inside the window. Post-route
-the worst TX output clears setup by **58 ps**: a pass, and a thin one.
+mechanism puts a deliberate 1.5556 ns *advance* on `GTX_CLK` relative to the
+data (re-derived for the real chip, a JLSemi JL2121(D), in
+`docs/reports/stage9/rgmii-jl2121-retiming-report.md` — this is not the
+1.2222 ns *delay* an earlier revision of this checklist named, which was
+derived for the KSZ9031RNX the spec originally assumed), and **no simulation
+in this project can confirm it** — that is open item **V-2**, and this is
+where it closes. The MMCM is asked for +70.000° of the 8 ns period, which its
+1125 MHz VCO can produce exactly. This value cancels a measured
+FPGA-internal clock-forwarding asymmetry (GTX_CLK is itself forwarded
+through an extra ODDR+OBUF hop that the TX data outputs' own launch
+reference doesn't carry) rather than aiming at the PHY's own timing window
+the way the old value did — the JL2121(D)'s `TXDLY` strap (confirmed
+populated) now provides that margin internally at the PHY, per the retiming
+report. Post-route the worst TX output clears setup by **+336 ps** and hold
+by **+1.167 ns** — real margin, not the old design's thin 58 ps.
 
-**If the scope says setup timing is not being met, read this before reaching for
-the pad-skew procedure `Documents/RGMII I-O Timing Derivation.md` names.** Do
-not start re-deriving the phase shift — 58 ps is the ceiling of what phase
-shift alone reaches on this design, and that was established by measurement
-across every configuration the PHY's window allows, not by estimate. But the
-document's escalation path (`Documents/RGMII I-O Timing Derivation.md`,
-section **"If 58 ps proves insufficient on the bench"**) was written for the
-KSZ9031RNX's MMD `2h`/register `8h` pad-skew register, reached over MDIO — B.5
-found the physical chip is a JL2121(D) (A.2's correction), which has **no such
-register**. Its RGMII clock delay is set by `RXDLY`/`TXDLY` strap pins, both
-confirmed populated to add 2 ns (`Manuals/AX7035B_UG.pdf` Table 8-1, not a
-schematic pull any more). If 58 ps proves insufficient on this board, the
-fallback is a hardware rework of those straps to a different configuration,
-not an MDIO write — and the 58 ps figure itself was derived assuming the
-KSZ9031RNX's 1.2 ns default, not this board's confirmed 2 ns, so re-deriving
-the RGMII timing budget from the JL2121(D)'s own datasheet (A.2's B.5
-correction) comes before planning any rework.
+**If the scope says setup timing is not being met:** there is no pad-skew
+register to reach for on this chip. The JL2121(D) has no MMD register-access
+mechanism at all — the escalation path an earlier revision of this checklist
+named (KSZ9031RNX MMD `2h`/register `8h`, over MDIO) does not exist on the
+physical board (A.2's B.5 correction). Its RGMII clock delay is set by
+`RXDLY`/`TXDLY` strap pins, both confirmed populated to add 2 ns
+(`Manuals/AX7035B_UG.pdf` Table 8-1). If the measured +336 ps proves
+insufficient on this board, the fallback is a hardware rework of those straps
+to a different configuration, not an MDIO write, and not a phase-shift
+retune — the retiming report's swept measurements already found the ceiling
+of what phase shift alone reaches for this mechanism.
 
 ---
 
@@ -289,7 +290,7 @@ than a coverage gap, in `docs/reports/stage9/known-issues.md`:
 
 | Item | What is unresolved | Closes at |
 |---|---|---|
-| **V-2** | R14's 1.2222 ns `GTX_CLK` skew is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by only 58 ps | step 5, with a scope |
+| **V-2** | R14's 1.5556 ns `GTX_CLK` skew (re-derived for the JL2121(D), `docs/reports/stage9/rgmii-jl2121-retiming-report.md`) is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by +336 ps | step 5, with a scope |
 | **V-6** | The golden CRC has never been checked against a real capture | step 5, in Wireshark |
 | **V-22** | Three of R10's four RX error classes cannot be provoked from a PC — only oversize reaches the wire malformed | not scoped to any step; needs a second transmitter |
-| **A.2 (B.5)** | The board's PHY is a JL2121(D), not the KSZ9031RNX B.1b's RGMII timing budget was derived from; the strap-confirmed 2 ns RXDLY/TXDLY delays and PHY address 1 are fixed in the design, but the numeric timing budget itself is not yet re-derived from the JL2121(D)'s own datasheet | gates trusting R14/R20's margin numbers and the RX deskew MMCM's phase target — not scoped to a single step |
+| **PHY reset `tSR`** | The 10 ms `phy_rst_n` hold is sourced to the KSZ9031RNX datasheet (A.2's original assumption); the JL2121(D)'s own reset timing (§4.7.1) hasn't been checked against it | not scoped to a single step — cheap to verify without a rebuild |
