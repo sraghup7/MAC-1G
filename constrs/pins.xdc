@@ -81,17 +81,42 @@ set_property IOSTANDARD   LVCMOS33 [get_ports rgmii_rx_ctl]
 # the unit interval, and rise/fall times are not symmetric under SLOW -- that
 # asymmetry displaces one clock edge relative to the other by a per-bit,
 # intermittent amount, matching the falling-edge-nibble-sampled-late signature
-# in B.5-TX-1 (docs/reports/stage9/known-issues.md) in a way the CLOCK1_PHASE
+# in B.5-TX-1 (docs/reports/stage9/known-issues.md) in a way the CLKOUT1_PHASE
 # sweep (d8e48aa) could not, since phase moves both edges together.
 set_property SLEW FAST [get_ports rgmii_gtx_clk]
 set_property SLEW FAST [get_ports {rgmii_txd[*]}]
 set_property SLEW FAST [get_ports rgmii_tx_ctl]
 
-# SLEW FAST alone (measured on hardware) cut the B.5-TX-1 payload mismatch
-# rate from ~16.7/100 to ~2.7/100 but did not reach zero: right mechanism,
-# insufficient margin. DRIVE is the other edge-rate lever on these pins;
-# raising it from the default 12 to 16 pushes further in the same direction
-# (more drive current, steeper edges), rather than fighting SLEW FAST.
+# Measured on hardware: SLEW FAST alone cut the B.5-TX-1 payload mismatch rate
+# from ~24% of returned frames to 6.0% (30/499), and the echo return rate went
+# from 71-83 frames of 100 to a full 100 -- a chunk of what used to look like
+# the echo path's by-design one-at-a-time dropping was actually frames
+# corrupted past recognition. Right mechanism; it does not reach zero.
+#
+# DRIVE 16, RAISED FROM THE DEFAULT 12, AND IT EARNS ITS PLACE -- but only
+# 500-frame runs can see that, which is the point worth carrying forward.
+#
+#   SLEW FAST, DRIVE 12    30 mismatches /  499 returned   6.0%
+#   SLEW FAST, DRIVE 16     9 mismatches /  500 returned   1.8%
+#   SLEW FAST, DRIVE 16    14 mismatches /  500 returned   2.8%  (2nd session)
+#   -> DRIVE 16 pooled     23 mismatches / 1000 returned   2.3%
+#
+# More drive current means steeper edges, pushing the same direction as
+# SLEW FAST rather than fighting it, and it roughly halves the residual.
+#
+# THE MEASUREMENT TRAP, because it produced a wrong conclusion once already.
+# At `--count 100` this signal is unreadable: three consecutive runs of the
+# DRIVE 12 build gave 6, 12 and 8 per 100, and three of the DRIVE 16 build
+# gave 2, 6 and 5. A 300-frame sample cannot separate 2.8% from 6.0%, and a
+# 3x100 measurement of DRIVE 12 landed at ~2.7/100 by chance, which read as
+# "DRIVE 16 adds nothing" and nearly got it reverted. Anything comparing two
+# I/O settings here needs `--count 500` at minimum, and both numbers must come
+# from the same sample size -- comparing a 3x100 against a 500 is what went
+# wrong. Poisson error on 14 counts is already +/-3.7.
+#
+# The residual 2.8% is NOT explained by either lever pins.xdc exposes; both
+# are now at their useful limit. B.5-TX-1 stays open on the per-pin I/O DELAY
+# work (V-2), not on further SLEW/DRIVE tuning.
 set_property DRIVE 16 [get_ports rgmii_gtx_clk]
 set_property DRIVE 16 [get_ports {rgmii_txd[*]}]
 set_property DRIVE 16 [get_ports rgmii_tx_ctl]
