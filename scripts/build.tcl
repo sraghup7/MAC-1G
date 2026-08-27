@@ -591,15 +591,26 @@ puts "==> Constraint coverage check: PASS (see $ct_report)"
 #   4. A waived slack beyond -3.500 ns refuses: the derivation predicts
 #      -3.109 ns of pure modeling artifact (task-4d measured -2.109 at phase
 #      0; the -1000 ps trim moves the modeled edge another -1.0) and the
-#      build landed there. THE ENVELOPE WAS MEASURED AT CLKOUT0_PHASE =
-#      -45 AND THE PHASE IS NOW -225 (B.5 bring-up: the capture edge was
-#      landing one whole unit interval late). A 180 degree move is
-#      margin-neutral physically but NOT in this modeled artifact, so the
-#      first implementation run after that change is the measurement that
-#      re-fixes this number. If the build refuses here, re-derive the
-#      envelope from that run -- do not widen it to make the build pass,
-#      and note that +135.000 is the identical waveform if the artifact
-#      sits better on that side. That arrival is a CONSTRUCTED CONSTANT,
+#      build landed there.
+#
+#      THAT ENVELOPE IS NO LONGER EXERCISED, AND THE REASON MATTERS.
+#      It was measured at CLKOUT0_PHASE = -45. B.5 bring-up found the RX
+#      capture edge was landing one whole unit interval late (the IDDR pair
+#      straddled an octet boundary; see known-issues.md B.5-RX-1) and moved
+#      the phase to -225. On the first implementation run after that change,
+#      the five RX input-delay setup checks came back at +0.891 to +0.933 ns
+#      -- POSITIVE, no waiver needed, zero violating paths design-wide. The
+#      worst of them moved from the predicted -3.109 to +0.891: EXACTLY
+#      +4.000 ns, one unit interval, no edge re-selection.
+#
+#      So most of what task-4e attributed to a ZHOLD modeling artifact was
+#      Vivado correctly reporting a real one-UI misalignment, and this
+#      waiver was masking it. The fences below are kept because they cost
+#      nothing while nothing violates, and because the ZHOLD arc task-4e
+#      measured is real even if its magnitude was not what the artifact
+#      theory claimed. If these five endpoints EVER violate again, that is
+#      now evidence of a genuine problem -- do not reach for this waiver to
+#      quiet it. That arrival is a CONSTRUCTED CONSTANT,
 #      invariant across
 #      the BUFG and BUFH topologies, so it does not drift with routing and
 #      the envelope is tight on purpose. Slack past it means the design moved

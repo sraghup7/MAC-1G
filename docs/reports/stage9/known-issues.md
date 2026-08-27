@@ -23,7 +23,7 @@ narrower claim.
 
 | # | What's unresolved | Closes at | Full reasoning |
 |---|---|---|---|
-| **R14 / R20 / V-2** | RGMII I/O timing margin is thin on both directions and neither can be confirmed by simulation. Re-derived for the real chip, a JLSemi JL2121(D) (A.2's B.5 correction, `docs/reports/stage9/rgmii-jl2121-retiming-report.md`): TX now closes at **+336 ps** worst case (was +58 ps under the wrong-chip derivation — the mechanism changed too, from an FPGA-generated phase shift to one cancelling an FPGA-internal clock-forwarding asymmetry), and the five RX input-delay checks are still signed off by derivation under the same fenced waiver (Vivado's ZHOLD modeling artifact, task 4e) — confirmed by a post-route build reporting the identical WNS task 4e originally measured. **There is no MDIO pad-skew fallback on this chip** — the JL2121(D) has no MMD register-access mechanism at all; its RX/TX clock delay is a hardware strap, fixed at board population. If the bench shows either margin insufficient, the fallback is a strap rework, not an MDIO write. | Bring-up step 5, a scope or the `make debug` ILA on `GTX_CLK`/`TXD0` and the RX side. | README's timing section · `Documents/RGMII I-O Timing Derivation.md` · `docs/reports/stage9/rgmii-jl2121-retiming-report.md` · `docs/reports/stage6-part2/task-4e-report.md` · `verification_plan.md` rows V-2, R14, R20 |
+| **R14 / R20 / V-2** | RGMII I/O timing margin is thin on both directions and neither can be confirmed by simulation. Re-derived for the real chip, a JLSemi JL2121(D) (A.2's B.5 correction, `docs/reports/stage9/rgmii-jl2121-retiming-report.md`): TX now closes at **+336 ps** worst case (was +58 ps under the wrong-chip derivation — the mechanism changed too, from an FPGA-generated phase shift to one cancelling an FPGA-internal clock-forwarding asymmetry), and the five RX input-delay checks **now close outright at +0.891 to +0.933 ns setup, with no waiver exercised** — see § B.5-RX-1 below, which found the capture edge was landing one whole unit interval late and corrected it; most of what task 4e attributed to a ZHOLD modeling artifact was a real misalignment. The RX half is confirmed on hardware (`rx_ok` advancing, zero error counters); what remains open on this row is the **TX** side. **There is no MDIO pad-skew fallback on this chip** — the JL2121(D) has no MMD register-access mechanism at all; its RX/TX clock delay is a hardware strap, fixed at board population. If the bench shows either margin insufficient, the fallback is a strap rework, not an MDIO write. | Bring-up step 5, a scope or the `make debug` ILA on `GTX_CLK`/`TXD0` and the RX side. | README's timing section · `Documents/RGMII I-O Timing Derivation.md` · `docs/reports/stage9/rgmii-jl2121-retiming-report.md` · `docs/reports/stage6-part2/task-4e-report.md` · `verification_plan.md` rows V-2, R14, R20 |
 | **V-6** | The golden CRC has never been checked against a real capture — validation today is the published check value, `zlib` over 2000 vectors, and the residue property, none of which involve a wire. | Bring-up step 5: capture a frame the design transmitted and confirm Wireshark reports its FCS correct. | `verification_plan.md` row V-6 · `bringup_checklist.md` step 5 · `sw/host/gem_host.py echo` produces the frames to capture |
 | **V-22** | Three of R10's four RX error classes cannot be provoked from a PC — a commodity NIC computes FCS in hardware and pads runts before transmitting, and RX_ER is the PHY's to assert, not a sender's to request. Only oversize reaches the wire malformed. | Not scoped to any bring-up step — needs a transmitter that owns its own MAC (a second FPGA, a traffic generator, or a NIC whose driver exposes CRC-offload control). Bring-up step 7 is deliberately scoped to oversize plus recovery and says so, rather than quietly sending frames the NIC already repaired. | `verification_plan.md` row V-22 |
 | **V-3 / R16** | MDIO's sampling point has a margin simulation structurally cannot measure: the behavioural PHY BFM holds each bit a full period, so it cannot distinguish "sampled just after the MDC rising edge" from "sampled at the stable end of the bit period" — the safer point was chosen by analysis, not proven by test. | Bring-up step 3, alongside reading the PHY ID — no rebuild needed, sweep the request port. | `verification_plan.md` rows V-3, R16 |
@@ -31,8 +31,8 @@ narrower claim.
 
 ## B.5-RX-1: the RX capture edge lands one unit interval late
 
-**Root cause found and fixed in RTL 2026-08-27; bench confirmation is the one
-step left.** This is not a sixth entry in the table above — the table lists
+**Root cause found, fixed, and CONFIRMED ON HARDWARE 2026-08-27.** This is not
+a sixth entry in the table above — the table lists
 questions no tool in this build can answer, and this one *was* answered, by
 the `make debug` ILA. It is written here because the fix is a phase change
 whose confirmation belongs to the same bench session as the R14/R20/V-2 row.
@@ -84,13 +84,50 @@ into a 4.000 ns nibble — 364 ps from rollover, where the KSZ-era numbers had
 1.164 ns. Margin-invariance was read as safety, and it is not the same
 property.
 
-Bench step: rebuild `make debug`, re-capture with the ILA trigger targeted on
-`02:00:00:00:00:01` (not on `dv` alone — ambient LAN traffic free-triggers
-that), and confirm `rx_ok` advances. Watch `scripts/build.tcl` gate 2: its
-−3.500 ns waived-slack envelope was measured at `CLKOUT0_PHASE = -45` and a
-180° move is margin-neutral physically but not in Vivado's ZHOLD artifact. If
-it refuses, re-derive the envelope from that run rather than widening it, and
-note that `+135.000` is the identical steady-state waveform.
+### Bench confirmation (2026-08-27, `make debug` + ILA on the real board)
+
+Rebuilt, reprogrammed, re-captured. All of it held:
+
+- **The ILA now triggers on a literal `0xD5` with `dv=1`** — something that
+  never once happened before, when `state` sat in `ST_HUNT` for all 4096
+  cycles of every capture. `state` leaves `ST_HUNT` for `ST_RECV`, `fifo_wr`
+  asserts, and `wr_bin` advances.
+- **The `gem_host` frame decodes natively and exactly**: `55`×7, `d5`, DA
+  `02:00:00:00:00:01`, SA `02:00:00:00:00:02`, EtherType `88b5`, and a payload
+  that is a clean +1 run across all 64 octets — `0x10` included, the value
+  that used to vanish for 16 byte-times.
+- **`rx_ok` advanced by 101** on `gem_host.py rx --count 100`, against +0
+  before. `rx_bad`, `rx_runt`, `rx_over` and `rx_rxer` all stayed at **zero**;
+  `rx_rxer` alone had gained +64 during the same test before the fix, and used
+  to climb on a completely idle link. That idle-link RX_ER/runt noise was the
+  same root cause, and it is gone.
+- The 101st frame is ambient LAN traffic, confirmed by a control run: with
+  nothing sent, `rx_ok` still climbs 1–2 per interval while every error
+  counter stays at zero. `gem_host.py rx` asserts exact equality, so it prints
+  `FAIL rx_ok advanced by 101, expected 100` — **a property of the assertion
+  on a live LAN, not of the receive path.** See the open item below.
+
+**Gate 2 needed no waiver at all.** The five RX input-delay setup checks came
+back **+0.891 to +0.933 ns**, hold **+6.82 to +6.86 ns**, with zero violating
+paths design-wide (WNS +0.336 ns on the TX path; WHS +0.019 ns on a `dbg_hub`
+path that exists only in the debug build). The worst RX endpoint moved from the
+predicted −3.109 ns to **+0.891 ns — exactly +4.000 ns, one unit interval.**
+
+That number is worth sitting with: most of what task-4e attributed to a ZHOLD
+*modeling artifact* was Vivado correctly reporting a real one-UI misalignment,
+and the fenced waiver was masking it. `scripts/build.tcl`'s fences are kept
+(they cost nothing while nothing violates), but a future violation on those
+five endpoints should now be read as a real defect, not re-waived.
+
+### Open, and deliberately not changed here
+
+`sw/host/gem_host.py rx` cannot report PASS on a machine whose NIC sees
+ambient traffic, because the board accepts frames regardless of destination
+address and the check is `==`. Loosening a pass criterion to make a test go
+green is not a call to make while fixing something else — but step 4 cannot
+be signed off through this script as written. The options are to filter by DA
+in the check, to bracket ambient drift with a control read, or to accept `>=`
+and lose duplicate detection.
 
 ## What already closed, so this page isn't mistaken for the whole list
 
