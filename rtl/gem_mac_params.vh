@@ -125,9 +125,12 @@
 // in these cycles, because it is the one clock running before the MMCM locks.
 `define GEM_CLK50_HZ            50000000
 
-// KSZ9031RNX tSR: RST_N must be held low at least 10 ms after the supplies are
-// stable, and MDIO is not to be trusted until it releases (B.1b's reset
-// strategy, bring-up step 2). Stated in microseconds rather than milliseconds
+// JL2121(D) DS009 §4.7.1 t1/t3: RSTn must be held low at least 10 ms after the
+// supplies are stable (t2 >= 1 ms assert, t1/t3 >= 10 ms de-assert/hold), and
+// MDIO is not to be trusted until it releases (B.1b's reset strategy,
+// bring-up step 2). First sourced to the KSZ9031RNX tSR — same 10 ms, so the
+// value never moved, only its citation did. Stated in microseconds rather
+// than milliseconds
 // so that cycles = (CLK50_HZ / 1e6) * HOLD_US stays exact integer arithmetic
 // -- a reset hold that is short by a rounding error is a PHY that comes up
 // unreliably, on some boards, at some temperatures.

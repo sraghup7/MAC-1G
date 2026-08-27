@@ -112,11 +112,10 @@ is from the FPGA's point of view and a swap with **G15** costs one rebuild to
 test (V-21).
 
 **If `phyid` reads `ffffffff`:** MDIO is not being answered. The PHY's reset is
-held low for 10 ms after power-up by design (sourced to the KSZ9031RNX's tSR,
-now known to be the wrong chip's datasheet — see A.2's B.5 correction; the
-JL2121(D)'s own reset-timing figure is not yet checked, so 10 ms is a
-plausible margin rather than a confirmed one) — if that pin is wrong the PHY
-never comes out of reset. Check `phy_rst_n` on **L15**. `PHY_ADDR` should not
+held low for 10 ms after power-up by design (JL2121(D) DS009 §4.7.1 t1/t3 ≥
+10 ms, t2 ≥ 1 ms — first sourced to the KSZ9031RNX's tSR, same 10 ms, citation
+now corrected) — if that pin is wrong the PHY never comes out of reset. Check
+`phy_rst_n` on **L15**. `PHY_ADDR` should not
 be the cause: it is now `5'd1`, confirmed against the real manual's strap
 table (`Manuals/AX7035B_UG.pdf` Table 8-1), and even the old guessed default
 of 0 worked, because the JL2121(D) treats address 0 as a standing broadcast
@@ -293,4 +292,4 @@ than a coverage gap, in `docs/reports/stage9/known-issues.md`:
 | **V-2** | R14's 1.5556 ns `GTX_CLK` skew (re-derived for the JL2121(D), `docs/reports/stage9/rgmii-jl2121-retiming-report.md`) is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by +336 ps | step 5, with a scope |
 | **V-6** | The golden CRC has never been checked against a real capture | step 5, in Wireshark |
 | **V-22** | Three of R10's four RX error classes cannot be provoked from a PC — only oversize reaches the wire malformed | not scoped to any step; needs a second transmitter |
-| **PHY reset `tSR`** | The 10 ms `phy_rst_n` hold is sourced to the KSZ9031RNX datasheet (A.2's original assumption); the JL2121(D)'s own reset timing (§4.7.1) hasn't been checked against it | not scoped to a single step — cheap to verify without a rebuild |
+| **PHY reset `tSR`** | ~~The 10 ms `phy_rst_n` hold was sourced to the KSZ9031RNX datasheet~~ — **closed**: JL2121(D) DS009 §4.7.1 specifies t1/t3 ≥ 10 ms, t2 ≥ 1 ms; the 10 ms / 500,000-cycle hold already satisfies it (same 10 ms, citation corrected) | — (no bench step; `rtl/gem_clk_rst.v`, `rtl/gem_mac_params.vh`) |

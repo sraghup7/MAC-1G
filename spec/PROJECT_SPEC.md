@@ -337,15 +337,14 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 >   unless disabled over MDIO (nothing here does); 0 was never actually
 >   selecting the strapped PHY.
 >
-> The RX default delay, the `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, and
-> the RXDLY/TXDLY strap delays are now re-derived and confirmed against the
-> JL2121(D)'s own datasheet and a real post-route build (above, and
-> `docs/reports/stage9/rgmii-jl2121-retiming-report.md` in full). **The PHY
-> reset hold time (`tSR`, ≥10 ms) is the one KSZ9031RNX-sourced figure still
-> outstanding** — not necessarily wrong, since it is a generous margin rather
-> than a tight one, but sourced to the wrong datasheet until checked against
-> the JL2121(D)'s own reset timing (Chapter 4.7.1). This did not block B.5
-> steps 3-6, which proceed on Clause 22 registers alone (vendor-independent).
+> The RX default delay, the `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, the
+> RXDLY/TXDLY strap delays, and the PHY reset hold time are now re-derived
+> and confirmed against the JL2121(D)'s own datasheet and a real post-route
+> build (above, `docs/reports/stage9/rgmii-jl2121-retiming-report.md`, and
+> DS009 §4.7.1 t1/t3 ≥ 10 ms / t2 ≥ 1 ms for reset — the KSZ9031RNX tSR it was
+> first sourced to was the same 10 ms, so the 500,000-cycle hold never moved,
+> only its citation did). This did not block B.5 steps 3-6, which proceed on
+> Clause 22 registers alone (vendor-independent).
 
 Why it wins: cheapest board with fabric-attached gigabit, ships with schematics and Ethernet
 demo RTL, and the 35T is comfortably large for a MAC (budget in Part B shows <10%
@@ -796,7 +795,7 @@ mechanism the golden model uses) rather than keeping a second hardcoded copy.
 | **RX FIFO depth (chosen)** | **64 entries (1 BRAM18)** | drift term + sync-latency term ≈ 4.3 bytes (`spec/budget.m`); 64 gives ≈ 15× headroom over the derived minimum, at zero extra BRAM cost (one BRAM18 gives ≥ 512 entries at 8-bit width natively, so 64 is a convenience round number, not a squeeze) |
 | TX `GTX_CLK` phase shift | +70° = 1.5556 ns advance | re-derived for the JL2121(D) (A.2's B.5 correction): the PHY's `TXDLY` strap now provides the clock-to-data margin internally, so this shift exists to cancel a measured ~1.1 ns FPGA-internal clock-forwarding asymmetry (GTX_CLK's own extra ODDR+OBUF hop) rather than to hit a PHY-side window. Found by sweeping the 1125 MHz VCO's 5° grid and measuring post-route setup+hold slack (constant sum ≈1.502 ns at every point); +70° clears TX setup by +336 ps, hold by +1.167 ns — see `docs/reports/stage9/rgmii-jl2121-retiming-report.md` §2. The old −55°/1.222 ns value (`Documents/RGMII I-O Timing Derivation.md` §5) solved a different problem for the wrong chip and no longer applies |
 | RX capture delay | 1.2 ns (PHY default, no FPGA action) | KSZ9031RNX default RX_CLK-to-RXD delay, inside `TsetupR`/`TholdR` (1.0–2.0 ns) — see B.1b |
-| PHY reset hold time | ≥ 10 ms | KSZ9031RNX datasheet `tSR`: stable supply → reset de-assertion |
+| PHY reset hold time | ≥ 10 ms | JL2121(D) DS009 §4.7.1 t1/t3 ≥ 10 ms, t2 ≥ 1 ms (first sourced to KSZ9031RNX `tSR` — same 10 ms, citation corrected; RTL holds 500,000 cycles) |
 | MDC max frequency | 2.5 MHz | IEEE 802.3-2022 Clause 22 MII management interface ceiling (R16) |
 
 ## B.4 Verification strategy (decided now, per flow-doc Stage 3)

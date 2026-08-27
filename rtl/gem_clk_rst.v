@@ -51,7 +51,9 @@
 //              now assert together.
 //
 //   phy_rst_n  held low for >= 10 ms after the board reset releases
-//              (KSZ9031RNX tSR, B.1b). Counted on clk50 because that is the
+//              (JL2121(D) DS009 §4.7.1 t1/t3 >= 10 ms; KSZ9031RNX tSR was the
+//               same 10 ms, so the value never moved — only its source did.
+//               B.1b). Counted on clk50 because that is the
 //              only clock guaranteed to be running at that point -- counting
 //              it on tx_clk would mean the PHY's reset hold depends on the
 //              MMCM, which is the coupling this block exists to avoid.
@@ -91,7 +93,9 @@
 
 module gem_clk_rst #(
     // Cycles of clk50 that phy_rst_n stays low after the board reset releases.
-    // The default is the KSZ9031RNX's 10 ms from the parameter header, in
+    // The default is the JL2121(D)'s 10 ms (DS009 §4.7.1 t1/t3, confirmed
+    // against the real datasheet — the KSZ9031RNX tSR it was first sourced to
+    // was the same 10 ms) from the parameter header, in
     // exact integer arithmetic: (50e6 / 1e6) * 10000 us = 500,000 cycles.
     // A testbench overrides it to check the sequencing without simulating
     // 10 ms of it; nothing else should.
@@ -262,7 +266,8 @@ module gem_clk_rst #(
     );
 
     //======================================================================
-    // PHY reset hold (KSZ9031RNX tSR >= 10 ms)
+    // PHY reset hold (JL2121(D) DS009 §4.7.1 t1/t3 >= 10 ms; KSZ9031RNX tSR
+    // was the same 10 ms — value unchanged, source corrected)
     //======================================================================
     //
     // The counter stops at its terminal value rather than wrapping, so
