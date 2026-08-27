@@ -89,19 +89,32 @@ module gem_iddr (
     // rising edge, one cycle later. Q1 is the rising-edge capture and Q2 the
     // falling-edge one.
     //
-    // WHICH HALF LANDS ON Q1: the board's PHY is a JLSemi JL2121(D)
-    // (spec/PROJECT_SPEC.md A.2), whose RXDLY strap is populated for +2.000 ns
-    // (Manuals/AX7035B_UG.pdf Table 8-1). On an 8 ns RGMII period, 2 ns is
-    // exactly half a unit interval (4 ns), so the delayed RX_CLK rising edge
-    // aligns with the PHY's FALLING-edge launch -- the HIGH nibble. Thus Q1
-    // (rising-edge capture) = HIGH nibble, Q2 (falling-edge capture) = LOW
-    // nibble. This is the OPPOSITE of the KSZ9031RNX's 1.2 ns default, and
-    // the mapping in gem_rgmii_rx.v is {d_rise, d_fall} = {Q1, Q2} = {high, low}.
+    // WHICH HALF LANDS ON Q1 IS NOT A PER-PHY CHOICE. RGMII v2.0 fixes it:
+    // RXD[3:0] carries the LOW nibble on the rising edge and the HIGH nibble
+    // on the falling one, on every compliant PHY. So Q1 = LOW, Q2 = HIGH, and
+    // gem_rgmii_rx.v's mapping is {d_fall, d_rise} = {Q2, Q1} = {high, low}.
+    // What a PHY's RX_CLK delay strap changes is WHERE IN THE EYE the capture
+    // edge lands -- never which nibble of which octet the pair belongs to.
     //
-    // An earlier revision (for KSZ9031RNX) had the opposite mapping and was
-    // wrong for this board: every received octet would arrive nibble-swapped
-    // (SFD 0xD5 reading as 0x5D), and the SFD hunter would never find a frame.
-    // Simulation cannot see this (V-2) because it runs the behavioural branch.
+    // COMMIT da81e24 GOT THIS WRONG AND WAS REVERTED (B.5 bring-up,
+    // 2026-08-27). Its reasoning was that the JL2121(D)'s +2.000 ns RXDLY
+    // strap is half of the 4 ns unit interval, so the rising edge "aligns
+    // with the PHY's falling-edge launch" and Q1 becomes the HIGH nibble.
+    // Half a UI of clock delay CENTRES the rising edge in the nibble that
+    // same rising edge launched; it does not advance the edge into the next
+    // one. A whole UI would. The commit also never re-ran the RX simulation,
+    // which fails on the swapped mapping and passes 1469 checks on this one.
+    //
+    // AND IF THE CAPTURE EDGE REALLY IS A WHOLE NIBBLE AWAY, NO NIBBLE ORDER
+    // HERE CAN REPAIR IT. The pair (Q1, Q2) then straddles an octet boundary
+    // -- Q1 holding one octet's high nibble, Q2 the NEXT octet's low nibble
+    // -- so {Q1,Q2} and {Q2,Q1} are both wrong, and wrong in a way that hides
+    // itself: every octet whose two nibbles are equal (the 0x55 preamble) or
+    // whose high nibble repeats its predecessor's (a 0x00-0x0f payload run)
+    // still decodes clean, so the damage reads as sporadic corruption at
+    // high-transition bytes rather than as the systematic re-framing it is.
+    // That is what the bring-up ILA captured, and the lever is the capture
+    // clock's phase in rtl/gem_rx_mmcm.v -- not this mapping.
     wire q1, q2;
 
     IDDR #(

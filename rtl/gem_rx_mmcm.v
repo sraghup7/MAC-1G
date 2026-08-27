@@ -40,7 +40,9 @@
 // grid (111.1 ps against 125.0 ps), and it is the VCO gem_mmcm already runs,
 // so a reviewer checking one configuration has checked the grid of both.
 //
-// CLKOUT0_PHASE = -45.000 (= -1000 ps) IS A DERIVATION, NOT A DEFAULT -- and
+// CLKOUT0_PHASE'S -1000 ps TRIM COMPONENT IS A DERIVATION, NOT A DEFAULT
+// (the whole parameter is -225.000: this trim, one unit interval back --
+// see SECOND CORRECTION below, which is the part to read first) -- and
 // it replaced an earlier 0.000 that was ALSO a derivation, honestly held and
 // physically wrong. Task 4e (docs/reports/stage6-part2/task-4e-report.md)
 // measured the routed feedback path on the real checkpoint and worked the
@@ -56,14 +58,49 @@
 // strap is confirmed populated for +2.000 ns, not 1.200 (Manuals/
 // AX7035B_UG.pdf Table 8-1). Re-running task 4e's exact formula with 2.000 in
 // place of 1.200 gives fast = 2.000+0.913+0.973-0.936 = +2.950 ns, slow =
-// 2.000+2.569+2.041-1.974 = +4.636 ns after the data transition -- but every
-// downstream margin number is UNCHANGED, because this module's fb-vs-fwd
-// arithmetic only depends on the FPGA's own clock-network insertion delay,
-// not on what absolute delay the PHY chose: the "residual" relative to the
-// PHY's own delayed edge (+0.950 fast / +2.636 slow, worked out below) is the
-// same either way, and margins are computed from that residual. So
-// CLKOUT0_PHASE stays -45.000 -- see the setup/hold numbers a few lines down,
-// none of which changed.
+// 2.000+2.569+2.041-1.974 = +4.636 ns after the data transition. Every SETUP
+// AND HOLD margin is unchanged by that substitution, because this module's
+// fb-vs-fwd arithmetic only depends on the FPGA's own clock-network insertion
+// delay, not on what absolute delay the PHY chose: the "residual" relative to
+// the PHY's own delayed edge (+0.950 fast / +2.636 slow, worked out below) is
+// the same either way, and margins are computed from that residual.
+//
+// SECOND CORRECTION (B.5 bring-up, same day, from ILA evidence). THE MARGINS
+// BEING INVARIANT IS NOT THE WHOLE QUESTION, AND TREATING IT AS THE WHOLE
+// QUESTION IS WHAT LET A REAL DEFECT THROUGH. Margins are relative and did
+// not move. WHICH NIBBLE the rising edge captures is ABSOLUTE -- it is the
+// capture position modulo one 4.000 ns unit interval -- and 1.200 -> 2.000
+// moved that by +0.800 ns. The corrected numbers, read after the -1000 ps
+// trim below against the 4 ns nibble the edge has to stay inside:
+//
+//   fast   2.950 - 1.000 = +1.950 ns into the nibble, 2.050 ns of room left
+//   slow   4.636 - 1.000 = +3.636 ns into the nibble, 0.364 ns of room left
+//
+// The slow corner sits 364 ps short of the next nibble's transition, where
+// the KSZ-era numbers had 1.164 ns. The real board is past it. Six bring-up
+// ILA captures across four protocols (gem_host, ARP, mDNS, IPv4/UDP) all show
+// the pair (Q1, Q2) straddling an octet boundary -- Q1 holding one octet's
+// high nibble and Q2 the NEXT octet's low nibble -- and all six decode
+// byte-perfect once re-framed by one nibble. The rising edge is capturing one
+// whole unit interval LATE.
+//
+// SO CLKOUT0_PHASE IS -225.000: -45.000 PULLED BACK BY ONE WHOLE UNIT
+// INTERVAL (180 degrees = 4.000 ns at 125 MHz). Every setup/hold number below
+// still stands exactly, and that is the reason for moving by a whole UI
+// instead of re-deriving a centre: the edge lands at an identical position
+// inside a nibble, just the preceding one. The captures measured zero bit
+// errors across ~500 received octets at the present position, so that
+// position is known-good and worth preserving rather than re-centring on
+// paper. -225.000 is on this grid (45/9 = 5 degree steps) and inside the
+// primitive's -360..+360 range. +135.000 is the SAME steady-state waveform,
+// should the STA artifact below ever make the negative value awkward to gate;
+// the negative one is written here because it matches the physical story --
+// an edge arriving a unit interval late is pulled back, not pushed forward.
+//
+// DO NOT "FIX" A REPEAT OF THIS BY SWAPPING THE NIBBLE ORDER IN
+// gem_rgmii_rx.v. Commit da81e24 tried exactly that. No ordering can repair a
+// pair that straddles an octet boundary -- both {Q1,Q2} and {Q2,Q1} are then
+// wrong -- and it failed the RX simulation, which that commit never re-ran.
 //
 // The input-side IBUF+route spread (~1.66 ns corner-to-corner) passes straight
 // through a deskew loop -- only the fb-vs-fwd mismatch cancels -- so at slow
@@ -129,7 +166,8 @@ module gem_rx_mmcm (
     // one would model nothing. Detection latency here is up to 80 ns against
     // the silicon's 8 ns (one PFD cycle, UG472 p.83); LOCK_CYCLES gives ~1 us
     // against MMCM_TLOCKMAX's 100 us; jitter, the static phase offset, the
-    // CLKOUT0_PHASE = -45 degree (-1000 ps) capture trim and the
+    // CLKOUT0_PHASE = -225 degree (-1000 ps trim, one UI back) capture
+    // placement and the
     // real deskew are absent entirely.
     //
     // Clock-stop detection is a time-based process sampling a toggle that
@@ -206,8 +244,8 @@ module gem_rx_mmcm (
         .DIVCLK_DIVIDE      (1),
         .CLKFBOUT_MULT_F    (9.000),     // VCO = 1125 MHz
         .CLKFBOUT_PHASE     (0.000),
-        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -45 deg: see the header
-        .CLKOUT0_PHASE      (-45.000),
+        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -225 deg: see the header
+        .CLKOUT0_PHASE      (-225.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),     // default, UNVERIFIED: criterion A runs 0.125 too
         .STARTUP_WAIT       ("FALSE")    // load-bearing: TRUE bricks a linkless board

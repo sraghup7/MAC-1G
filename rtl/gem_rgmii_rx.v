@@ -12,7 +12,7 @@
 // insertion, which task-4a measured at 3.720 ns corner-to-corner on the raw
 // BUFG network -- more than the entire guaranteed eye. What actually makes
 // capture close is the deskew MMCM upstream (rtl/gem_rx_mmcm.v,
-// Documents/RX Clock Deskew Design.md) plus its -45 degree capture trim;
+// Documents/RX Clock Deskew Design.md) plus its -225 degree capture phase;
 // task-4e derived the margins and signed them off for bench confirmation.
 // If the bench disagrees, the first lever is the PHY's own pad-skew register,
 // not fabric delay lines. Simulation cannot check any of this (V-2).
@@ -58,7 +58,7 @@ module gem_rgmii_rx (
         .q_fall (ctl_fall)
     );
 
-    assign gm_byte = {d_rise, d_fall};    // {high nibble, low nibble}: JL2121(D)
+    assign gm_byte = {d_fall, d_rise};    // {high nibble, low nibble}
     assign gm_dv   = ctl_rise;
     assign gm_er   = ctl_rise ^ ctl_fall;
 

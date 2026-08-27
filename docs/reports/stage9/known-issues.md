@@ -29,6 +29,69 @@ narrower claim.
 | **V-3 / R16** | MDIO's sampling point has a margin simulation structurally cannot measure: the behavioural PHY BFM holds each bit a full period, so it cannot distinguish "sampled just after the MDC rising edge" from "sampled at the stable end of the bit period" — the safer point was chosen by analysis, not proven by test. | Bring-up step 3, alongside reading the PHY ID — no rebuild needed, sweep the request port. | `verification_plan.md` rows V-3, R16 |
 | **PHY reset hold time (`tSR`)** | ~~`gem_clk_rst` holds `phy_rst_n` low for ≥10 ms, sourced to the KSZ9031RNX datasheet~~ — **closed 2026-08-27**: JL2121(D) DS009 §4.7.1 specifies t1 ≥ 10 ms (RSTn de-assert after powers ready), t2 ≥ 1 ms (RSTn assert), t3 ≥ 10 ms (RSTn hold after powers ready); the existing 10 ms / 500,000-cycle hold already satisfies all three (same 10 ms, citation corrected in `rtl/gem_clk_rst.v:53`, `rtl/gem_mac_params.vh:128`). No RTL change. | — (no bench step) | `rtl/gem_clk_rst.v` · `rtl/gem_mac_params.vh` · `Manuals/JL2121_datasheet.pdf` §4.7.1 |
 
+## B.5-RX-1: the RX capture edge lands one unit interval late
+
+**Root cause found and fixed in RTL 2026-08-27; bench confirmation is the one
+step left.** This is not a sixth entry in the table above — the table lists
+questions no tool in this build can answer, and this one *was* answered, by
+the `make debug` ILA. It is written here because the fix is a phase change
+whose confirmation belongs to the same bench session as the R14/R20/V-2 row.
+
+Bring-up step 4 received nothing: `rx_ok` stayed at zero for every frame sent,
+and the ILA showed the SFD hunter never leaving `ST_HUNT` because the octet it
+was fed was never `0xD5`. The corruption looked analogue — it clustered at
+high-bit-transition bytes, it moved between captures, and a ±111 ps phase
+sweep did not shift it — and the previous session's hypothesis was
+signal-integrity or per-bit skew needing `IDELAYE2`.
+
+It was neither. The captured octets are **systematically re-framed by exactly
+one nibble**: the IDDR pair straddles an octet boundary, `Q1` holding one
+octet's high nibble and `Q2` the *next* octet's low nibble. Six captures
+across four protocols (`gem_host` 0x88B5, ARP, mDNS, IPv4/UDP) decode
+byte-perfect under that one transformation — correct DA/SA, correct
+EtherTypes, a clean `00 01 02 … 1e` payload run, `224.0.0.251` with
+source and destination port 5353, and a multicast MAC matching its multicast
+IP. Zero bit errors across ~500 octets: **the analogue capture is fine.**
+
+The pattern hid itself. An octet whose two nibbles are equal (`0x55`
+preamble) or whose high nibble repeats its predecessor's (a `0x00`–`0x0f`
+payload run) still decodes clean when re-framed, so a systematic error
+presents as sporadic damage at exactly the high-transition bytes. The
+`dv=0, er=1` cycle at every frame start, read before as RGMII carrier sense,
+is the same artefact: `0xD5` there is the in-band link-status nibble `0xD`
+(link up / 1000 / full) paired with the first preamble nibble `0x5`.
+
+Two changes, both in RTL:
+
+1. **`rtl/gem_rgmii_rx.v` — reverted `da81e24`'s nibble swap.** RGMII v2.0
+   fixes the low nibble to the rising edge on every compliant PHY; it is not
+   a per-PHY choice, and `{d_fall, d_rise}` is correct. That commit also never
+   re-ran the RX simulation, which fails on the swapped mapping — the golden
+   model asserts the same thing directly in `tRgmii/lowNibbleOnRisingEdge`.
+2. **`rtl/gem_rx_mmcm.v` — `CLKOUT0_PHASE` `-45.000` → `-225.000`**, one whole
+   unit interval (180° = 4.000 ns at 125 MHz) earlier. No nibble order can
+   repair a pair that straddles an octet boundary; the phase is the only lever.
+
+**What let this through** is worth keeping, because the reasoning was careful
+and still wrong. When A.2's correction moved the PHY's RX delay from the
+KSZ9031RNX's assumed 1.200 ns to the JL2121(D)'s strapped 2.000 ns,
+`rtl/gem_rx_mmcm.v` argued that every setup and hold margin was unchanged —
+true, because margins are computed from a residual that does not depend on the
+PHY's absolute delay. But *which nibble* the edge captures is absolute: it is
+the capture position modulo one 4.000 ns unit interval, and the substitution
+moved it by +0.800 ns. After the −1000 ps trim the slow corner sat at +3.636 ns
+into a 4.000 ns nibble — 364 ps from rollover, where the KSZ-era numbers had
+1.164 ns. Margin-invariance was read as safety, and it is not the same
+property.
+
+Bench step: rebuild `make debug`, re-capture with the ILA trigger targeted on
+`02:00:00:00:00:01` (not on `dv` alone — ambient LAN traffic free-triggers
+that), and confirm `rx_ok` advances. Watch `scripts/build.tcl` gate 2: its
+−3.500 ns waived-slack envelope was measured at `CLKOUT0_PHASE = -45` and a
+180° move is margin-neutral physically but not in Vivado's ZHOLD artifact. If
+it refuses, re-derive the envelope from that run rather than widening it, and
+note that `+135.000` is the identical steady-state waveform.
+
 ## What already closed, so this page isn't mistaken for the whole list
 
 Closing V-25 does not shrink this table — it closed a *different* kind of

@@ -567,7 +567,7 @@ puts "==> Constraint coverage check: PASS (see $ct_report)"
 # arc intact (measured), COMPENSATION=EXTERNAL is rejected for any on-chip
 # feedback loop ([Timing 38-290], measured). The physical margins -- loop
 # fixed point, per corner, same-corner pairing -- close at CLKOUT0_PHASE =
-# -45 deg with worst-case +0.669 ns (+~0.5 after uncertainty); R20's RX half
+# -225 deg with worst-case +0.669 ns (+~0.5 after uncertainty); R20's RX half
 # is therefore signed off by derivation plus bench measurement, not by WNS,
 # and this gate counts the five RX input-delay paths separately instead of
 # letting them fail the whole build.
@@ -590,8 +590,17 @@ puts "==> Constraint coverage check: PASS (see $ct_report)"
 #      pad-skew write. Hold refuses on these pins like any other path.
 #   4. A waived slack beyond -3.500 ns refuses: the derivation predicts
 #      -3.109 ns of pure modeling artifact (task-4d measured -2.109 at phase
-#      0; the -45 deg trim moves the modeled edge another -1.0) and the build
-#      landed there. That arrival is a CONSTRUCTED CONSTANT, invariant across
+#      0; the -1000 ps trim moves the modeled edge another -1.0) and the
+#      build landed there. THE ENVELOPE WAS MEASURED AT CLKOUT0_PHASE =
+#      -45 AND THE PHASE IS NOW -225 (B.5 bring-up: the capture edge was
+#      landing one whole unit interval late). A 180 degree move is
+#      margin-neutral physically but NOT in this modeled artifact, so the
+#      first implementation run after that change is the measurement that
+#      re-fixes this number. If the build refuses here, re-derive the
+#      envelope from that run -- do not widen it to make the build pass,
+#      and note that +135.000 is the identical waveform if the artifact
+#      sits better on that side. That arrival is a CONSTRUCTED CONSTANT,
+#      invariant across
 #      the BUFG and BUFH topologies, so it does not drift with routing and
 #      the envelope is tight on purpose. Slack past it means the design moved
 #      and the derivation is stale.

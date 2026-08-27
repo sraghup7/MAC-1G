@@ -46,7 +46,7 @@ create_clock -name rgmii_rx_clk -period 8.000 -waveform {2.000 6.000} \
 # deskew feedback path against the arc Vivado applies and proved the STA
 # model freezes this MMCM's capture-clock arrival at a routing-independent
 # constant (~2.3 ns of phantom spread landing on exactly these checks). The
-# physical margins close with CLKOUT0_PHASE = -45 deg (worst +0.669 ns,
+# physical margins close with CLKOUT0_PHASE = -225 deg (worst +0.669 ns,
 # derivation in the report); the modeled numbers stay negative by ~3.1 ns of
 # artifact. scripts/build.tcl gate 2 waives exactly those five IDDR endpoints
 # on that basis and refuses everything else. Do not add slack here to make
