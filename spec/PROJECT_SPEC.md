@@ -30,7 +30,9 @@ everything else. Versioned alongside the RTL.
 * **Fix:** `CLKOUT0_PHASE = −45.000` (−1000 ps, centred in the feasible
   window). Predicted physical margins +0.68/+1.13 ns setup, +1.12/+0.67 ns
   hold (~+0.5 ns after uncertainty). Bench fine-trim remains available in
-  111.1 ps steps or via the KSZ9031RNX MMD pad-skew registers. STA still
+  111.1 ps steps; the MDIO pad-skew register alternative named here at the
+  time does not exist on the physical chip (A.2's B.5 correction: JL2121(D),
+  not KSZ9031RNX). STA still
   reports the five RX checks negative by ~3.1 ns of artifact; **R20's RX
   half is signed off by derivation plus bench measurement**, not WNS.
 * Gate 2 reshaped: it waives exactly the five RX IDDR input endpoints (count
@@ -262,6 +264,59 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 > against the physical board** the moment it arrives (Stage 2 bring-up step 1) — board
 > revisions occasionally swap PHY vendors without renaming the SKU.
 
+> **Correction (from B.5 bring-up, 2026-08-27): the manual was wrong too. The physical
+> chip is a JLSemi JL2121(D), not a KSZ9031RNX.** The manual's own text said
+> KSZ9031RNX; the silkscreen on the board's actual Ethernet PHY IC reads
+> `JL2121 N040I 042MA9CF`, and B.5 step 3's MDIO read confirms it with certainty,
+> not just marking-matching: `phyid` came back `0x937c4032`, and the JLSemi
+> datasheet (`DS009-JL2121(D)-v1.09-Preliminary`, jlsemi.com) gives PHYIDR1's
+> reset value as `0x937c` and PHYIDR2 as a fixed `0x402x` with the low nibble the
+> silicon revision — `0x4032` is exactly revision 2. Neither the KSZ9031RNX
+> assumption nor its A.2 predecessor (RTL8211) was ever checked this way; this
+> one is, and closes the identity question completely.
+>
+> **What this does and does not invalidate.** BMSR, PHYIDR1, PHYIDR2 and the
+> other Clause 22 basic registers (0x0–0xF) sit at the same standard addresses
+> on both chips, so `link_up` (BMSR bit 2) and the PHY-ID read `rtl/gem_mdio.v`
+> already relied on are unaffected. Two things are not:
+>
+> - **Register 0x1F is not a speed/duplex register on the JL2121(D).** It is
+>   the Page Select Register — the chip banks its vendor registers (PHY
+>   Specific Status at page `0xA43`, LED control, SGMII, ...) behind it, and
+>   reading it back returns the selected page, not a speed encoding.
+>   `rtl/gem_mdio.v`'s poll sequencer read it directly and decoded bits
+>   assuming a KSZ9031RNX-style layout; on the physical chip the pattern it
+>   was matching against never asserts, so `link_speed` would have silently
+>   frozen at its reset value forever. **Fixed** — the sequencer now selects
+>   page `0xA43`, reads the PHY Specific Status Register (register `0x1A`,
+>   bits `[5:4]`), and restores the default page, atomically against the R16
+>   request port. See the header comment and `POLL_PHYSR`/`POLL_PAGE_SEL`/
+>   `POLL_PAGE_RESTORE` in `rtl/gem_mdio.v`.
+> - **There is no MDIO pad-skew register.** B.1b's RX default-delay claim and
+>   the RGMII TX escalation path documented in
+>   `Documents/RGMII I-O Timing Derivation.md` ("If 58 ps proves insufficient
+>   on the bench") both assume the KSZ9031RNX's MMD `2h`/register `8h`
+>   pad-skew field, reached over MDIO. The JL2121(D) datasheet has no MMD
+>   register-access mechanism at all: `RXDLY`/`TXDLY` (pins 25/24) are
+>   **hardware strap pins**, each adding a fixed 0 or 2 ns, sampled once at
+>   reset — not written at runtime. That escalation path does not exist on
+>   this chip. **Not fixed here** — the strap pins' as-populated state on the
+>   AX7035B is a schematic question this repository cannot answer without the
+>   board's schematic in hand; see `docs/reports/stage9/known-issues.md`.
+>
+> Every other KSZ9031RNX-sourced number in this document (the 1.2 ns RX
+> default delay used to centre the deskew MMCM's phase, the RGMII timing
+> budget's `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, the PHY reset hold
+> time `tSR`) is a KSZ9031RNX datasheet figure applied to a JL2121(D) board and
+> is now **unconfirmed pending a JL2121(D)-specific re-derivation** — not
+> necessarily wrong, since the RGMII v2.0 windows both chips claim to meet are
+> the same standard's numbers, but sourced to the wrong datasheet until checked
+> against the JL2121(D)'s own AC specifications (Chapter 4.7, in
+> `DS009-JL2121(D)-v1.09-Preliminary`). This did not block B.5 steps 3-6, which
+> proceed on Clause 22 registers alone (vendor-independent), but it must be
+> resolved before trusting the pad-skew escalation path or the RX deskew
+> MMCM's timing-closure claims.
+
 Why it wins: cheapest board with fabric-attached gigabit, ships with schematics and Ethernet
 demo RTL, and the 35T is comfortably large for a MAC (budget in Part B shows <10%
 utilization). Buy direct from `en.alinx.com` or Amazon (Amazon runs slightly higher).
@@ -415,7 +470,9 @@ every Stage 3 testbench elaborates unchanged, leaving it unconnected.
 | `rx_clk_deskew` | 125 MHz | Second MMCM, feedback deskewed against the raw pin clock | RGMII input capture, SFD hunt, deframe, CRC check, classify, FIFO write side — the whole receive domain. See B.7 item 6 and `Documents/RX Clock Deskew Design.md` |
 
 **RGMII skew mechanism (R14) — resolved from the KSZ9031RNX datasheet (Microchip, Rev
-2.2), "RGMII Timing" section and Table 19:**
+2.2), "RGMII Timing" section and Table 19. See A.2's B.5 correction: the physical
+board carries a JLSemi JL2121(D), not a KSZ9031RNX, and every number below is
+unconfirmed against that chip's own datasheet pending a re-derivation:**
 
 - **RX:** the PHY adds **1.2 ns typical** delay to `RX_CLK` relative to `RXD`/`RX_DV`
   **by default, out of reset — no MDIO write required.** This sits inside the RGMII v2.0
@@ -560,7 +617,9 @@ Numbered so the verification plan can trace to them. **[M]** = must, **[S]** = s
   1000 Mbps mode only. (10/100 fallback explicitly out of scope — see B.7.)
 - **R14 [M]** The clock-to-data skew required by RGMII is provided by a deliberate,
   documented mechanism, resolved in B.1b: **RX** relies on the KSZ9031RNX's default
-  1.2 ns PHY-side delay plus the deskew MMCM's −45° capture trim; **TX** is generated FPGA-side via a
+  1.2 ns PHY-side delay plus the deskew MMCM's −45° capture trim (this number is
+  sourced to the wrong chip's datasheet — see A.2's B.5 correction, JL2121(D)
+  not KSZ9031RNX); **TX** is generated FPGA-side via a
   second MMCM output phase-shifted −55° (1.222 ns, the measured-best legal grid point
   in the PHY's window — see `Documents/RGMII I-O Timing Derivation.md` §5)
   relative to `tx_clk`, driving `GTX_CLK` through an ODDR — constrained in
@@ -1180,9 +1239,14 @@ derivation is the 1000BASE-T standard's ±100 ppm ceiling, **not yet confirmed a
 the actual crystal/oscillator part on the AX7035B BOM** — revisit once the schematic is
 in hand; the no-stall user contract (R18) pushes drop responsibility onto user logic —
 fine here, but a real NIC would buffer; the RGMII timing numbers throughout this
-document (B.1b, R14, R20) come from the KSZ9031RNX datasheet read online, not yet
-cross-checked against the physical board — first thing to verify at Stage 2 bring-up
-step 1 (A.2's correction note); and the LUT/FF/BRAM line items in B.2's Resources table
+document (B.1b, R14, R20) come from the KSZ9031RNX datasheet read online, and **B.5
+bring-up cross-checked against the physical board and found the premise itself
+wrong, not just unconfirmed: the chip is a JLSemi JL2121(D)** (A.2's B.5
+correction). The register-level and pad-skew-mechanism consequences are fixed or
+flagged there; the numeric RGMII timing budget (B.1b's 1.2 ns RX default, the
+`TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, `tSR`) is not yet re-derived from the
+JL2121(D)'s own datasheet and should be treated as unconfirmed until it is; and the
+LUT/FF/BRAM line items in B.2's Resources table
 are **estimates whose derivation predates this revision and isn't traceable** — unlike
 the FIFO depth, GTX_CLK phase, and R21 latency numbers, which were derived bottom-up and
 checked by `spec/budget.m`, the resource counts are inherited, plausible-looking

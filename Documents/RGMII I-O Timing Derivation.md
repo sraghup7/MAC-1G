@@ -3,6 +3,18 @@
 Closes V-2's static half. Numbers sourced from `spec/PROJECT_SPEC.md` B.1b,
 which cites the KSZ9031RNX datasheet (Microchip Rev 2.2) Table 19.
 
+> **Correction (B.5 bring-up, 2026-08-27): the board's PHY is not a
+> KSZ9031RNX.** It is a JLSemi JL2121(D) — confirmed by MDIO PHY-ID read
+> against the JLSemi datasheet, not just marking-matching; see
+> `spec/PROJECT_SPEC.md` A.2's B.5 correction. Every numeric window this
+> document derives against (`TsetupR`/`TholdR`/`TsetupT`/`TholdT`) is a
+> KSZ9031RNX datasheet figure and is **not yet re-checked against the
+> JL2121(D)'s own AC specifications** (`DS009-JL2121(D)-v1.09-Preliminary`
+> Chapter 4.7). The escalation path in "If 58 ps proves insufficient on the
+> bench" below is affected more than the numbers are: it names an MDIO
+> pad-skew register the JL2121(D) does not have. See that section's own
+> correction note for what the real fallback is.
+
 ## RX: rgmii_rxd[3:0], rgmii_rx_ctl, sampled by rgmii_rx_clk
 
 *Rewritten after Stage 6 part 2. The version this replaces derived
@@ -240,6 +252,24 @@ the numbers above are Vivado's `-1L` speed model on a `7a35ti-fgg484`, not
 silicon. The bench is still the final word, which is V-2's remaining half.
 
 ## If 58 ps proves insufficient on the bench
+
+> **Correction (B.5 bring-up, 2026-08-27): this entire section describes a
+> mechanism the physical board does not have.** It was written for the
+> KSZ9031RNX's MMD `2h`/register `8h` pad-skew field, reached over MDIO. B.5
+> found the board's actual PHY is a JLSemi JL2121(D) (`spec/PROJECT_SPEC.md`
+> A.2's correction), whose datasheet
+> (`DS009-JL2121(D)-v1.09-Preliminary`) has no MMD register-access chapter at
+> all -- indirect access via Clause 22 registers 13/14 is a KSZ9031RNX
+> mechanism, not a general one. What the JL2121(D) has instead: `RXDLY` (pin
+> 25) and `TXDLY` (pin 24) are **hardware strap pins**, each adding a fixed 0
+> or 2 ns to `RXC`/`TXC` respectively, sampled once at reset -- not written at
+> runtime, not steppable, and not reachable from `gem_mdio.v`'s request port
+> at all. If 58 ps proves insufficient on this board, the fallback is a
+> board-level rework of a strap resistor, not an MDIO transaction, and it
+> needs the AX7035B schematic (not yet in this repository) to know which pin
+> state is currently populated before anything about it can be planned. The
+> rest of this section is kept for its record of what was tried against the
+> wrong chip, not as a procedure to execute.
 
 This is the fallback B.1b already names as R14's escape hatch. **It is
 documented here, not implemented.** Nothing in the design drives it today, and

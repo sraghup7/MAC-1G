@@ -7,6 +7,18 @@ already answered, and getting it wrong produces a MAC that stops receiving
 frames after a link flap — a failure nothing in this repository's regression
 would notice.*
 
+> **Correction (B.5 bring-up, 2026-08-27):** the "KSZ9031RNX already delays
+> `RX_CLK` by 1.2 ns" premise this document's phase-trim reasoning (2b, below)
+> is built on is sourced to the wrong chip. B.5 found the board's PHY is a
+> JLSemi JL2121(D) (`spec/PROJECT_SPEC.md` A.2's correction), which has no
+> equivalent "1.2 ns default, no action needed" behaviour — its RX clock delay
+> is a hardware strap pin (`RXDLY`, pin 25) adding a fixed 0 or 2 ns, latched
+> at reset. The MMCM topology, reset supervisor, and CDC safety analysis below
+> do not depend on the numeric value of that delay and are unaffected; the
+> **capture-clock phase trim's centring target does**, and is unconfirmed until
+> the strap state is read from the AX7035B schematic and the JL2121(D)'s own
+> RGMII timing figures are substituted for the KSZ9031RNX ones cited here.
+
 *Task 4c of Stage 6 part 2. Task 4d implements what this document decides.*
 
 *Revision 2, after design review. The review confirmed Step 1's topology, Step

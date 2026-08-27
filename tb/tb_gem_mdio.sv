@@ -27,11 +27,17 @@
 //      a calculation cannot catch
 //
 // WHAT THIS CANNOT CHECK, and it is most of what will go wrong on the bench:
-// whether PHY_ADDR is the address the AX7035B straps, and whether register
-// 0x1F carries the speed bits where the KSZ9031RNX datasheet says. Both are
-// read from a datasheet A.2 flags as unverified against the physical part, and
-// both are bring-up step 3's job -- which the request port now makes doable:
-// sweep the address and watch phy_id stop reading all-ones.
+// whether PHY_ADDR is the address the AX7035B straps. That is read from a
+// datasheet A.2 flags as unverified against the physical part, and is bring-up
+// step 3's job -- which the request port now makes doable: sweep the address
+// and watch phy_id stop reading all-ones.
+//
+// The register file below is flat (`phy_reg[0:31]`, no page-select
+// semantics): it does not model the JL2121(D)'s paged banks, only Clause 22
+// framing. So the poll-order check below confirms gem_mdio issues the right
+// address and data at each of the seven steps -- including the two page-select
+// writes -- not that paging itself resolves the intended register on real
+// silicon. That is what B.5 step 3 is for.
 //----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -107,6 +113,15 @@ module tb_gem_mdio;
     int          n_transactions = 0;
     int          n_writes       = 0;
 
+    // Writes to register 5 specifically, kept apart from n_writes above.
+    // The poll sequencer now writes PAGSR (register 31) twice per cycle in
+    // the background (page select, page restore -- see gem_mdio.v), which
+    // keeps incrementing n_writes for the whole run; a global write count
+    // taken around the request-port write test below would be racing that
+    // background traffic. Register 5 is never touched by the poll sequencer,
+    // so this counter isolates exactly the one write the test issues.
+    int          n_writes_reg5 = 0;
+
     // What the sequencer asked for, in order, so the poll cycle is checked as
     // a sequence rather than by its effects alone.
     int seen_reg [0:31];
@@ -119,7 +134,11 @@ module tb_gem_mdio;
         phy_reg[2]  = ID_HI;         // PHYIDR1
         phy_reg[3]  = ID_LO;         // PHYIDR2
         phy_reg[5]  = 16'hBEEF;      // a register the sequencer never reads
-        phy_reg[31] = 16'h0040;      // vendor status: speed bits = 3'b100
+        phy_reg[26] = 16'h0020;      // PHYSR: speed bits [5:4] = 2'b10 (1000 Mbps)
+        // phy_reg[31] (PAGSR) is left at its 0x0000 reset value -- the
+        // sequencer writes it twice per poll (page select, then restore) and
+        // this flat model does not gate register 26 on it, so no preload is
+        // needed for the poll-order/decode check below to be meaningful.
     end
 
     //------------------------------------------------------------------
@@ -247,6 +266,7 @@ module tb_gem_mdio;
                         if (is_write) begin
                             phy_reg[got_reg] = wr_capture;
                             n_writes++;
+                            if (got_reg == 5'd5) n_writes_reg5++;
                         end else if (n_seen < 32) begin
                             seen_reg[n_seen] = int'(got_reg);
                             n_seen++;
@@ -322,28 +342,48 @@ module tb_gem_mdio;
 
         begin_scenario("gem_mdio");
 
+        // seen_reg only records reads (see the capture block above), so the
+        // poll cycle's two PAGSR writes (page select, page restore -- see
+        // gem_mdio.v) do not appear here even though they are two of the
+        // cycle's seven transactions. This array is therefore the five reads
+        // in poll order, checked against n_transactions/n_writes below for
+        // the write side.
         expect_reg[0] = 2;    // PHYIDR1 -- B.5 step 3 reads this first
         expect_reg[1] = 3;    // PHYIDR2
         expect_reg[2] = 1;    // BMSR
         expect_reg[3] = 1;    // BMSR again: the link bit latches low
-        expect_reg[4] = 31;   // vendor speed/duplex
+        expect_reg[4] = 26;   // PHYSR, on the vendor page -- resolved speed/duplex
 
         repeat (8) @(posedge clk);
         rst_n = 1'b1;
 
         //--------------------------------------------------------------
-        // 1. One full poll cycle
+        // 1. One full poll cycle: 5 reads (checked by address and order)
+        //    plus 2 PAGSR writes (checked by count and final page value)
         //--------------------------------------------------------------
-        wait (n_transactions >= 5);
+        wait (n_transactions >= 7);
         repeat (100) @(posedge clk);
 
         for (i = 0; i < 5; i++) begin
             note_check();
             if (seen_reg[i] != expect_reg[i]) begin
                 report_fail("gem_mdio", $sformatf(
-                    "poll %0d read register %0d, expected %0d",
+                    "poll read %0d was register %0d, expected %0d",
                     i, seen_reg[i], expect_reg[i]));
             end
+        end
+
+        note_check();
+        if (n_writes != 2) begin
+            report_fail("gem_mdio", $sformatf(
+                "the PHY saw %0d write transactions after one poll cycle, expected 2 (the PAGSR select and restore)",
+                n_writes));
+        end
+        note_check();
+        if (phy_reg[31] !== 16'h0000) begin
+            report_fail("gem_mdio", $sformatf(
+                "PAGSR (register 31) holds 0x%04h after one poll cycle, expected 0x0000 -- the restore write did not land",
+                phy_reg[31]));
         end
 
         note_check();
@@ -391,9 +431,9 @@ module tb_gem_mdio;
         repeat (4) @(posedge clk);
 
         note_check();
-        if (n_writes != 1) begin
+        if (n_writes_reg5 != 1) begin
             report_fail("gem_mdio", $sformatf(
-                "the PHY saw %0d write transactions, expected 1", n_writes));
+                "the PHY saw %0d write transactions to register 5, expected 1", n_writes_reg5));
         end
         note_check();
         if (phy_reg[5] !== 16'h1234) begin
@@ -411,7 +451,7 @@ module tb_gem_mdio;
                 rsp_data));
         end
 
-        $display("[gem_tb] gem_mdio: %0d transactions (%0d writes), poll order %0d %0d %0d %0d %0d, phy_id 0x%08h",
+        $display("[gem_tb] gem_mdio: %0d transactions (%0d writes), poll reads %0d %0d %0d %0d %0d, phy_id 0x%08h",
                  n_transactions, n_writes,
                  seen_reg[0], seen_reg[1], seen_reg[2], seen_reg[3], seen_reg[4],
                  phy_id);

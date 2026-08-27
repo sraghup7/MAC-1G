@@ -9,10 +9,12 @@ it worked, and each fails in a way the previous step has already ruled out. Skip
 one and a failure two steps later has a suspect list that includes everything.
 
 **The one rule that overrides the rest:** when the board and a document
-disagree, the board is right. This project has already been caught out once —
-the spec assumed a Realtek RTL8211 until someone pulled the actual manual and
-found a Micrel KSZ9031RNX (A.2) — and the pin data here comes from a schematic
-obtained third-hand (V-21).
+disagree, the board is right. This project has already been caught out
+*twice* — the spec assumed a Realtek RTL8211 until someone pulled the actual
+manual and found a Micrel KSZ9031RNX, and then Step 3 below, the first time it
+was run, found that the manual was wrong too: the physical chip is a JLSemi
+JL2121(D) (both corrections in A.2) — and the pin data here comes from a
+schematic obtained third-hand (V-21).
 
 ---
 
@@ -90,10 +92,14 @@ python sw/host/gem_host.py monitor --port COM4
 ```
 
 - [ ] A record arrives **once a second**, starting with `gem`.
-- [ ] `phyok=00000001` and `phyid` reads **`0x00221622`** — Micrel/Microchip's
-      OUI and model for the KSZ9031RNX, with the low nibble carrying the silicon
-      revision, so `0x0022162x` is the expected family. What matters most is that
-      it is neither `00000000` nor `ffffffff`: both mean nothing is answering.
+- [ ] `phyok=00000001` and `phyid` reads **`0x937c4032`** — JLSemi's OUI and
+      model for the JL2121(D) (`DS009-JL2121(D)-v1.09-Preliminary`), with the
+      low nibble carrying the silicon revision, so `0x937c403x` is the expected
+      family. **This superseded the KSZ9031RNX expectation** (`0x0022162x`) the
+      ALINX manual implied — B.5's first pass through this step found that
+      value and traced it to the physical chip, not a misread; see A.2's B.5
+      correction. What matters most either way is that it is neither
+      `00000000` nor `ffffffff`: both mean nothing is answering.
 - [ ] Plug the cable into the PC. Within a few seconds **`led[1]` lights**,
       `link=00000001`, and `speed=00000002` (1000 Mbps, Clause 22).
 
@@ -104,8 +110,11 @@ is from the FPGA's point of view and a swap with **G15** costs one rebuild to
 test (V-21).
 
 **If `phyid` reads `ffffffff`:** MDIO is not being answered. The PHY's reset is
-held low for 10 ms after power-up by design (KSZ9031RNX tSR) — if that pin is
-wrong the PHY never comes out of reset. Check `phy_rst_n` on **L15**.
+held low for 10 ms after power-up by design (sourced to the KSZ9031RNX's tSR,
+now known to be the wrong chip's datasheet — see A.2's B.5 correction; the
+JL2121(D)'s own reset-timing figure is not yet checked, so 10 ms is a
+plausible margin rather than a confirmed one) — if that pin is wrong the PHY
+never comes out of reset. Check `phy_rst_n` on **L15**.
 
 **If the link comes up at 100 Mbps:** the design does not implement 10/100
 fallback — R13 is 1000BASE-T only, and 10/100 is a stated non-goal (B.7). Check
@@ -127,15 +136,22 @@ python sw/host/gem_host.py rx --port COM4 --iface Ethernet --count 100
 trusted generator, and at this point the board is not yet a trusted sink.
 
 **If `rx_ok` stays at zero but the link is up:** the most likely cause is the
-RGMII receive nibble mapping or the PHY's RX clock delay. The KSZ9031RNX adds
-1.2 ns to `RX_CLK` by default with no MDIO write (B.1b), and `gem_iddr`'s mapping
-was corrected for exactly that (V-17) — on hardware a wrong mapping means the
-SFD reads as `0x5D` instead of `0xD5` and no frame is ever found. Nothing in
+RGMII receive nibble mapping or the PHY's RX clock delay. B.1b assumed the
+KSZ9031RNX's 1.2 ns default `RX_CLK` delay with no MDIO write required — the
+board's actual chip is a JL2121(D) (A.2's B.5 correction), which delays
+`RX_CLK` via the `RXDLY` **strap pin** instead, adding a fixed 0 or 2 ns
+depending on how it is populated; the delay value itself is therefore
+unconfirmed until the schematic is checked. `gem_iddr`'s mapping was corrected
+for the KSZ9031RNX case (V-17) — on hardware a wrong mapping means the SFD
+reads as `0x5D` instead of `0xD5` and no frame is ever found. Nothing in
 simulation can see this, which is why it is called out here.
 
 **If `rx_ok` advances but the error counters do too:** the data is arriving and
-being corrupted, which points at skew rather than mapping. Go to the pad-skew
-registers (MMD `2h`, register `8h`) before doubting the design.
+being corrupted, which points at skew rather than mapping. **There is no MDIO
+pad-skew register on this chip** (the MMD `2h`/register `8h` path assumed the
+KSZ9031RNX) — the only lever is the `RXDLY`/`TXDLY` strap pins, which are fixed
+at board population and not adjustable from bring-up software. Confirm the
+strap state from the schematic before doubting the design.
 
 **To see which of these it is rather than guess:** `make debug` builds
 `build/gem_top_debug.bit` and `.ltx` with an ILA on the RX pipeline — the
@@ -168,17 +184,19 @@ part 2 measured the design and found its own TX setup check improves as the
 shift shrinks, so the centre is not the best point inside the window. Post-route
 the worst TX output clears setup by **58 ps**: a pass, and a thin one.
 
-**If the scope says setup timing is not being met, there is a next step and it
-is already written down.** Do not start re-deriving the phase shift — 58 ps is
-the ceiling of what phase shift alone reaches on this design, and that was
-established by measurement across every configuration the PHY's window allows,
-not by estimate. Go to `Documents/RGMII I-O Timing Derivation.md`, section
-**“If 58 ps proves insufficient on the bench”**. It carries the procedure for the
-PHY's own `GTX_CLK` pad-skew register (MMD `2h`, register `8h`, bits `[9:5]`)
-reached over MDIO, the arithmetic for turning a measured shortfall into a step
-count, and — read this part first — the list of datasheet numbers that have to be
-confirmed before executing any of it, because B.1b's summary of them does not
-close arithmetically.
+**If the scope says setup timing is not being met, read this before reaching for
+the pad-skew procedure `Documents/RGMII I-O Timing Derivation.md` names.** Do
+not start re-deriving the phase shift — 58 ps is the ceiling of what phase
+shift alone reaches on this design, and that was established by measurement
+across every configuration the PHY's window allows, not by estimate. But the
+document's escalation path (`Documents/RGMII I-O Timing Derivation.md`,
+section **"If 58 ps proves insufficient on the bench"**) was written for the
+KSZ9031RNX's MMD `2h`/register `8h` pad-skew register, reached over MDIO — B.5
+found the physical chip is a JL2121(D) (A.2's correction), which has **no such
+register**. Its RGMII clock delay is set by `RXDLY`/`TXDLY` strap pins, fixed
+at board population. If 58 ps proves insufficient on this board, the fallback
+is a hardware rework of those straps, not an MDIO write — confirm the strap
+state from the schematic before planning anything else.
 
 ---
 

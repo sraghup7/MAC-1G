@@ -13,9 +13,10 @@
 // WHY BOTH, when either alone looks sufficient:
 //
 //   the request port  is what "register-level" means. Any register, read or
-//                     write, on demand -- including the pad-skew registers
-//                     B.1b names as the fallback if RGMII timing needs help on
-//                     the bench, which no fixed poll list could reach.
+//                     write, on demand -- including paged vendor registers a
+//                     fixed poll list could not reach (see the JL2121(D) note
+//                     below on how the poll sequencer itself now uses this
+//                     same page-switch mechanism to read resolved speed).
 //   the sequencer     is what makes the MAC debuggable with nothing attached.
 //                     link_up, link_speed and phy_id are live on pins for an
 //                     ILA or a VIO before any software exists, which is the
@@ -71,12 +72,51 @@
 //     is a parameter precisely because it is a guess. It is also now
 //     answerable on the bench without a rebuild: sweep the address over the
 //     request port and watch phy_id stop reading as all-ones.
-//   * The speed encoding in register 0x1F. The KSZ9031RNX publishes resolved
-//     speed and duplex there, and the mapping below follows the datasheet as
-//     read online; A.2 flags that datasheet as unverified against the physical
-//     part. link_up comes from BMSR bit 2, which is Clause 22 and
-//     vendor-independent, so the important half does not depend on the
-//     uncertain half.
+//
+// THE PHY IS A JLSemi JL2121(D), NOT A KSZ9031RNX -- A.2's B.5 bring-up
+// correction, and it changes register 0x1F's meaning, not just its bit
+// layout. The board's Ethernet chip was assumed to be a Micrel/Microchip
+// KSZ9031RNX (A.2); B.5 step 3 read phy_id back as 0x937c4032, which is not a
+// KSZ9031RNX identifier at all. The JLSemi JL2121(D) datasheet
+// (DS009-JL2121(D)-v1.09-Preliminary) confirms it exactly: PHYIDR1 defaults
+// to 0x937c, and PHYIDR2's fixed OUI-LSB/model field is 0x402_, with the low
+// nibble the silicon revision -- 0x4032 is revision 2. Both PHYIDR1 (0x2) and
+// PHYIDR2 (0x3) are the standard Clause 22 addresses on this chip too, so the
+// poll order below did not need to change to read them correctly.
+//
+// Register 0x1F did not survive the correction. On the KSZ9031RNX it was
+// assumed to publish resolved speed and duplex directly. On the JL2121(D) it
+// is the Page Select Register (PAGSR): the chip multiplexes several register
+// banks (PHY Specific Control/Status at page 0xA43, LED control at 0xD04,
+// SGMII registers at 0xD08/0xDC0, ...) onto the Clause 22 address space, and
+// PAGSR picks which bank registers outside the Clause 22 basic set (0x0-0xF)
+// currently mean. Reading 0x1F on this chip returns the page number, not a
+// speed encoding -- treating it as one gave a case statement whose inputs
+// never assert, silently freezing link_speed at its reset value forever.
+// Resolved speed and duplex instead live in the PHY Specific Status Register
+// (page 0xA43, register 0x1A): bits [5:4] are 00/01/10 for 10/100/1000 Mbps
+// (11 reserved), bit 3 is duplex, bit 2 is a second, real-time link-up bit
+// independent of BMSR's latch. This module reads only bits [5:4]; link_up
+// still comes from BMSR, unchanged, because that is Clause 22 and does not
+// depend on which vendor's PHY answers it.
+//
+// Reaching a paged register costs three transactions instead of one: write
+// PAGSR = page, read (or write) the target register, write PAGSR back to the
+// default page (0x0000) so the Clause 22 registers this module also polls --
+// BMSR, PHYIDR1/2 -- read correctly again afterwards. The three are kept
+// atomic against the request port below (see req_pending's guard) precisely
+// because a request that landed while the vendor page was still selected
+// would silently address the wrong register bank.
+//
+// WHAT THIS DOES NOT TOUCH: the RGMII clock-delay story. B.1b and the RX/TX
+// timing documents assumed the KSZ9031RNX's MDIO-programmable MMD 2h/8h
+// pad-skew registers as R14's escalation path if timing margin proves thin
+// on the bench. The JL2121(D) datasheet has no MMD register-access chapter at
+// all; RXDLY/TXDLY are hardware strap pins (board pins 25/24), each adding a
+// fixed 0 or 2 ns and latched at reset, not written over MDIO. That escalation
+// path does not exist on this chip -- see the note in `Documents/RGMII I-O
+// Timing Derivation.md` and `docs/reports/stage9/known-issues.md`. Nothing in
+// this module implements or assumes it either way; it only reads PHYSR.
 //
 // BMSR's link status is latching-low: it reports a link that has gone down
 // since the last read, and only a second read shows the current state. So the
@@ -123,7 +163,11 @@ module gem_mdio #(
     localparam [4:0] REG_BMSR    = 5'd1;    // Clause 22 basic status
     localparam [4:0] REG_PHYIDR1 = 5'd2;    // Clause 22 identifier, high
     localparam [4:0] REG_PHYIDR2 = 5'd3;    // Clause 22 identifier, low
-    localparam [4:0] REG_PHYC    = 5'd31;   // KSZ9031RNX: resolved speed/duplex
+    localparam [4:0] REG_PHYSR   = 5'd26;   // JL2121(D): page 0xA43, resolved speed/duplex
+    localparam [4:0] REG_PAGSR   = 5'd31;   // JL2121(D): page select, every page
+
+    localparam [15:0] PAGE_VENDOR  = 16'h0A43;  // where REG_PHYSR lives
+    localparam [15:0] PAGE_DEFAULT = 16'h0000;  // where BMSR/PHYIDR1/2 live
 
     localparam [1:0] SPEED_10   = 2'b00,
                      SPEED_100  = 2'b01,
@@ -131,12 +175,17 @@ module gem_mdio #(
 
     // The poll cycle. PHY ID first, because it is the one that proves the bus
     // and the part are alive at all -- if it reads as all-ones or all-zeros,
-    // nothing below it means anything.
-    localparam [2:0] POLL_ID_HI = 3'd0,
-                     POLL_ID_LO = 3'd1,
-                     POLL_BMSR1 = 3'd2,
-                     POLL_BMSR2 = 3'd3,
-                     POLL_PHYC  = 3'd4;
+    // nothing below it means anything. The last three steps are one paged
+    // access to REG_PHYSR (see the header note): select the vendor page,
+    // read the status register, then restore the default page so the next
+    // POLL_ID_HI/BMSR reads land on the Clause 22 registers they expect.
+    localparam [2:0] POLL_ID_HI       = 3'd0,
+                     POLL_ID_LO       = 3'd1,
+                     POLL_BMSR1       = 3'd2,
+                     POLL_BMSR2       = 3'd3,
+                     POLL_PAGE_SEL    = 3'd4,
+                     POLL_PHYSR       = 3'd5,
+                     POLL_PAGE_RESTORE = 3'd6;
 
     //------------------------------------------------------------------
     // MDC generation
@@ -291,7 +340,19 @@ module gem_mdio #(
                 // kind of thing a bring-up session loses a day to. Aligning
                 // costs at most one MDC half period of latency on a request.
                 if (fall_en) begin
-                    if (req_pending) begin
+                    // A pending request is deferred, not just delayed, while
+                    // the poll sequencer has the vendor page selected -- see
+                    // the header note on REG_PAGSR. POLL_PHYSR is the read
+                    // taken with page 0xA43 live; POLL_PAGE_RESTORE is the
+                    // write that takes it back to 0x0000 and has not landed
+                    // yet. Letting a request in at either point would
+                    // address whatever register it asked for inside the
+                    // wrong page, silently. POLL_PAGE_SEL is safe to
+                    // preempt: the page is still 0x0000 until that write
+                    // completes, so displacing it changes nothing about
+                    // which page is selected.
+                    if (req_pending && (poll_step != POLL_PHYSR) &&
+                                       (poll_step != POLL_PAGE_RESTORE)) begin
                         // A waiting request goes first. The poll it displaces
                         // comes round again on its own.
                         bit_cnt     <= 6'd0;
@@ -306,15 +367,44 @@ module gem_mdio #(
                         poll_wait  <= 16'd0;
                         bit_cnt    <= 6'd0;
                         active     <= 1'b1;
-                        cur_write  <= 1'b0;      // the sequencer only reads
                         cur_is_req <= 1'b0;
                         cur_phyad  <= PHY_ADDR;
                         case (poll_step)
-                            POLL_ID_HI:             cur_regad <= REG_PHYIDR1;
-                            POLL_ID_LO:             cur_regad <= REG_PHYIDR2;
-                            POLL_BMSR1, POLL_BMSR2: cur_regad <= REG_BMSR;
-                            POLL_PHYC:              cur_regad <= REG_PHYC;
-                            default:                cur_regad <= REG_BMSR;
+                            POLL_ID_HI: begin
+                                cur_write <= 1'b0;
+                                cur_regad <= REG_PHYIDR1;
+                            end
+                            POLL_ID_LO: begin
+                                cur_write <= 1'b0;
+                                cur_regad <= REG_PHYIDR2;
+                            end
+                            POLL_BMSR1, POLL_BMSR2: begin
+                                cur_write <= 1'b0;
+                                cur_regad <= REG_BMSR;
+                            end
+                            POLL_PAGE_SEL: begin
+                                // Select the vendor page before reading
+                                // PHYSR -- see the header note.
+                                cur_write <= 1'b1;
+                                cur_regad <= REG_PAGSR;
+                                cur_wdata <= PAGE_VENDOR;
+                            end
+                            POLL_PHYSR: begin
+                                cur_write <= 1'b0;
+                                cur_regad <= REG_PHYSR;
+                            end
+                            POLL_PAGE_RESTORE: begin
+                                // Back to the default page so the next
+                                // POLL_ID_HI/BMSR reads land on the Clause
+                                // 22 registers they expect.
+                                cur_write <= 1'b1;
+                                cur_regad <= REG_PAGSR;
+                                cur_wdata <= PAGE_DEFAULT;
+                            end
+                            default: begin
+                                cur_write <= 1'b0;
+                                cur_regad <= REG_BMSR;
+                            end
                         endcase
                     end
                 end
@@ -356,18 +446,23 @@ module gem_mdio #(
                                 // The second BMSR read is the one that means
                                 // anything -- see the note on latching-low.
                                 POLL_BMSR2: link_up <= shift_in[2];
-                                POLL_PHYC: begin
-                                    case (shift_in[6:4])
-                                        3'b001:  link_speed <= SPEED_10;
-                                        3'b010:  link_speed <= SPEED_100;
-                                        3'b100:  link_speed <= SPEED_1000;
+                                // JL2121(D) PHYSR bits [5:4]: 00/01/10 for
+                                // 10/100/1000 Mbps, 11 reserved. Same
+                                // 00/01/10 encoding SPEED_10/100/1000 already
+                                // use, so no remapping is needed past the bit
+                                // slice -- see the header note on REG_PHYSR.
+                                POLL_PHYSR: begin
+                                    case (shift_in[5:4])
+                                        2'b00:   link_speed <= SPEED_10;
+                                        2'b01:   link_speed <= SPEED_100;
+                                        2'b10:   link_speed <= SPEED_1000;
                                         default: link_speed <= link_speed;
                                     endcase
                                 end
                                 default: ;
                             endcase
 
-                            poll_step <= (poll_step == POLL_PHYC) ?
+                            poll_step <= (poll_step == POLL_PAGE_RESTORE) ?
                                              POLL_ID_HI : (poll_step + 3'd1);
                         end
                     end else begin
