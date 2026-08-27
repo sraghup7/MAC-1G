@@ -364,7 +364,36 @@ was. Some of it was this, and nothing was watching `rx_bad` during those runs
 to tell the two apart. This defect may well predate today's changes entirely;
 nothing measured so far can date it.
 
-**Leading hypothesis, untested: TX-to-RX coupling.** All six TX outputs were
+**THE COUPLING HYPOTHESIS IS REFUTED (tested 2026-08-27).** Rebuilt at a
+uniform `DRIVE 12` with phase and `SLEW` unchanged, and measured `rx_bad` per
+received frame at matched load (100,000 echo frames per point, counters read
+before and after):
+
+| config | `rx_bad` / `rx_ok` | rate |
+|---|---|---|
+| **`DRIVE 16`** | 20 / 100,187 | **0.0200%** |
+| | 22 / 102,891 (soak) | 0.0214% |
+| `DRIVE 12` | 64 / 100,204 | 0.0639% |
+| `DRIVE 12` (settled link) | 56 / 100,184 | 0.0559% |
+
+Lowering the drive made receive errors **~3x WORSE**, which is the opposite of
+what simultaneous-switching noise predicts. There is no TX-quality-versus-
+RX-margin trade-off here: `DRIVE 16` is better on both paths, so the committed
+setting stands and needs no revisiting.
+
+A confound was checked rather than assumed. The first `DRIVE 12` point started
+at `rx_ok=41`, immediately after reprogramming, while the baseline started at
+`rx_ok=138729` with the link long settled -- link-up transients could have
+inflated it. Re-running on a settled link gave 0.0559% against 0.0639%, so the
+transient explains none of it.
+
+**The mechanism is now unknown, and that is the honest state.** Board TX drive
+should not influence what the board *receives* at all, yet it reproducibly
+does, and in the direction opposite to crosstalk. Both configurations are
+self-consistent across independent runs, so the effect is real even though no
+proposed mechanism survives.
+
+**Superseded hypothesis, kept because it was tested: TX-to-RX coupling.** All six TX outputs were
 raised to `SLEW FAST` / `DRIVE 16` earlier today. Faster edges and more drive
 current mean more simultaneous-switching noise, and RX and TX share bank 15.
 The board only transmits heavily when it is echoing, which is exactly when
@@ -372,7 +401,16 @@ this appears — idle-link monitoring shows `rx_bad` flat. If true, today's TX
 fix bought transmit quality at the cost of receive margin, and there is a
 trade-off to find rather than a free win.
 
-**The discriminating test needs a rebuild.** The obvious probe — load the
+**One thing every run agrees on:** the echo shortfall equals `rx_bad` almost
+exactly, at every configuration -- 22 vs 20, 64 vs 64, 56 vs 56, 28 vs 24.
+The frames that "do not come back" are the frames the board rejected on FCS,
+not frames `gem_echo` dropped while busy. That is now measured, not inferred.
+
+**Also worth recording: the TX fix is holding at enormous scale.** 216,000
+frames at the committed configuration with **zero** payload mismatches, plus
+200,000 more at `DRIVE 12`, also zero. B.5-TX-1 is not in doubt.
+
+**The original discriminating test, now run:** The obvious probe — load the
 receive path *without* the board transmitting — cannot be done with this
 bitstream, because `gem_echo` returns everything it accepts (`tx_ok` tracks
 `rx_ok` almost exactly). So the test is to rebuild at a lower `DRIVE` and/or
