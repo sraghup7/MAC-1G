@@ -251,7 +251,7 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 |---|---|
 | FPGA | AMD Artix-7 **XC7A35T**-2FGG484I (industrial, -2 speed) |
 | Vivado support | Free tier (Artix-7 has always been in WebPACK/Standard; still free after the 2026.1 licensing restructure) |
-| Ethernet | 1× 10/100/1000 port, **Micrel/Microchip KSZ9031RNX PHY, RGMII, wired to fabric I/O** |
+| Ethernet | 1× 10/100/1000 port, **JLSemi JL2121(D) PHY, RGMII, wired to fabric I/O** (A.2's B.5 correction — confirmed by MDIO PHY-ID `0x937c4032`; earlier revisions of this table said Micrel/Microchip KSZ9031RNX, which was an ALINX manual boilerplate error) |
 | Memory | 256 MB DDR3 (not needed for this project — nice for later ones) |
 | Other | HDMI in/out, USB-UART, MicroSD, 2× 40-pin expansion, JTAG programmer support |
 | Collateral | Schematic, pin assignments, and **Verilog demo projects including Ethernet** — a reference XDC for the RGMII pins is worth real hours |

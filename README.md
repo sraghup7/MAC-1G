@@ -1,13 +1,14 @@
 # `gem_mac` — a 1000BASE-T Ethernet MAC on an Artix-7
 
 A full-duplex 1 Gbps Ethernet MAC written from scratch in Verilog-2001, targeting
-an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's Micrel
-KSZ9031RNX PHY. No vendor MAC IP — the point is to build the thing, not to
+an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's JLSemi
+JL2121(D) PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
 **Status: Stages 1–7 complete; Stage 9's reproducibility check has passed and its
-known issues are consolidated (`docs/reports/stage9/`); the board is not yet in hand —
-Stage 8 bring-up is all that remains.** The MAC is
+known issues are consolidated (`docs/reports/stage9/`); Stage 8 bring-up is under
+way on real hardware — steps 1–4 and 7 pass, step 6 fails on a transmit-side
+defect (`docs/reports/stage9/known-issues.md` § B.5-TX-1).** The MAC is
 written, constrained, placed, routed and gated: `make bitstream` produces
 `build/gem_top.bit` behind nine refusing gates, and `make check` runs 29 of 29
 scenarios green against a reference model that was finished before the first
@@ -15,17 +16,27 @@ line of the RTL existed — including 600-frame random sweeps in both directions
 and a loopback that feeds the design's own transmit pins back to its receive
 pins across an independent clock.
 
-**One number on this page needs its caveat read, not skimmed.** Post-route
-timing is **WNS −3.109 ns**, and that is a *deliberate, fenced* state rather
-than a design that misses timing. The five RGMII receive input checks are
-waived: task 4e measured the routed deskew feedback path against the arc
-Vivado's ZHOLD model applies and proved those numbers are ~3.1 ns of tool
-artifact, not silicon. Everything else — TX, fabric, every other path group —
-closes positive, and gate 2 refuses on any violation outside those five named
-endpoints. The full reasoning, the fences, and the real slow-corner hold miss
-that was hiding *underneath* the artifact are below. **R20's receive half is
-signed off by derivation and closes on the bench, not in the tool** — bring-up
-step 5 is the authoritative check, and until it runs this is the honest state.
+**Post-route timing now closes outright: WNS +0.336 ns, WHS +0.033 ns, zero
+violating paths, and the task-4e RX waiver is not exercised at all.** That is a
+correction to what this page used to say, and the correction is the interesting
+part.
+
+This section previously reported **WNS −3.109 ns** and explained it as a
+*deliberate, fenced* state — five waived RGMII receive input checks that task 4e
+had measured as "~3.1 ns of tool artifact, not silicon". **That explanation was
+wrong.** B.5 bring-up found the RX capture edge was landing one whole 4 ns unit
+interval late, so the IDDR pair straddled an octet boundary and no frame was ever
+received. Correcting the capture phase (`rtl/gem_rx_mmcm.v`, `CLKOUT0_PHASE`
+−45 → −225) moved those five endpoints from −3.109 ns to **+0.891 ns — exactly
++4.000 ns, one unit interval.** Vivado had been reporting a real misalignment all
+along, and the waiver was masking it.
+
+The fences in `scripts/build.tcl` gate 2 are kept, because they cost nothing
+while nothing violates — but a violation on those five endpoints should now be
+read as a genuine defect, not re-waived. Full account:
+`docs/reports/stage9/known-issues.md` § B.5-RX-1. **R20's receive half is now
+confirmed on the bench** (step 4 passes, `rx_ok` advancing with every error
+counter at zero); what remains open is R14's transmit half, § B.5-TX-1.
 
 Stage 5 is integration, and two of its blocks are in. The **clock and reset
 module** (`rtl/gem_clk_rst.v`), which the specification had described as

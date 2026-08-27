@@ -18,6 +18,22 @@ schematic obtained third-hand (V-21).
 
 ---
 
+## The serial port in every command below
+
+Every command here writes `--port COM4`. **That is an example, not a fact about
+your board.** The port is whatever the USB-UART bridge enumerated as on the
+machine doing the bring-up; on the bench these notes were last run from it is
+**COM5** (Silicon Labs CP210x, `VID_10C4&PID_EA60`). Find yours with:
+
+```powershell
+Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'COM\d+' } | Select-Object Name
+```
+
+and substitute it throughout. A wrong port fails as a timeout or a refused
+open, which reads like a dead board.
+
+---
+
 ## Before power
 
 - [ ] **Add the `-2I` device pack to Vivado.** `scripts/part.tcl` targets
@@ -36,7 +52,34 @@ schematic obtained third-hand (V-21).
       `-1L` number.
 - [ ] Have ready: a USB cable for the JTAG programmer, a second for the UART, a
       Cat-5e or better cable, and a PC with a spare Ethernet port.
-- [ ] `pip install -r sw/host/requirements.txt`, and **Npcap** on Windows.
+- [ ] `pip install -r sw/host/requirements.txt`, and a packet driver on Windows
+      — **Npcap**, or a legacy **WinPcap** install, which also works (and is
+      what this bench has). See `sw/host/README.md`: Wireshark 4.6.8 refuses to
+      run on WinPcap, so installing it forces a choice between the two.
+
+---
+
+## The LEDs, and the off-by-one that has already cost two sessions
+
+**Every `led[N]` in this file is an RTL index. The board is silkscreened LED1
+to LED4. They differ by one, always:**
+
+| silkscreen | RTL | pin | means |
+|---|---|---|---|
+| **LED1** | `led[0]` | F19 | all clocks locked (step 2) |
+| **LED2** | `led[1]` | E21 | link up (step 3) |
+| **LED3** | `led[2]` | D20 | heartbeat, ~1.9 Hz (step 1) |
+| **LED4** | `led[3]` | C20 | sticky RX error (step 7) |
+
+Mapping is from `constrs/pins.xdc` and `Manuals/AX7035B_pinout_notes.md`, not
+from inference. `rtl/gem_top.v` drives them active-low (`assign led = ~{...}`),
+so a lit LED means the named condition is TRUE.
+
+The trap is specific and it has caught two separate bring-up sessions: **LED3
+blinks constantly and that is correct** — it is the heartbeat, `led[2]`. The
+error indicator step 7 asks about is **LED4** (`led[3]`), the one furthest along
+the row. Someone watching "LED3" for step 7 sees a blinking light and reports an
+anomaly that does not exist. Each checkbox below now names both.
 
 ---
 
@@ -70,16 +113,16 @@ one way this confirmed value could still be stale.
 
 Load `gem_top`.
 
-- [ ] **`led[0]` lights** — the MMCM has locked. This is the first thing the
+- [ ] **`led[0]` = LED1 lights** — the MMCM has locked. This is the first thing the
       design does and nothing else can work without it.
-- [ ] **`led[2]` blinks at about 1.9 Hz** — the heartbeat, which is a counter on
+- [ ] **`led[2]` = LED3 blinks at about 1.9 Hz** — the heartbeat, a counter on
       `tx_clk`. A stopped clock and wedged logic look identical on every other
       indicator; this distinguishes them.
 - [ ] Optionally confirm 125 MHz on `GTX_CLK` with a scope. (`make debug`'s
       ILA probes the RX pipeline, not this clock — see step 4 for where it
       does apply.)
 
-**If `led[0]` never lights:** the MMCM is not locking, which means `clk50` is not
+**If `led[0]` (LED1) never lights:** the MMCM is not locking, which means `clk50` is not
 arriving. Check Y18 and the oscillator before anything else — no logic in this
 design runs without it, and `tx_rst_n` is deliberately held until lock (B.1b).
 
@@ -102,7 +145,7 @@ python sw/host/gem_host.py monitor --port COM4
       value and traced it to the physical chip, not a misread; see A.2's B.5
       correction. What matters most either way is that it is neither
       `00000000` nor `ffffffff`: both mean nothing is answering.
-- [ ] Plug the cable into the PC. Within a few seconds **`led[1]` lights**,
+- [ ] Plug the cable into the PC. Within a few seconds **`led[1]` = LED2 lights**,
       `link=00000001`, and `speed=00000002` (1000 Mbps, Clause 22).
 
 **If no record arrives at all:** check the port and that it is 115200 8N1. If the
@@ -134,8 +177,8 @@ python sw/host/gem_host.py rx --port COM4 --iface Ethernet --count 100
 ```
 
 - [ ] The command prints `PASS step 4`.
-- [ ] `rx_bad`, `rx_runt`, `rx_over`, `rx_rxer` stay at zero, and **`led[3]`
-      stays dark**.
+- [ ] `rx_bad`, `rx_runt`, `rx_over`, `rx_rxer` stay at zero, and **`led[3]` =
+      LED4 stays dark**. (LED3 blinking is the heartbeat and is expected.)
 
 **`rx_ok` will not advance by exactly 100 unless the segment is isolated,** and
 the command does not expect it to. The board counts every frame that reaches it
@@ -248,16 +291,36 @@ the arithmetic. Only a *mismatch* is a failure.
 
 ## Step 7 — corruption and recovery
 
+**FIRST, ENABLE JUMBO FRAMES ON THE SENDING NIC, OR THIS STEP CANNOT PASS AND
+WILL LIE ABOUT WHY.** `GEM_MAX_FRAME_BYTES` is 1518, and a NIC with jumbo
+frames off caps a raw frame at 1514 + 4 octets of FCS = exactly 1518 — right at
+the limit, never above it. No frame such a NIC can transmit is oversize, so the
+1600-octet frames never reach the wire at all. **The failure mode is silent:**
+`rx_over` stays 0 and the run reads as a receive-path defect on the board. The
+tell is `rx_ok` advancing by exactly the number of *good* frames sent, which
+means the oversize ones never arrived. On Windows, in an **administrator**
+PowerShell (this is an adapter setting, reversible, and it bounces the link):
+
+```powershell
+Set-NetAdapterAdvancedProperty -Name Ethernet -DisplayName "Jumbo Frame" -DisplayValue "4088 Bytes"
+```
+
+Confirm `Get-NetAdapter -Name Ethernet` then reports an `MtuSize` well above
+1500 (4074 with the value above). Set it back to `"Disabled"` when bring-up is
+done. Then:
+
 ```bash
 python sw/host/gem_host.py corrupt --port COM4 --iface Ethernet
 ```
 
-- [ ] `rx_over` advances, and **`led[3]` lights** and stays lit.
+- [ ] `rx_over` advances, and **`led[3]` = LED4 lights** and stays lit. Watch
+      LED4, the last in the row — **not** LED3, which blinks as the heartbeat
+      throughout and has nothing to do with this step.
 - [ ] `rx_ok` still advances for the good frames sent afterwards — R10 is about
       recovery, and the receive path is specified to be ready again within 8
       cycles.
-- [ ] Press **KEY1** and confirm every counter returns to zero and `led[3]` goes
-      dark.
+- [ ] Press **KEY1** and confirm every counter returns to zero and `led[3]` =
+      LED4 goes dark.
 
 **Only one of R10's four error classes can be provoked from a PC.** A NIC
 computes the FCS in hardware and pads runts before transmitting, so bad-FCS and

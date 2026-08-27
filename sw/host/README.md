@@ -15,8 +15,28 @@ python gem_host.py soak    --port COM4 --hours 4                      # B.5 step
 ```
 
 `--iface` is the host's network interface (`Ethernet` on Windows, `eth0` or
-similar on Linux). Raw Ethernet needs **Npcap** on Windows or **root** on Linux.
-`--port` is the board's USB-UART, which enumerates as a Silicon Labs CP2102GM.
+similar on Linux). Raw Ethernet needs **root** on Linux, and on Windows a packet
+driver — **Npcap**, or a legacy **WinPcap** install, which also works and is
+what the bench these notes were last run from actually has (`npf` service
+running, `wpcap.dll` in `System32`, no Npcap present). Worth knowing because
+**Wireshark 4.6.8 refuses to run on WinPcap** and asks you to uninstall it; if
+you install Wireshark to capture alongside these tools, expect to have to
+choose, and expect Scapy's path to change under you.
+
+`--port` is the board's USB-UART, which enumerates as a Silicon Labs CP210x.
+**`COM4` above is an example, not a fact about your board** — it is whatever the
+bridge enumerated as on your machine (COM5 on the bench these notes were last
+run from). Find it with:
+
+```powershell
+Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'COM\d+' } | Select-Object Name
+```
+
+**`corrupt` (step 7) additionally needs jumbo frames enabled on the sending
+NIC.** `GEM_MAX_FRAME_BYTES` is 1518 and a non-jumbo NIC caps a raw frame at
+1514 + 4 octets of FCS = exactly 1518, so nothing it can send is ever oversize
+and the frames never reach the wire. It fails silently — `rx_over` stays 0 and
+it reads as a board defect. See `bringup_checklist.md` step 7 for the command.
 
 ---
 

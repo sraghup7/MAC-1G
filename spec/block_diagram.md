@@ -99,7 +99,7 @@ flowchart LR
         FIFO["cut-through, trailing\ngood/bad verdict on tuser"]
     end
 
-    PHY["KSZ9031RNX PHY\n(RGMII)"]
+    PHY["JL2121(D) PHY\n(RGMII)"]
 
     ARB --> ODDR_TX --> PHY
     PHY --> IDDR_RX
@@ -114,7 +114,7 @@ flowchart LR
 `tx_rst_n & rx_mmcm_locked` — the deskew MMCM sits on a recovered clock that
 does not self-recover after a link drop, so a clk50-clocked supervisor re-pulses
 its reset until it locks, and `rx_path_rst_n` covers the destination half of every
-crossing out of the RX domain. PHY `RST_N` is held low ≥ 10 ms (KSZ9031RNX `tSR`)
+crossing out of the RX domain. PHY `RST_N` is held low ≥ 10 ms (JL2121(D) DS009 §4.7.1 `t1`/`t3`)
 before MDIO is touched.
 All of that is `gem_clk_rst`, built in Stage 5 and drawn above; `gem_mac` takes the
 four signals as inputs and contains no reset synchroniser of its own.
