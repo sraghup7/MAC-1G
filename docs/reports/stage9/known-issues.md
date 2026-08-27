@@ -207,9 +207,34 @@ either the corruption happens *before* CRC generation (so the FCS is valid over
 corrupted data) or the NIC is passing frames whose FCS is bad. The nibble-level
 signature says the former is implausible — fabric logic does not produce
 "falling nibble takes the following rising nibble" — but that has not been
-proven, and it cannot be with the tooling on this machine: **Wireshark is not
-installed**, and Windows NICs do not hand the FCS to a capture. Settling it is
-also exactly what step 5 asks for, so step 5 and this item close together.
+proven, and **it cannot be proven on this host at all.** Wireshark was installed
+to try (`tshark 4.6.8`, 2026-08-27) and two independent things block it:
+
+1. Wireshark 4.6.8 refuses to run on WinPcap — it requires Npcap and instructs
+   the user to uninstall WinPcap. WinPcap (`npf`, running) is what Scapy and
+   therefore `gem_host.py` currently use, which also finally explains the
+   "Scapy worked without Npcap, unclear why" note from an earlier session.
+   Swapping the driver risks the one path that currently passes step 4.
+2. More fundamentally, **the NIC strips the FCS in hardware.** It is a Realtek
+   PCIe GbE Family Controller and its advanced properties carry no CRC/FCS
+   retention option, so no capture stack — Npcap included — can ever see the
+   FCS. This is a property of the adapter, not of the software.
+
+So step 5's "Wireshark reports the FCS as correct" criterion is **not
+achievable on this bench** and should not be left looking merely un-attempted.
+Closing it needs a different adapter (one exposing a keep-CRC option), a second
+FPGA, or a traffic generator. Its other two criteria — frames from the board
+appear, and a frame compares byte for byte — are already met by
+`gem_host.py echo`, which is how B.5-TX-1 was found in the first place.
+
+Note this leaves a genuine contradiction on the record rather than resolving
+it: the nibble signature says the corruption is at the pins, *after* CRC
+generation, so the FCS should be wrong and a NIC should drop those frames —
+yet they arrive. Either the adapter passes bad-FCS frames while WinPcap has it
+in promiscuous mode, or the corruption precedes CRC generation and the
+signature is misleading. **The `CLKOUT1_PHASE` sweep below settles this without
+needing to see an FCS at all:** if the mismatch rate moves with TX clock phase,
+the corruption is at the pins and the first horn is right.
 
 **The discriminating experiment, before any fix:** sweep
 `rtl/gem_mmcm.v`'s `CLKOUT1_PHASE` (currently `+70.000`, a derived value — see
