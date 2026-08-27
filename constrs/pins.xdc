@@ -3,25 +3,24 @@
 # the bottom of this file, which lives here rather than in a separate file
 # because it is a board-geometry statement like the pins themselves.
 #
-# Source: ALINX AX7035B User Manual (manualslib.com/manual/2994570, ALINX's
-# own product page confirms the same board), and — for the pins the manual
-# leaves in schematic figures — the board schematic itself and ALINX's own
-# demo constraints. Every pin below has been cross-checked against the
+# Source: the real ALINX AX7035B User Manual, now in hand at
+# Manuals/AX7035B_UG.pdf (Rev 1.0, 33 pages) — superseding the earlier
+# ManualsLib text-extract-plus-third-party-mirror reconstruction this file
+# used to cite. Every pin below has been cross-checked against the
 # XC7A35T-2FGG484I package database in Vivado (bank assignments noted), not
 # just copied from a document. Provenance and the corroboration argument are
-# in Manuals/AX7035B_pinout_notes.md; V-21 records how it was settled.
+# in Manuals/AX7035B_pinout_notes.md; V-21 records how it was settled. All
+# fifteen RGMII/MDIO pins and both UART pins below were re-verified directly
+# against the real manual's tables (pages 14-15, 22-23) and match exactly —
+# nothing here needed correcting when the real PDF arrived.
 #
-# Voltage: manual Part 4 "FPGA power supply system" states BANK34 (DDR3) is
-# 1.5V and "the voltage of other BANK is 3.3V"; BANK16 is LDO-supplied and
-# "can be changed by replacing the LDO chip" but the manual gives no evidence
-# the board ships with anything other than the default 3.3V. ASSUMPTION,
-# not yet confirmed against the physical board — the schematic labels the bank
-# but supplies it from the power tree rather than annotating a voltage, and
-# ALINX's own demos constrain these pins LVCMOS33, which corroborates without
-# proving. Re-check (e.g. probe the LDO output or read back IO after program)
-# at first bring-up if LEDs don't light as expected. Same caution as A.2's
-# PHY-identity correction in the spec: trust the physical board over any
-# document the moment they disagree.
+# Voltage: manual Part 4 "FPGA power supply system", page 6-7, states BANK34
+# (DDR3) is 1.5V and "the voltage of other BANK is 3.3V"; BANK16 is supplied
+# by a dedicated LDO, SPX3819M5-3.3 (a fixed-3.3V part by its own part
+# number), which "can be changed by replacing the LDO chip" but ships as
+# 3.3V. **Confirmed**, not an assumption — this used to be inferred from a
+# general rule and ALINX demo constraints alone; the real manual states it
+# for BANK16 specifically and names the populated LDO's part number.
 
 #############################################################################
 # Clock and reset
@@ -40,14 +39,20 @@ set_property PACKAGE_PIN  M13 [get_ports key_clear_n]
 set_property IOSTANDARD   LVCMOS33 [get_ports key_clear_n]
 
 #############################################################################
-# RGMII to the KSZ9031RNX — all bank 15
+# RGMII to the JL2121(D) — all bank 15
 #############################################################################
 #
 # The nibble order here is the design's, not a convention to be second-guessed:
-# rgmii_txd[0] carries TXD0. The RX side's electrical timing depends on the
-# PHY's 1.2 ns RX_CLK delay, which is a datasheet default requiring no MDIO
-# write (B.1b) — the I/O DELAY constraints that check all of this belong to
-# Stage 6 and are deliberately not here yet (V-2).
+# rgmii_txd[0] carries TXD0. This section was originally written for a
+# KSZ9031RNX per an earlier (mistaken) reading of the manual — see A.2's B.5
+# correction in spec/PROJECT_SPEC.md. The physical chip is a JLSemi
+# JL2121(D); its RX/TX clock delay is set by the RXDLY/TXDLY strap pins, both
+# confirmed populated to add 2 ns (manual Table 8-1, Manuals/AX7035B_UG.pdf
+# page 14) — not the 1.2 ns MDIO-transparent default this comment used to
+# claim. The I/O DELAY constraints that account for this belong to Stage 6
+# and are deliberately not here yet (V-2); their numeric derivation still
+# needs redoing against the JL2121(D)'s own AC timing (datasheet Ch. 4.7)
+# with these confirmed 2 ns delays as input.
 
 set_property PACKAGE_PIN  L14 [get_ports rgmii_gtx_clk]
 set_property PACKAGE_PIN  J21 [get_ports {rgmii_txd[0]}]
@@ -81,8 +86,10 @@ set_property IOSTANDARD   LVCMOS33 [get_ports mdc]
 set_property PACKAGE_PIN  K16 [get_ports mdio]
 set_property IOSTANDARD   LVCMOS33 [get_ports mdio]
 
-# E1_RESET. Held low for >= 10 ms after power-up by gem_clk_rst (KSZ9031RNX
-# tSR); the pin is active low and the PHY must not be spoken to before it rises.
+# E1_RESET. Held low for >= 10 ms after power-up by gem_clk_rst (sourced to
+# the KSZ9031RNX's tSR — see A.2's B.5 correction; the JL2121(D)'s own reset
+# timing is not yet checked against this figure); the pin is active low and
+# the PHY must not be spoken to before it rises.
 set_property PACKAGE_PIN  L15 [get_ports phy_rst_n]
 set_property IOSTANDARD   LVCMOS33 [get_ports phy_rst_n]
 
@@ -97,7 +104,7 @@ set_property PACKAGE_PIN  G16 [get_ports uart_tx]
 set_property IOSTANDARD   LVCMOS33 [get_ports uart_tx]
 
 #############################################################################
-# User LEDs LED1-LED4 — bank 16, 3.3V (assumed, see note above)
+# User LEDs LED1-LED4 — bank 16, 3.3V (confirmed, see note above)
 #############################################################################
 #
 # Active low: driving a pin low lights its LED, which gem_top inverts once.

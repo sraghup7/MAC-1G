@@ -56,11 +56,13 @@ retargeted the default — `TOP=skeleton_top` is what this step needs instead.)
 - [ ] JTAG enumerates and Vivado's hardware manager sees the part.
 - [ ] The blinker blinks.
 
-**If the LEDs never light:** the first suspect is bank 16's supply voltage.
-`constrs/pins.xdc` assumes 3.3 V for bank 16 on the manual's general rule; the
-manual also says that bank is LDO-supplied and *"can be changed by replacing the
-LDO chip"*. Probe the LDO output before suspecting anything in the design. This
-is the only assumption in the pin constraints that the schematic did not settle.
+**If the LEDs never light:** the first suspect is bank 16's supply voltage,
+though this is now confirmed rather than assumed — the real manual
+(`Manuals/AX7035B_UG.pdf`) names the populated LDO for bank 16 directly
+(SPX3819M5-3.3, a fixed 3.3 V part) rather than leaving it to the general
+3.3 V rule. If the LEDs still don't light, probe that LDO's output before
+suspecting anything in the design; a wrong marking or a rework would be the
+one way this confirmed value could still be stale.
 
 ---
 
@@ -114,7 +116,11 @@ held low for 10 ms after power-up by design (sourced to the KSZ9031RNX's tSR,
 now known to be the wrong chip's datasheet — see A.2's B.5 correction; the
 JL2121(D)'s own reset-timing figure is not yet checked, so 10 ms is a
 plausible margin rather than a confirmed one) — if that pin is wrong the PHY
-never comes out of reset. Check `phy_rst_n` on **L15**.
+never comes out of reset. Check `phy_rst_n` on **L15**. `PHY_ADDR` should not
+be the cause: it is now `5'd1`, confirmed against the real manual's strap
+table (`Manuals/AX7035B_UG.pdf` Table 8-1), and even the old guessed default
+of 0 worked, because the JL2121(D) treats address 0 as a standing broadcast
+address regardless of its strap.
 
 **If the link comes up at 100 Mbps:** the design does not implement 10/100
 fallback — R13 is 1000BASE-T only, and 10/100 is a stated non-goal (B.7). Check
@@ -139,19 +145,22 @@ trusted generator, and at this point the board is not yet a trusted sink.
 RGMII receive nibble mapping or the PHY's RX clock delay. B.1b assumed the
 KSZ9031RNX's 1.2 ns default `RX_CLK` delay with no MDIO write required — the
 board's actual chip is a JL2121(D) (A.2's B.5 correction), which delays
-`RX_CLK` via the `RXDLY` **strap pin** instead, adding a fixed 0 or 2 ns
-depending on how it is populated; the delay value itself is therefore
-unconfirmed until the schematic is checked. `gem_iddr`'s mapping was corrected
-for the KSZ9031RNX case (V-17) — on hardware a wrong mapping means the SFD
-reads as `0x5D` instead of `0xD5` and no frame is ever found. Nothing in
-simulation can see this, which is why it is called out here.
+`RX_CLK` via the `RXDLY` **strap pin** instead. The real manual
+(`Manuals/AX7035B_UG.pdf` Table 8-1) confirms this board's strap adds
+**2 ns**, not 0 — a concrete number now, not an unconfirmed one, though it
+has not yet been fed into a re-derived RGMII timing budget (A.2's B.5
+correction, `Documents/RGMII I-O Timing Derivation.md`). `gem_iddr`'s mapping
+was corrected for the KSZ9031RNX case (V-17) — on hardware a wrong mapping
+means the SFD reads as `0x5D` instead of `0xD5` and no frame is ever found.
+Nothing in simulation can see this, which is why it is called out here.
 
 **If `rx_ok` advances but the error counters do too:** the data is arriving and
 being corrupted, which points at skew rather than mapping. **There is no MDIO
 pad-skew register on this chip** (the MMD `2h`/register `8h` path assumed the
-KSZ9031RNX) — the only lever is the `RXDLY`/`TXDLY` strap pins, which are fixed
-at board population and not adjustable from bring-up software. Confirm the
-strap state from the schematic before doubting the design.
+KSZ9031RNX) — the only lever is the `RXDLY`/`TXDLY` strap pins, fixed at board
+population (both confirmed 2 ns from the real manual, above) and not
+adjustable from bring-up software. There is no rework fallback to reach for
+here without a re-derived timing budget behind it — see the note above.
 
 **To see which of these it is rather than guess:** `make debug` builds
 `build/gem_top_debug.bit` and `.ltx` with an ILA on the RX pipeline — the
@@ -193,10 +202,14 @@ document's escalation path (`Documents/RGMII I-O Timing Derivation.md`,
 section **"If 58 ps proves insufficient on the bench"**) was written for the
 KSZ9031RNX's MMD `2h`/register `8h` pad-skew register, reached over MDIO — B.5
 found the physical chip is a JL2121(D) (A.2's correction), which has **no such
-register**. Its RGMII clock delay is set by `RXDLY`/`TXDLY` strap pins, fixed
-at board population. If 58 ps proves insufficient on this board, the fallback
-is a hardware rework of those straps, not an MDIO write — confirm the strap
-state from the schematic before planning anything else.
+register**. Its RGMII clock delay is set by `RXDLY`/`TXDLY` strap pins, both
+confirmed populated to add 2 ns (`Manuals/AX7035B_UG.pdf` Table 8-1, not a
+schematic pull any more). If 58 ps proves insufficient on this board, the
+fallback is a hardware rework of those straps to a different configuration,
+not an MDIO write — and the 58 ps figure itself was derived assuming the
+KSZ9031RNX's 1.2 ns default, not this board's confirmed 2 ns, so re-deriving
+the RGMII timing budget from the JL2121(D)'s own datasheet (A.2's B.5
+correction) comes before planning any rework.
 
 ---
 
@@ -279,4 +292,4 @@ than a coverage gap, in `docs/reports/stage9/known-issues.md`:
 | **V-2** | R14's 1.2222 ns `GTX_CLK` skew is an I/O timing property; simulation passes at any phase, and post-route static timing clears it by only 58 ps | step 5, with a scope |
 | **V-6** | The golden CRC has never been checked against a real capture | step 5, in Wireshark |
 | **V-22** | Three of R10's four RX error classes cannot be provoked from a PC — only oversize reaches the wire malformed | not scoped to any step; needs a second transmitter |
-| Bank 16 VCCIO | Assumed 3.3 V from the manual's general rule; the schematic labels the bank but supplies it from the power tree | step 1, if the LEDs behave |
+| **A.2 (B.5)** | The board's PHY is a JL2121(D), not the KSZ9031RNX B.1b's RGMII timing budget was derived from; the strap-confirmed 2 ns RXDLY/TXDLY delays and PHY address 1 are fixed in the design, but the numeric timing budget itself is not yet re-derived from the JL2121(D)'s own datasheet | gates trusting R14/R20's margin numbers and the RX deskew MMCM's phase target — not scoped to a single step |

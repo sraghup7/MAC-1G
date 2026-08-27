@@ -34,6 +34,18 @@
 // RTL comment derives from the datasheet is thereby executable: change
 // either the derivation or this constant and the test says so.
 //
+// Correction (B.5 bring-up, 2026-08-27): the KSZ9031RNX premise above is
+// sourced to the wrong chip -- see spec/PROJECT_SPEC.md A.2's B.5
+// correction. The board's JL2121(D) delays RX_CLK via a strap pin, confirmed
+// populated for +2 ns (Manuals/AX7035B_UG.pdf Table 8-1), not a
+// register-adjustable ~1.2 ns default. Q1/Q2's qualitative pairing (rising
+// edge lands in the low nibble) is unaffected by the exact ns value as long
+// as SKEW stays inside the valid capture window, so this test still exercises
+// the right branch -- but SKEW itself, and whether 1.0-2.0 ns is even the
+// right window for this chip, are KSZ9031RNX-sourced and gate on the same
+// RGMII AC-timing re-derivation (JL2121(D) datasheet Chapter 4.7) as
+// R14/R20. Not changed here without that derivation behind it.
+//
 // Self-contained by construction: it shares no package with the other
 // testbenches because it compiles into a different library than they do.
 // Output format matches gem_tb_pkg's PASS/FAIL lines so scripts/run_sim.py

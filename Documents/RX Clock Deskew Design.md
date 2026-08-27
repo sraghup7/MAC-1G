@@ -15,9 +15,13 @@ would notice.*
 > is a hardware strap pin (`RXDLY`, pin 25) adding a fixed 0 or 2 ns, latched
 > at reset. The MMCM topology, reset supervisor, and CDC safety analysis below
 > do not depend on the numeric value of that delay and are unaffected; the
-> **capture-clock phase trim's centring target does**, and is unconfirmed until
-> the strap state is read from the AX7035B schematic and the JL2121(D)'s own
-> RGMII timing figures are substituted for the KSZ9031RNX ones cited here.
+> **capture-clock phase trim's centring target does. The strap state is now
+> known** — the real AX7035B manual (`Manuals/AX7035B_UG.pdf` Table 8-1,
+> obtained after this correction was first written) confirms `RXDLY` is
+> populated to add its **2 ns** option, not 0 ns. What remains is substituting
+> that 2 ns and the JL2121(D)'s own RGMII timing figures (datasheet Chapter
+> 4.7) for the KSZ9031RNX ones cited here — the re-derivation itself, not the
+> input it needs.
 
 *Task 4c of Stage 6 part 2. Task 4d implements what this document decides.*
 

@@ -264,9 +264,11 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 > against the physical board** the moment it arrives (Stage 2 bring-up step 1) — board
 > revisions occasionally swap PHY vendors without renaming the SKU.
 
-> **Correction (from B.5 bring-up, 2026-08-27): the manual was wrong too. The physical
-> chip is a JLSemi JL2121(D), not a KSZ9031RNX.** The manual's own text said
-> KSZ9031RNX; the silkscreen on the board's actual Ethernet PHY IC reads
+> **Correction (from B.5 bring-up, 2026-08-27): the manual was misread, not wrong.
+> The physical chip is a JLSemi JL2121(D), not a KSZ9031RNX.** The
+> pre-bring-up citation of "the ALINX manual states KSZ9031RNX" traced to a
+> ManualsLib text extraction (the real PDF was gated behind sign-up at the
+> time); the silkscreen on the board's actual Ethernet PHY IC reads
 > `JL2121 N040I 042MA9CF`, and B.5 step 3's MDIO read confirms it with certainty,
 > not just marking-matching: `phyid` came back `0x937c4032`, and the JLSemi
 > datasheet (`DS009-JL2121(D)-v1.09-Preliminary`, jlsemi.com) gives PHYIDR1's
@@ -274,6 +276,16 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 > silicon revision — `0x4032` is exactly revision 2. Neither the KSZ9031RNX
 > assumption nor its A.2 predecessor (RTL8211) was ever checked this way; this
 > one is, and closes the identity question completely.
+>
+> **The real PDF is now in hand** (`Manuals/AX7035B_UG.pdf`, Rev 1.0, 33
+> pages) and explains exactly how the KSZ9031RNX claim got in: its Ethernet
+> section (page 13) names the chip "JL2121-N040I" twice, with one sentence
+> between them reading "KSZ9031RNX supports MDI/MDX auto-negotiation..." — a
+> leftover from ALINX reusing boilerplate text from a different board's
+> manual. Whoever first read the manual (this project, and apparently
+> ManualsLib's own listing) picked up that one out-of-place sentence and
+> missed the correct name stated twice around it. Full account in
+> `Manuals/AX7035B_pinout_notes.md`.
 >
 > **What this does and does not invalidate.** BMSR, PHYIDR1, PHYIDR2 and the
 > other Clause 22 basic registers (0x0–0xF) sit at the same standard addresses
@@ -300,15 +312,25 @@ This project needs a **gigabit Ethernet PHY whose data pins route to FPGA fabric
 >   register-access mechanism at all: `RXDLY`/`TXDLY` (pins 25/24) are
 >   **hardware strap pins**, each adding a fixed 0 or 2 ns, sampled once at
 >   reset — not written at runtime. That escalation path does not exist on
->   this chip. **Not fixed here** — the strap pins' as-populated state on the
->   AX7035B is a schematic question this repository cannot answer without the
->   board's schematic in hand; see `docs/reports/stage9/known-issues.md`.
+>   this chip. **The strap states are now confirmed, not a schematic
+>   unknown**: `AX7035B_UG.pdf` Table 8-1 states both `RXDLY` and `TXDLY` are
+>   populated to add their 2 ns option (not left at 0 ns). This is the input
+>   the RGMII timing re-derivation below needs; the re-derivation itself is
+>   still not done.
+> - **`PHY_ADDR` is confirmed too, and was wrong.** The same table gives the
+>   `ADR0`/`ADR1`/`ADR2` strap pins as "PHY Address 001" — decimal 1, not the
+>   0 `rtl/gem_mdio.v` defaulted to (documented there as a guess). **Fixed** —
+>   the default is now `PHY_ADDR = 5'd1`. B.5's original read at address 0
+>   worked anyway because the JL2121(D) datasheet documents address 0 as a
+>   standing broadcast address the PHY answers regardless of its strap,
+>   unless disabled over MDIO (nothing here does); 0 was never actually
+>   selecting the strapped PHY.
 >
-> Every other KSZ9031RNX-sourced number in this document (the 1.2 ns RX
-> default delay used to centre the deskew MMCM's phase, the RGMII timing
+> Every other KSZ9031RNX-sourced *numeric* claim in this document (the 1.2 ns
+> RX default delay used to centre the deskew MMCM's phase, the RGMII timing
 > budget's `TsetupR`/`TholdR`/`TsetupT`/`TholdT` window, the PHY reset hold
 > time `tSR`) is a KSZ9031RNX datasheet figure applied to a JL2121(D) board and
-> is now **unconfirmed pending a JL2121(D)-specific re-derivation** — not
+> is still **unconfirmed pending a JL2121(D)-specific re-derivation** — not
 > necessarily wrong, since the RGMII v2.0 windows both chips claim to meet are
 > the same standard's numbers, but sourced to the wrong datasheet until checked
 > against the JL2121(D)'s own AC specifications (Chapter 4.7, in

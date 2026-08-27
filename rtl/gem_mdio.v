@@ -65,13 +65,17 @@
 // turn that into an ordinary resolved signal, and cost 16 ns of visibility
 // latency that the margins above already absorb.
 //
-// WHAT CANNOT BE CONFIRMED WITHOUT THE BOARD, stated rather than assumed:
-//
-//   * PHY_ADDR. The strap-determined address on the AX7035B is not in the
-//     pinout notes in this repository. The default of 0 is the common case and
-//     is a parameter precisely because it is a guess. It is also now
-//     answerable on the bench without a rebuild: sweep the address over the
-//     request port and watch phy_id stop reading as all-ones.
+// PHY_ADDR IS 1, NOT 0 -- confirmed from the ALINX AX7035B user manual
+// (Manuals/AX7035B_UG.pdf, Table 8-1 "PHY Specific Configuration Default
+// Value"), which states the ADR0/ADR1/ADR2 strap pins (RXD3/RXC/RXCTL) give
+// "PHY Address 001". The B.5 read that first confirmed the JL2121(D)'s
+// identity used this module's old default of 0 and still got a valid
+// response -- not because the strap guess was right, but because the
+// JL2121(D) datasheet's own strap table says address 0 doubles as a
+// broadcast address the PHY answers regardless of its strapped address,
+// unless that behaviour is disabled over MDIO (which nothing here does). So
+// PHY_ADDR = 0 happened to work by broadcast, not by being correct; the
+// default below is now the confirmed strap value instead of relying on that.
 //
 // THE PHY IS A JLSemi JL2121(D), NOT A KSZ9031RNX -- A.2's B.5 bring-up
 // correction, and it changes register 0x1F's meaning, not just its bit
@@ -128,7 +132,7 @@
 `timescale 1ns / 1ps
 
 module gem_mdio #(
-    parameter [4:0]   PHY_ADDR = 5'd0,
+    parameter [4:0]   PHY_ADDR = 5'd1,   // AX7035B strap (see header note), not a guess
     parameter integer MDC_HALF = 32,       // tx_clk cycles per MDC half period
     parameter integer POLL_GAP = 4096      // tx_clk cycles between polls
 ) (

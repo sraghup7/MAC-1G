@@ -264,12 +264,16 @@ silicon. The bench is still the final word, which is V-2's remaining half.
 > 25) and `TXDLY` (pin 24) are **hardware strap pins**, each adding a fixed 0
 > or 2 ns to `RXC`/`TXC` respectively, sampled once at reset -- not written at
 > runtime, not steppable, and not reachable from `gem_mdio.v`'s request port
-> at all. If 58 ps proves insufficient on this board, the fallback is a
-> board-level rework of a strap resistor, not an MDIO transaction, and it
-> needs the AX7035B schematic (not yet in this repository) to know which pin
-> state is currently populated before anything about it can be planned. The
-> rest of this section is kept for its record of what was tried against the
-> wrong chip, not as a procedure to execute.
+> at all. **Both strap states are now known**, not a schematic unknown: the
+> real AX7035B manual (`Manuals/AX7035B_UG.pdf` Table 8-1, obtained after
+> this correction was first written) confirms `RXDLY` and `TXDLY` are both
+> populated to add their 2 ns option. If 58 ps proves insufficient on this
+> board, the fallback is a board-level rework of a strap resistor to a
+> different configuration, not an MDIO transaction -- and the 58 ps figure
+> itself needs re-deriving against the JL2121(D)'s own AC timing (datasheet
+> Chapter 4.7) with these confirmed 2 ns delays before it can be trusted as
+> the number to beat. The rest of this section is kept for its record of what
+> was tried against the wrong chip, not as a procedure to execute.
 
 This is the fallback B.1b already names as R14's escape hatch. **It is
 documented here, not implemented.** Nothing in the design drives it today, and
