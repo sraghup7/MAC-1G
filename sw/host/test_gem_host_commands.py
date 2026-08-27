@@ -31,7 +31,11 @@ import gem_records as gr
 
 
 def _args(**kwargs) -> types.SimpleNamespace:
-    defaults = dict(port="COM_FAKE", iface="fake0", src="02:00:00:00:00:02")
+    # control/window are cmd_rx's two window lengths, in status records. One
+    # each here keeps the scripted record sequences below short; the real
+    # defaults are 4 and 3, and nothing in cmd_rx cares which.
+    defaults = dict(port="COM_FAKE", iface="fake0", src="02:00:00:00:00:02",
+                    control=1, window=1)
     defaults.update(kwargs)
     return types.SimpleNamespace(**defaults)
 
@@ -53,6 +57,12 @@ class FakeStatusPort:
         self._records = list(records)
         self._i = 0
         self.closed = False
+
+    @property
+    def consumed(self) -> int:
+        """How many records the caller actually read -- which is how long its
+        window was, since the board prints one a second."""
+        return self._i
 
     def read_record(self, tries: int = 4) -> gr.Record:
         if self._i >= len(self._records):
@@ -135,8 +145,9 @@ def _patch_port(port: FakeStatusPort):
 
 
 def _patch_sleep():
-    # cmd_rx and cmd_corrupt each sleep 2.5s for the second status record to
-    # arrive. Real hardware needs that; a fake board answers instantly.
+    # cmd_corrupt sleeps 2.5s for the second status record to arrive. Real
+    # hardware needs that; a fake board answers instantly. cmd_rx counts
+    # records instead of sleeping, so it does not need this.
     return mock.patch.object(gh.time, "sleep", lambda *_a: None)
 
 
@@ -144,39 +155,90 @@ def _patch_sleep():
 # cmd_rx
 # --------------------------------------------------------------------------
 class TestCmdRx(unittest.TestCase):
+    """cmd_rx reads three records at --control 1 --window 1: the start of the
+    control window, its end (nothing has been sent yet, so the advance between
+    those two is the segment's own traffic), and the end of the test window.
+    """
 
-    def test_clean_run_passes(self):
-        port = FakeStatusPort([_record(rx_ok=0), _record(rx_ok=10)])
-        with _patch_port(port), _patch_scapy(FakeScapy()), _patch_sleep():
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc = gh.cmd_rx(_args(count=10, size=64))
+    def _run(self, records, **kwargs):
+        port = FakeStatusPort(records)
+        out = io.StringIO()
+        with _patch_port(port), _patch_scapy(FakeScapy()):
+            with contextlib.redirect_stdout(out):
+                rc = gh.cmd_rx(_args(count=10, size=64, **kwargs))
+        return rc, out.getvalue(), port
+
+    def test_clean_run_on_a_quiet_link_passes(self):
+        rc, _out, port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=0), _record(rx_ok=10)])
         self.assertEqual(rc, 0)
         self.assertTrue(port.closed)
 
     def test_dropped_frame_fails(self):
         # The board only counted 9 of the 10 frames sent.
-        port = FakeStatusPort([_record(rx_ok=0), _record(rx_ok=9)])
-        with _patch_port(port), _patch_scapy(FakeScapy()), _patch_sleep():
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                rc = gh.cmd_rx(_args(count=10, size=64))
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=0), _record(rx_ok=9)])
         self.assertEqual(rc, 1)
-        self.assertIn("rx_ok advanced by 9", out.getvalue())
+        self.assertIn("rx_ok advanced by 9", out)
 
     def test_a_misclassified_frame_fails_even_with_the_right_count(self):
-        port = FakeStatusPort([_record(rx_ok=0, rx_bad=0), _record(rx_ok=10, rx_bad=1)])
-        with _patch_port(port), _patch_scapy(FakeScapy()), _patch_sleep():
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc = gh.cmd_rx(_args(count=10, size=64))
+        rc, _out, _port = self._run([_record(rx_ok=0, rx_bad=0),
+                                     _record(rx_ok=0, rx_bad=0),
+                                     _record(rx_ok=10, rx_bad=1)])
         self.assertEqual(rc, 1)
+
+    def test_a_quiet_control_window_keeps_the_check_exact(self):
+        # Nothing moved with nothing sent, so one extra frame is still a FAIL:
+        # the allowance is measured, and on this link it measures zero.
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=0), _record(rx_ok=11)])
+        self.assertEqual(rc, 1)
+        self.assertIn("plus at most 0", out)
+
+    def test_ambient_traffic_measured_in_the_control_window_is_allowed_for(self):
+        # Four frames arrived in the control second with nothing sent, so a
+        # window carrying the 10 sent plus three more is the same segment
+        # behaving the same way -- this is the run that used to FAIL.
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=4), _record(rx_ok=17)])
+        self.assertEqual(rc, 0)
+        self.assertIn("3 frame(s) beyond the 10 sent", out)
+
+    def test_more_than_the_measured_ambient_rate_explains_still_fails(self):
+        # Same 4-per-second control window, but 40 frames beyond the 10 sent.
+        # An allowance derived from the measured rate does not cover that, so
+        # duplicate counting is still caught.
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=4), _record(rx_ok=54)])
+        self.assertEqual(rc, 1)
+        self.assertIn("rx_ok advanced by 50", out)
+
+    def test_a_drop_fails_even_on_a_busy_segment(self):
+        # The allowance is one-sided: ambient traffic only ever adds, so rx_ok
+        # short of the count sent is a drop no matter how loud the segment is.
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=4), _record(rx_ok=13)])
+        self.assertEqual(rc, 1)
+        self.assertIn("were not counted", out)
+
+    def test_the_window_is_counted_in_records_not_seconds_slept(self):
+        # --window 3 must consume three records after the control window, so
+        # the delta spans a known three board-seconds. A cmd_rx that slept and
+        # read one record would leave two unread and pass this by accident, so
+        # the assertion is on the records consumed, not only the verdict.
+        records = [_record(rx_ok=0), _record(rx_ok=0),
+                   _record(rx_ok=4), _record(rx_ok=7), _record(rx_ok=10)]
+        rc, _out, port = self._run(records, window=3)
+        self.assertEqual(rc, 0)
+        self.assertEqual(port.consumed, 5)
 
     def test_the_wiring_itself_can_fail(self):
         # Proof this test can catch a real regression: plant a defect in the
         # wiring (compare against the wrong field) and confirm the clean-run
         # test above would have gone red, not green regardless of the board.
-        port = FakeStatusPort([_record(rx_ok=0), _record(rx_ok=10)])
-        broken_evaluate_rx = lambda d, count: (False, ["planted defect"])
-        with _patch_port(port), _patch_scapy(FakeScapy()), _patch_sleep(), \
+        port = FakeStatusPort([_record(rx_ok=0), _record(rx_ok=0), _record(rx_ok=10)])
+        broken_evaluate_rx = lambda d, count, allowance=0: (False, ["planted defect"])
+        with _patch_port(port), _patch_scapy(FakeScapy()), \
              mock.patch.object(gh, "evaluate_rx", broken_evaluate_rx):
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = gh.cmd_rx(_args(count=10, size=64))

@@ -103,9 +103,11 @@ Rebuilt, reprogrammed, re-captured. All of it held:
   same root cause, and it is gone.
 - The 101st frame is ambient LAN traffic, confirmed by a control run: with
   nothing sent, `rx_ok` still climbs 1–2 per interval while every error
-  counter stays at zero. `gem_host.py rx` asserts exact equality, so it prints
-  `FAIL rx_ok advanced by 101, expected 100` — **a property of the assertion
-  on a live LAN, not of the receive path.** See the open item below.
+  counter stays at zero. `gem_host.py rx` asserted exact equality at the time,
+  so it printed `FAIL rx_ok advanced by 101, expected 100` — **a property of
+  the assertion on a live LAN, not of the receive path.** The assertion has
+  since been changed to measure that ambient rate and allow for it; see the
+  section below.
 
 **Gate 2 needed no waiver at all.** The five RX input-delay setup checks came
 back **+0.891 to +0.933 ns**, hold **+6.82 to +6.86 ns**, with zero violating
@@ -119,15 +121,47 @@ and the fenced waiver was masking it. `scripts/build.tcl`'s fences are kept
 (they cost nothing while nothing violates), but a future violation on those
 five endpoints should now be read as a real defect, not re-waived.
 
-### Open, and deliberately not changed here
+### The step 4 assertion, closed separately
 
-`sw/host/gem_host.py rx` cannot report PASS on a machine whose NIC sees
+`sw/host/gem_host.py rx` could not report PASS on a machine whose NIC sees
 ambient traffic, because the board accepts frames regardless of destination
-address and the check is `==`. Loosening a pass criterion to make a test go
-green is not a call to make while fixing something else — but step 4 cannot
-be signed off through this script as written. The options are to filter by DA
-in the check, to bracket ambient drift with a control read, or to accept `>=`
-and lose duplicate detection.
+address and the check was `==`. That was left alone while the RX path was being
+fixed — loosening a pass criterion to make a test go green is not a call to make
+in passing — and settled on its own afterwards. Of the three options recorded
+here, **the control read won**:
+
+- *Filter by destination address in the check.* Not implementable host-side.
+  The number being checked is the board's own counter, and the board has no
+  address filter to consult (R12 is a stated non-goal, B.7 is promiscuous by
+  design). Reconstructing the board's view from a host-side sniff means
+  assuming the host NIC and the board see the same wire, and aligning a
+  libpcap capture with a counter window whose edges are two UART records —
+  more machinery for a worse guarantee.
+- *Accept `>=`.* Worse than it sounds. `rx_ok` at the end is
+  `(count − drops) + ambient`, so `>=` passes whenever `ambient >= drops` — it
+  does not merely lose duplicate detection, it loses **drop** detection, which
+  is the one thing step 4 exists to establish. And nothing bounds the top, so
+  any amount of duplicate counting passes too.
+- *Bracket with a control read.* `rx` now watches a `--control` window (4 status
+  records, nothing sent) before sending and a `--window` one (3 records) after,
+  both counted in records rather than seconds slept so each is a known number of
+  board-seconds. The measured ambient rate scales onto the test window, three
+  Poisson sigma are added, and `rx_ok` must land in
+  `[count, count + allowance]`.
+
+What that buys and what it costs, both stated in `evaluate_rx` and printed by
+the command: a control window that measures zero yields an allowance of zero, so
+**on an isolated link the check is exactly as strict as the `==` it replaces**;
+the low edge stays exact on any link, because ambient traffic only ever adds;
+and what is given up is resolution at the top — a shortfall smaller than the
+allowance (9 to 14 frames at the 1–2 per second this bench measured, over
+the default 3 s window) cannot be told from ambient. Sending more frames
+shrinks that as a fraction of the run without narrowing the allowance itself.
+
+`sw/host/gem_host.py`, `sw/host/README.md` and `bringup_checklist.md` step 4
+carry it; `sw/host/test_gem_host.py` and `test_gem_host_commands.py` cover it,
+including that a drop still fails on a busy segment and that a quiet control
+window still rejects an over-count.
 
 ## What already closed, so this page isn't mistaken for the whole list
 

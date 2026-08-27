@@ -27,7 +27,7 @@ similar on Linux). Raw Ethernet needs **Npcap** on Windows or **root** on Linux.
 | `gem_records.py` | Parses the status line `gem_stat_report` prints, and subtracts two of them. Pure standard library. |
 | `test_gem_records.py` | Its tests, which run with no board, no serial port and nothing installed. |
 | `gem_host.py` | The bring-up commands, one per B.5 step. |
-| `test_gem_host.py` | Tests for the pass/fail decisions inside `gem_host.py` (`evaluate_rx`, `check_echo_frame`, `evaluate_corrupt`, `detect_anomalies`, ...), isolated from Scapy, the serial port and each command's I/O. |
+| `test_gem_host.py` | Tests for the pass/fail decisions inside `gem_host.py` (`evaluate_rx`, `ambient_allowance`, `check_echo_frame`, `evaluate_corrupt`, `detect_anomalies`, ...), isolated from Scapy, the serial port and each command's I/O. |
 | `test_gem_host_commands.py` | Tests for the commands themselves (`cmd_rx`, `cmd_echo`, `cmd_corrupt`, `cmd_soak`) against fakes standing in for `StatusPort` and Scapy — including a fake board that misbehaves, on the same "plant the defect and watch the check catch it" principle the RTL gates in the top-level README use. |
 | `requirements.txt` | Scapy and pyserial, both imported lazily so `monitor` works without Scapy. |
 
@@ -81,6 +81,54 @@ worst-case frame rate wraps in about 48 minutes, against a soak of four hours or
 more. `gem_records.delta()` does its arithmetic modulo 2³² for that reason;
 subtracting two readings by hand will eventually report a four-billion-frame
 jump backwards.
+
+---
+
+## What the board counts, and what that means for step 4
+
+**The board counts every frame that reaches it, whatever its destination
+address.** Address filtering is **R12**, a stated non-goal, and the receive path
+is promiscuous by **B.7**. So on any segment that carries other traffic — a
+switch, or just a host NIC that talks mDNS and ARP to itself — `rx_ok` advances
+whether or not this host is sending, and a check of the form "`rx_ok` advanced
+by exactly the number sent" cannot pass. That is a property of the assertion on
+a live LAN, not of the receive path; it is exactly what the first confirmed
+hardware run of the fixed RX path printed (`docs/reports/stage9/known-issues.md`
+§ B.5-RX-1).
+
+`rx` handles it by measuring rather than by loosening:
+
+1. a **control window** (`--control`, 4 status records by default) in which
+   nothing is sent, giving the segment's own contribution to `rx_ok`;
+2. the send;
+3. a **test window** (`--window`, 3 records) in which the frames land.
+
+Both windows are counted in *records*, not seconds slept, because the board
+prints one a second — so each is a known number of board-seconds however the
+host's clock and the serial buffer behaved. The control rate is scaled onto the
+test window, three standard deviations of a Poisson process are added, and
+`rx_ok` has to land in `[count, count + allowance]`.
+
+Two consequences worth having in mind at the bench:
+
+**On an isolated link nothing changes.** A control window that measures zero
+produces an allowance of zero, and the check is the exact equality it always
+was. The allowance is only ever as wide as the measured noise makes it.
+
+**On a live segment the run has a resolution, and prints it.** A drop and an
+ambient frame cancel, so a shortfall smaller than the allowance is invisible —
+at the 1–2 frames a second this bench measured, over the default 3-second
+window, that is 9 to 14 frames. The lower edge stays exact (ambient traffic
+only ever *adds*, so `rx_ok` below the count sent is a drop however busy the
+wire is), and the upper
+edge is a bound rather than the `>=` that would let any amount of duplicate
+counting through. Sending more frames does not narrow the allowance — it is a
+property of the window, not the count — but it does shrink it as a fraction of
+the run. Unplugging everything else shrinks it to zero.
+
+A FAIL with a *small* excess on a run whose control window was quiet is most
+likely bursty ambient traffic that missed the control window, and is worth
+re-running before it is read as a defect.
 
 ---
 

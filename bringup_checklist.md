@@ -133,9 +133,19 @@ the cable is Cat-5e and all four pairs are intact.
 python sw/host/gem_host.py rx --port COM4 --iface Ethernet --count 100
 ```
 
-- [ ] `rx_ok` advances by exactly 100.
+- [ ] The command prints `PASS step 4`.
 - [ ] `rx_bad`, `rx_runt`, `rx_over`, `rx_rxer` stay at zero, and **`led[3]`
       stays dark**.
+
+**`rx_ok` will not advance by exactly 100 unless the segment is isolated,** and
+the command does not expect it to. The board counts every frame that reaches it
+regardless of destination address (R12 is a non-goal, B.7), so ambient LAN
+traffic advances `rx_ok` too. The command opens with a `--control` window that
+sends nothing, measures that rate, and requires `rx_ok` to land between 100 and
+100 plus what the measured rate accounts for — printing the allowance it used.
+On an isolated link the allowance is zero and the check is exact equality.
+`sw/host/README.md` has the reasoning and what the allowance costs; the run that
+made this necessary is in `docs/reports/stage9/known-issues.md` § B.5-RX-1.
 
 **Receive is tested before transmit on purpose:** Wireshark and a NIC are a
 trusted generator, and at this point the board is not yet a trusted sink.

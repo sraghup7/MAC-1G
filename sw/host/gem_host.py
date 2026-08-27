@@ -34,11 +34,23 @@ sending something the NIC quietly fixed and reporting a pass. All four classes
 are covered bit-exactly in simulation against the golden model; what hardware
 adds is confidence in the PHY and the pins, and one class exercises those as
 well as four would.
+
+A SECOND LIMITATION, WHICH CHANGES WHAT STEP 4 CAN MEAN ON A LIVE SEGMENT.
+The board counts every frame that reaches it regardless of destination address
+-- filtering is R12, a stated non-goal, and the receive path is promiscuous
+(B.7) -- so `rx_ok` advances on the segment's own traffic as well as on this
+command's. `rx` therefore opens with a control window that sends nothing,
+measures that rate, and checks `rx_ok` against an interval rather than a single
+number. On a quiet link the measured rate is zero and the check is the exact
+equality it has always been; on a busy one it resolves a drop only if the
+shortfall is larger than what the ambient rate accounts for, and prints that
+figure so the run says what it proved. See `ambient_allowance`.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 import sys
@@ -156,19 +168,77 @@ def _expected_reply_payload(sent: bytes) -> bytes:
 # --------------------------------------------------------------------------
 # B.5 step 4 -- receive only, counters
 # --------------------------------------------------------------------------
-def evaluate_rx(d: dict[str, int], expected_count: int) -> tuple[bool, list[str]]:
-    """Did exactly `expected_count` good frames arrive and nothing else move.
+def ambient_allowance(control_frames: int, control_records: int,
+                      test_records: int) -> int:
+    """How many frames the segment itself may add to `rx_ok` during the test.
 
-    Traffic sent by `rx` is all well-formed, so rx_ok must match the count
-    exactly -- short means a drop, long means something else is on the wire --
-    and every error counter must stay at zero, because one bad-classified
-    frame among otherwise-correct counting is the classifier miscounting.
+    `control_frames` is what `rx_ok` advanced by over `control_records` of the
+    board's one-a-second status records with nothing being sent. This scales
+    that rate to a window of `test_records` records and adds three standard
+    deviations of a Poisson process at the same rate, since the count in a
+    window varies about its mean by roughly the square root of it. Three sigma
+    rather than one because a false FAIL at bring-up costs an operator a re-run
+    and some doubt about a receive path that is fine, and what the extra width
+    costs is stated in `evaluate_rx` rather than hidden.
+
+    Zero in, zero out, deliberately. A control window that saw no ambient
+    traffic leaves the check exactly as strict as it was before this function
+    existed: `rx_ok` must equal the count sent. The allowance is never wider
+    than the measured noise makes it, which is the whole reason for measuring
+    rather than picking a tolerance.
+
+    It bounds a rate, though; it does not identify frames. Bursty ambient
+    traffic -- a burst of mDNS that missed the control window entirely -- can
+    still exceed it. That shows up as a FAIL with a small excess on a run whose
+    control window was quiet, and is worth re-running before it is read as a
+    defect.
+    """
+    if control_frames <= 0 or control_records <= 0 or test_records <= 0:
+        return 0
+    mean = control_frames * test_records / control_records
+    return math.ceil(mean + 3.0 * math.sqrt(mean))
+
+
+def evaluate_rx(d: dict[str, int], expected_count: int,
+                allowance: int = 0) -> tuple[bool, list[str]]:
+    """Did `expected_count` good frames arrive and nothing else move.
+
+    `rx_ok` has to land in `[expected_count, expected_count + allowance]`:
+    below it, frames this host sent were not counted; above it by more than the
+    segment's own traffic can account for, something was counted twice. The
+    allowance comes from `ambient_allowance` and is zero on a quiet link, where
+    this is the exact equality it has always been.
+
+    What the allowance costs is worth stating rather than burying, since it is
+    the reason the old `==` could not simply be kept: a drop and an ambient
+    frame cancel out, so on a live segment this resolves a shortfall larger
+    than `allowance` and cannot see a smaller one. Sending more frames does not
+    narrow the allowance -- it is a property of the window, not of the count --
+    but it does shrink it as a fraction of the run.
+
+    The one-sidedness is deliberate too. `rx_ok` short of `expected_count` is a
+    drop however busy the segment is, because ambient traffic only ever adds,
+    so the low edge stays exact and the allowance is spent entirely on the
+    high one.
+
+    Every error counter must still be exactly zero. Traffic sent by `rx` is all
+    well-formed, and the control run behind `allowance` shows ambient traffic
+    advancing `rx_ok` alone, so one bad-classified frame is the classifier
+    miscounting rather than the segment.
     """
     ok = True
     messages = []
-    if d["rx_ok"] != expected_count:
+    excess = d["rx_ok"] - expected_count
+    if excess < 0:
         ok = False
-        messages.append(f"rx_ok advanced by {d['rx_ok']}, expected {expected_count}")
+        messages.append(
+            f"rx_ok advanced by {d['rx_ok']}, expected {expected_count} -- at least "
+            f"{-excess} frame(s) sent were not counted")
+    elif excess > allowance:
+        ok = False
+        messages.append(
+            f"rx_ok advanced by {d['rx_ok']}, expected {expected_count} plus at most "
+            f"{allowance} from other traffic on the segment")
     for name in ("rx_bad", "rx_runt", "rx_over", "rx_rxer"):
         if d[name]:
             ok = False
@@ -176,31 +246,67 @@ def evaluate_rx(d: dict[str, int], expected_count: int) -> tuple[bool, list[str]
     return ok, messages
 
 
+def _advance(port: StatusPort, records: int) -> gr.Record:
+    """Read `records` status records and hand back the last one.
+
+    Counting records rather than sleeping is what makes a window a known
+    length: the board prints one a second, so `records` of them is `records`
+    seconds of board time whatever the host's clock and the serial buffer did
+    in the meantime. A `time.sleep` followed by a single read measures neither
+    -- whatever is at the head of the buffer comes back, and how much board
+    time separates it from the previous read is not knowable from here.
+    """
+    last = None
+    for _ in range(records):
+        last = port.read_record()
+    return last
+
+
 def cmd_rx(args) -> int:
     Ether, Raw, sendp, _sniff, _conf = _scapy()
     port = StatusPort(args.port)
 
-    before = port.read_record()
-    print(f"before: {before}")
+    # The control window comes first and sends nothing. The board has no
+    # address filter, so rx_ok climbs on whatever else the segment carries;
+    # measuring that here is what lets this command's own frames be read back
+    # out of the total afterwards. On an isolated link it measures zero and
+    # costs nothing but the seconds.
+    start = port.read_record()
+    print(f"before: {start}")
+    control_end = _advance(port, args.control)
+    control = gr.deltas(start, control_end)
+    print(f"control ({args.control} s, nothing sent): {gr.format_deltas(control)}")
 
     frames = [Ether(dst=BOARD_MAC, src=args.src, type=ETHERTYPE) / Raw(_payload(args.size, i))
               for i in range(args.count)]
     sendp(frames, iface=args.iface, verbose=False)
     print(f"sent {args.count} frames of {args.size} payload octets on {args.iface}")
 
-    # Two records, because one might have been mid-flight while the frames
-    # arrived and would undercount through no fault of the design.
-    time.sleep(2.5)
-    after = port.read_record()
+    # Records, not a sleep: this window has to be a known number of board
+    # seconds for the ambient rate to scale onto it, and more than one of them
+    # because the first may have been printed part way through the send and
+    # would undercount through no fault of the design.
+    after = _advance(port, args.window)
     port.close()
     print(f"after:  {after}")
 
-    d = gr.deltas(before, after)
+    d = gr.deltas(control_end, after)
     print(f"delta:  {gr.format_deltas(d)}")
 
-    ok, messages = evaluate_rx(d, args.count)
+    allowance = ambient_allowance(control["rx_ok"], args.control, args.window)
+    print(f"ambient: {control['rx_ok']} frame(s) in {args.control} s with nothing sent, "
+          f"so up to {allowance} of this window's {d['rx_ok']} may not be ours")
+
+    ok, messages = evaluate_rx(d, args.count, allowance)
     for m in messages:
         print(f"FAIL {m}")
+
+    if ok and allowance:
+        print(f"note: {d['rx_ok'] - args.count} frame(s) beyond the {args.count} sent, "
+              f"within the {allowance} this segment's own traffic accounts for. A "
+              f"shortfall smaller than {allowance} would look the same, so this run "
+              f"resolves drops of more than that many frames -- send more frames, or "
+              f"isolate the segment, to sharpen it.")
 
     print("PASS step 4: every frame was received and classified good" if ok else "FAIL step 4")
     return 0 if ok else 1
@@ -439,6 +545,14 @@ def cmd_monitor(args) -> int:
     return 0
 
 
+def _records(text: str) -> int:
+    """A window length in status records, which the board prints one a second."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("a window has to be at least one record long")
+    return value
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -458,6 +572,14 @@ def main() -> int:
     common(sp)
     sp.add_argument("--count", type=int, default=100)
     sp.add_argument("--size", type=int, default=64)
+    sp.add_argument("--control", type=_records, default=4,
+                    help="status records to watch before sending, measuring what the "
+                         "segment's own traffic adds to rx_ok (one record a second)")
+    sp.add_argument("--window", type=_records, default=3,
+                    help="status records to watch after sending (one a second). More "
+                         "than one, because the first may have been printed part way "
+                         "through the send; shortening it narrows the ambient allowance "
+                         "and lengthening it widens it, in proportion")
     sp.set_defaults(func=cmd_rx)
 
     sp = sub.add_parser("echo", help="B.5 step 6: round trip through the board")

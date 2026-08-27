@@ -46,12 +46,50 @@ class TestEvaluateRx(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("rx_ok" in m for m in messages))
 
-    def test_over_count_also_fails(self):
-        # rx_ok must match exactly -- more than sent means something else is
-        # putting traffic on the wire, which is not a pass either.
+    def test_over_count_fails_when_no_ambient_traffic_was_measured(self):
+        # With no allowance -- an isolated link, where the control window saw
+        # nothing -- rx_ok must match exactly. More than was sent means either
+        # something else is on the wire or a frame was counted twice, and this
+        # is the check that used to be the only one.
         d = {"rx_ok": 101, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0}
         ok, _messages = gh.evaluate_rx(d, 100)
         self.assertFalse(ok)
+
+    def test_over_count_within_the_measured_allowance_passes(self):
+        # The run this whole mechanism exists for: 100 sent, 101 counted, on a
+        # segment whose own traffic was measured beforehand and can account
+        # for the extra one.
+        d = {"rx_ok": 101, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0}
+        ok, messages = gh.evaluate_rx(d, 100, allowance=9)
+        self.assertTrue(ok)
+        self.assertEqual(messages, [])
+
+    def test_over_count_past_the_measured_allowance_still_fails(self):
+        # An allowance is a bound, not a blank cheque: double counting is well
+        # past what the measured ambient rate explains, and `>=` would have
+        # let it through.
+        d = {"rx_ok": 200, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0}
+        ok, messages = gh.evaluate_rx(d, 100, allowance=9)
+        self.assertFalse(ok)
+        self.assertTrue(any("at most 9" in m for m in messages))
+
+    def test_a_shortfall_fails_however_large_the_allowance(self):
+        # The allowance is one-sided on purpose. Ambient traffic only ever
+        # adds to rx_ok, so a count below what was sent is a drop no matter
+        # how busy the segment is -- this is what `>=` would have given away.
+        d = {"rx_ok": 99, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0}
+        ok, messages = gh.evaluate_rx(d, 100, allowance=50)
+        self.assertFalse(ok)
+        self.assertTrue(any("rx_ok" in m for m in messages))
+
+    def test_error_counters_are_not_covered_by_the_allowance(self):
+        # The allowance is for rx_ok alone: the control run behind it shows
+        # ambient traffic advancing rx_ok and nothing else, so a moving error
+        # counter is still the classifier miscounting.
+        d = {"rx_ok": 100, "rx_bad": 1, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0}
+        ok, messages = gh.evaluate_rx(d, 100, allowance=20)
+        self.assertFalse(ok)
+        self.assertTrue(any("rx_bad" in m for m in messages))
 
     def test_any_error_counter_moving_fails_even_with_exact_rx_ok(self):
         # Traffic sent by this command is all well-formed. One bad-classified
@@ -65,6 +103,38 @@ class TestEvaluateRx(unittest.TestCase):
                 ok, messages = gh.evaluate_rx(d, 100)
                 self.assertFalse(ok)
                 self.assertTrue(any(name in m for m in messages))
+
+
+# --------------------------------------------------------------------------
+# B.5 step 4 -- ambient_allowance
+# --------------------------------------------------------------------------
+class TestAmbientAllowance(unittest.TestCase):
+
+    def test_a_quiet_control_window_allows_nothing(self):
+        # The property that keeps step 4 as strict as it ever was on an
+        # isolated bench: measure no ambient traffic, allow none.
+        self.assertEqual(gh.ambient_allowance(0, 4, 3), 0)
+
+    def test_measured_traffic_buys_room_in_the_test_window(self):
+        # 6 frames in 4 control seconds is 1.5/s; over a 3 s window that is a
+        # mean of 4.5, plus three standard deviations of 4.5 ** 0.5.
+        self.assertEqual(gh.ambient_allowance(6, 4, 3), 11)
+
+    def test_the_allowance_grows_with_the_window_it_covers(self):
+        # It is a property of how long the board was watched, not of how many
+        # frames were sent, which is why sending more frames sharpens the run.
+        short = gh.ambient_allowance(6, 4, 2)
+        long = gh.ambient_allowance(6, 4, 6)
+        self.assertLess(short, long)
+
+    def test_the_allowance_grows_with_the_measured_rate(self):
+        self.assertLess(gh.ambient_allowance(2, 4, 3), gh.ambient_allowance(20, 4, 3))
+
+    def test_a_degenerate_window_allows_nothing_rather_than_dividing_by_zero(self):
+        # argparse rejects these, so this is about the function standing on
+        # its own rather than about a reachable command line.
+        self.assertEqual(gh.ambient_allowance(6, 0, 3), 0)
+        self.assertEqual(gh.ambient_allowance(6, 4, 0), 0)
 
 
 # --------------------------------------------------------------------------
