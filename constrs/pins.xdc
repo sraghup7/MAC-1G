@@ -121,6 +121,40 @@ set_property DRIVE 16 [get_ports rgmii_gtx_clk]
 set_property DRIVE 16 [get_ports {rgmii_txd[*]}]
 set_property DRIVE 16 [get_ports rgmii_tx_ctl]
 
+# PER-LINE DRIVE TRIM (B.5-TX-1). Two data lines are held one drive step
+# slower than the other four and the clock. This is not tidiness -- it is a
+# skew correction, and it is worth 15x on its own.
+#
+# Once SLEW/DRIVE were raised uniformly, the residual corruption collapsed
+# onto individual lines, which a uniform setting cannot address. SLEW and
+# DRIVE are per-PORT, so a single line can be trimmed even though this device
+# has no ODELAYE2 (5e3c837, which wrongly concluded the FPGA-side levers were
+# exhausted). Less drive means a slower edge, crossing threshold later and
+# holding the old nibble longer -- the direction "the PHY sampled after this
+# line already advanced" calls for.
+#
+#   config                        rate      frames   line(s) then leading
+#   ---------------------------------------------------------------------
+#   SLEW SLOW, DRIVE 12 (default) ~24%         -     bits 4, 6 and 7
+#   SLEW FAST, all DRIVE 16        1.1%     1000     TXD[3] (11 of 11)
+#   + txd[3] = 12                  0.22%    4999     TXD[2] leading
+#   + txd[2] = 12                  0.075%   8000     TXD[3] and TXD[0]
+#
+# TXD[2] disappeared completely from the failure histogram after its trim
+# (4 of 6 before, 0 of 6 after), which is what makes this causal rather than
+# coincidental. Every corrupted octet at every stage matched the falling-
+# nibble signature -- 6/6, 6/6, 11/11.
+#
+# THESE VALUES ARE CALIBRATED TO ONE PHYSICAL BOARD. They compensate that
+# board's TXD trace lengths, so another AX7035B may want different ones, and
+# nothing here detects that. Treat them as a bench calibration, not a design
+# constant. They are also NOT a fix: 0.075% is one bad frame in ~1300, which
+# is still catastrophic against the roughly zero a real link delivers. The
+# proper fix is the TX timing budget itself (the TXDLY strap, a scope on
+# GTX_CLK/TXD0), not further drive trimming -- see known-issues.md B.5-TX-1.
+set_property DRIVE 12 [get_ports {rgmii_txd[3]}]
+set_property DRIVE 12 [get_ports {rgmii_txd[2]}]
+
 #############################################################################
 # PHY management and reset — bank 15
 #############################################################################

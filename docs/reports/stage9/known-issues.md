@@ -338,6 +338,47 @@ JL2121(D)'s confirmed 2 ns RXDLY/TXDLY straps (V-2,
 `docs/reports/stage9/rgmii-jl2121-retiming-report.md`), not further tuning of
 `SLEW`/`DRIVE`.
 
+### Per-line `DRIVE` trim — B.5-TX-1 down ~320x, and still not fixed
+
+**`SLEW` and `DRIVE` are per-PORT, which reopened a lever the section below
+declared exhausted.** There is no `ODELAYE2` on this device, so per-pin *delay*
+is impossible — but per-pin *edge rate* is not, and edge rate moves the
+threshold crossing, which is the same thing to first order. Less drive on one
+line = slower edge = crosses later = holds the old nibble longer, which is
+exactly the correction "the PHY sampled after this line already advanced" asks
+for.
+
+| config | rate | frames | line(s) then leading |
+|---|---|---|---|
+| `SLEW SLOW`, `DRIVE 12` (Vivado default) | ~24% | — | bits 4, 6 and 7 |
+| `SLEW FAST`, all `DRIVE 16` | 1.1% | 1000 | **TXD[3], 11 of 11** |
+| + `txd[3] = 12` | 0.22% | 4999 | TXD[2] leading |
+| + `txd[2] = 12` | **0.075%** | 8000 | TXD[3] and TXD[0] |
+
+**TXD[2] vanished from the histogram after its own trim** — 4 of 6 before,
+0 of 6 after — which is what makes this causal rather than coincidental. The
+falling-nibble signature held at every stage: 11/11, then 6/6, then 6/6, always
+0 -> 1, always in the high nibble, never more than one octet per frame.
+
+All six TX pins sit in bank 15 on IOB33 sites, and TXD[3] is *not* the furthest
+from `gtx_clk` (TXD[0] at IOB_X0Y71 vs Y77 is), so this is per-line **board
+trace** skew, not die-side placement.
+
+**Two things this is not.**
+
+1. **Not a fix.** 0.075% is one corrupted frame in ~1300. A real link delivers
+   essentially zero. Step 6 still fails.
+2. **Not portable.** These values are calibrated to one physical board's trace
+   lengths. Another AX7035B may want different ones and nothing here detects
+   that. It is a bench calibration, not a design constant.
+
+**The measurement cost grows as the rate falls, and this is where the effort
+stops being worth it.** Distinguishing 0.075% from 0.03% needs tens of
+thousands of frames per build. A single 0/1000 run was seen twice during this
+work and was wrong both times — the same config later gave 1 and 4. The proper
+fix is the TX timing budget itself (the `TXDLY` strap, a scope on
+`GTX_CLK`/`TXD0`), not further drive trimming.
+
 ### THERE IS NO `ODELAYE2` ON THIS DEVICE — the TX "I/O delay" lever does not exist
 
 Checked against the implemented design on the real part, not from memory:
@@ -365,8 +406,10 @@ wrong-device result cannot be mistaken for a real one.
 
 ### What is actually left for B.5-TX-1
 
-With `SLEW` and `DRIVE` at their useful limit and no output delay primitive, the
-FPGA-side levers are exhausted. What remains is board-side:
+**Partly superseded:** "the FPGA-side levers are exhausted" was written before
+anyone tried setting `DRIVE` per line rather than uniformly, which then bought
+another ~15x (see the section above). Per-pin *delay* is genuinely unavailable;
+per-pin *edge rate* was not. What remains after that is board-side:
 
 1. **The PHY's `TXDLY` strap.** Confirmed populated for +2.000 ns
    (`Manuals/AX7035B_UG.pdf` Table 8-1). The JL2121(D) has no MMD register
