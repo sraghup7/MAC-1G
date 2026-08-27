@@ -338,6 +338,51 @@ JL2121(D)'s confirmed 2 ns RXDLY/TXDLY straps (V-2,
 `docs/reports/stage9/rgmii-jl2121-retiming-report.md`), not further tuning of
 `SLEW`/`DRIVE`.
 
+### B.5-RX-2: `rx_bad` advances under sustained load — step 8 blocked
+
+**Found 2026-08-27 by the first step 8 attempt, six minutes in.** The soak was
+stopped rather than run its four hours, because its pass criterion is that no
+error counter moves and one already had.
+
+| | |
+|---|---|
+| window | 17:13:35 → 17:19:21, `rx_ok` +102,891 |
+| **`rx_bad`** | **+22 — 0.021%, about 1 frame in 4,700** |
+| `rx_runt` / `rx_over` / `rx_rxer` | **+0** |
+
+**The TX fix held, and held far harder than it had been tested.** Over the same
+run the echo loop sent **116,000 frames with zero payload mismatches** — an
+order of magnitude beyond the 12,000 that B.5-TX-1 was signed off on, at
+~285 frames/s sustained. That result is strengthened, not in doubt.
+
+**What the shortfall actually was.** Echo returned 115,972 of 116,000 — a
+shortfall of 28, against `rx_bad` +24 over the same window. Those are the same
+frames: the board rejected them on FCS, so it never echoed them. **Every
+earlier echo run showed the same "returned 998-1000 of 1000" and it was
+attributed to `gem_echo` holding one frame at a time by design.** Some of it
+was. Some of it was this, and nothing was watching `rx_bad` during those runs
+to tell the two apart. This defect may well predate today's changes entirely;
+nothing measured so far can date it.
+
+**Leading hypothesis, untested: TX-to-RX coupling.** All six TX outputs were
+raised to `SLEW FAST` / `DRIVE 16` earlier today. Faster edges and more drive
+current mean more simultaneous-switching noise, and RX and TX share bank 15.
+The board only transmits heavily when it is echoing, which is exactly when
+this appears — idle-link monitoring shows `rx_bad` flat. If true, today's TX
+fix bought transmit quality at the cost of receive margin, and there is a
+trade-off to find rather than a free win.
+
+**The discriminating test needs a rebuild.** The obvious probe — load the
+receive path *without* the board transmitting — cannot be done with this
+bitstream, because `gem_echo` returns everything it accepts (`tx_ok` tracks
+`rx_ok` almost exactly). So the test is to rebuild at a lower `DRIVE` and/or
+`SLEW SLOW` and compare `rx_bad` per received frame at matched load. Watch
+`rx_bad`, not the echo mismatch count — the two measure different paths, and
+conflating them is what hid this.
+
+**Do not re-run step 8 until this is settled.** It fails in minutes, and the
+soak harness itself works correctly — it caught this exactly as designed.
+
 ### B.5-TX-1 IS FIXED — the TX clock phase was wrong, 2026-08-27
 
 **`CLKOUT1_PHASE` 70 -> 60. Step 6 passes. 0 payload errors in 12000 frames,
