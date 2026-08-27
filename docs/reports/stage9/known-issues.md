@@ -338,6 +338,55 @@ JL2121(D)'s confirmed 2 ns RXDLY/TXDLY straps (V-2,
 `docs/reports/stage9/rgmii-jl2121-retiming-report.md`), not further tuning of
 `SLEW`/`DRIVE`.
 
+### THERE IS NO `ODELAYE2` ON THIS DEVICE — the TX "I/O delay" lever does not exist
+
+Checked against the implemented design on the real part, not from memory:
+
+```
+part           xc7a35tifgg484-1L
+IDELAYE2       250 sites      <- INPUTS only
+ODELAYE2         0 sites      <- does not exist
+banks 14/15/16/34/35 = BT_HIGH_RANGE   (all HR)
+```
+
+In 7-series, `ODELAYE2` exists only in **HP** I/O banks. Every user bank on this
+Artix-7 is **HR**, so there is no output delay primitive to instantiate at any
+price. **Any plan that proposes per-pin output delay to fix B.5-TX-1 is dead on
+arrival** — including the one an earlier revision of this page recommended.
+
+The 250 `IDELAYE2` sites are real but are **input-only**, so they can serve the
+receive path, which already works. They cannot help transmit.
+
+**Beware `current_project` when checking this.** A first attempt at this query
+returned `xc7vx485tffg1157-1` (a Virtex-7) with different site counts, because
+Vivado's leftover default "New Project" won the context over the in-memory
+design. Query `current_design`, and print the part alongside the answer so a
+wrong-device result cannot be mistaken for a real one.
+
+### What is actually left for B.5-TX-1
+
+With `SLEW` and `DRIVE` at their useful limit and no output delay primitive, the
+FPGA-side levers are exhausted. What remains is board-side:
+
+1. **The PHY's `TXDLY` strap.** Confirmed populated for +2.000 ns
+   (`Manuals/AX7035B_UG.pdf` Table 8-1). The JL2121(D) has no MMD register
+   access, so this is a hardware rework, not an MDIO write — which
+   `bringup_checklist.md` step 5 already names as the fallback. Removing the
+   strap moves the PHY's sampling point by a whole 2 ns and re-opens the
+   `CLKOUT1_PHASE` window, which was only ever swept *with* `TXDLY` in circuit.
+   This is now the primary remaining lever, and it is the one worth costing.
+2. **A scope on `GTX_CLK`/`TXD0`.** Still never done, and it is what step 5's
+   "if the scope says setup timing is not being met" branch assumes. It would
+   measure the rise/fall asymmetry directly instead of inferring it from
+   mismatch rates.
+
+**A tooling gap blocks the next diagnosis either way.** `gem_host.py echo`
+truncates its `sent`/`got` display to the first 16 octets, and the residual
+corruption falls beyond that, so the residual's per-bit signature cannot be
+characterised the way the original 13-of-13 nibble analysis was. Whoever picks
+this up should fix that print first — it is a few lines — rather than
+speculating about a signature nobody can currently see.
+
 ## Bring-up status after B.5-RX-1 (2026-08-27)
 
 | step | state |
