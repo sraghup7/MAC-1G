@@ -301,8 +301,10 @@ whole history is a careful derivation adjusted in the wrong dimension.
 | **4 — receive** | **PASS** on the shipped bitstream. See § B.5-RX-1. |
 | 5 — transmit / FCS | **Blocked on tooling.** Wireshark is not installed on this machine and a Windows NIC does not expose the FCS to a capture. Closes with B.5-TX-1. |
 | **6 — round trip** | **FAIL.** See § B.5-TX-1. |
-| 7 — corruption | **Blocked on host config, board behaviour correct.** The oversize half never reached the wire: the `Ethernet` adapter is MTU 1500 with Jumbo Frame *Disabled*, so the NIC dropped the 1600-octet frames and `rx_over 0` is right. The good-frame half worked — `rx_ok` advanced by exactly the 20 sent plus 2 ambient. Enabling jumbo frames is an adapter setting, not a repo change. |
+| **7 — corruption** | **PASS (counter half), 2026-08-27.** `rx_over +20` for 20 oversize frames and `rx_ok +22` for the 20 good frames sent after them plus 2 ambient — R10's recovery property on real hardware, with `rx_bad`/`rx_runt`/`rx_rxer` all still 0. Required enabling **Jumbo Frame = 4088 Bytes** on the `Ethernet` adapter (MTU 1500 → 4074): `GEM_MAX_FRAME_BYTES` is 1518, and a non-jumbo NIC caps a raw frame at 1514 + 4 FCS = exactly 1518, so no frame it can send is ever oversize. That is a host setting, not a repo change, and it is reversible. `led[3]` and the KEY1 counter-clear are physical checks, recorded separately. |
 | 8 — soak | Not started; it is the acceptance test for a working round trip and step 6 does not pass yet. |
+
+**Bench note for whoever repeats step 7:** the oversize half cannot be provoked from a PC at all unless the NIC's jumbo-frame support is switched on first, and the failure mode without it is silent and misleading — `rx_over` stays 0 and the run reads as a board defect when the frames simply never left the host. `rx_ok` advancing by exactly the number of *good* frames sent is the tell that the oversize ones never arrived. `bringup_checklist.md` step 7 should say so; it currently does not.
 
 ## What already closed, so this page isn't mistaken for the whole list
 
