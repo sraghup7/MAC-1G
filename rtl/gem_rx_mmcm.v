@@ -97,6 +97,40 @@
 // the negative one is written here because it matches the physical story --
 // an edge arriving a unit interval late is pulled back, not pushed forward.
 //
+// FOURTH CORRECTION (B.5 bring-up, 2026-08-27). -230.000 IS CLEAN BUT SITS
+// ON THE EDGE OF THE WINDOW. The THIRD CORRECTION below swept -220/-225/
+// -230/-235 and stopped, which was enough to find a working value and not
+// enough to place it. Mapping the whole window shows -230 is three degrees
+// from the near cliff and a hundred from the far one:
+//
+//   -220.000   catastrophic, step 4 fails outright
+//   -225.000   marginal, non-zero every measurement (0.02%-0.08%)
+//   -230.000   clean          <- was committed, 3 deg from the near edge
+//   -235.000   clean
+//   -240.000   clean          0 / 100,186
+//   -280.000   clean          0 / 200,352   <- committed
+//   -290.000   clean          0 / 100,177
+//   -320.000   clean          0 / 100,188
+//   -350.000   broken, step 4 fails: rx_bad+80 on 100 good frames
+//
+// Near edge ~-227, far edge ~-335, so the window is about 108 degrees
+// (2.4 ns) wide and its centre is about -281. CLKOUT0_PHASE IS NOW -280.000,
+// which is roughly 53 degrees from each edge instead of 3 from one of them.
+// Both values work on this bench today; only one of them has margin for a
+// temperature corner, a supply corner, or a different board.
+//
+// The 5-degree grid means -280.000 is exactly representable, and it remains a
+// whole unit interval back from the -45.000 nibble-correct baseline plus the
+// accumulated trim, so the SECOND CORRECTION's framing argument is untouched.
+//
+// AND THE STA NUMBER GOT WORSE, WHICH IS THE POINT. At -230 the five RX
+// input-delay checks closed outright; at -280 they take the task-4e waiver at
+// -0.331 ns, and at -350 -- which does not work at all -- they sit at
+// -1.887 ns and still pass the gate. Setup slack on these paths is not a
+// proxy for whether capture works, exactly as constrs/rgmii_timing.xdc
+// already warns for the TX side. Place this phase with gem_host.py and
+// hundreds of thousands of frames, never with WNS.
+//
 // THIRD CORRECTION (B.5 bring-up, step 8, 2026-08-27). -225.000 got the
 // NIBBLE right (the SECOND CORRECTION above stands unchanged) but sat too
 // close to the fine-trim edge: sustained bidirectional load found rx_bad
@@ -274,7 +308,7 @@ module gem_rx_mmcm (
         .CLKFBOUT_MULT_F    (9.000),     // VCO = 1125 MHz
         .CLKFBOUT_PHASE     (0.000),
         .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -230 deg: see the header
-        .CLKOUT0_PHASE      (-230.000),
+        .CLKOUT0_PHASE      (-280.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),     // default, UNVERIFIED: criterion A runs 0.125 too
         .STARTUP_WAIT       ("FALSE")    // load-bearing: TRUE bricks a linkless board
