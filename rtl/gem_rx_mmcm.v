@@ -97,6 +97,35 @@
 // the negative one is written here because it matches the physical story --
 // an edge arriving a unit interval late is pulled back, not pushed forward.
 //
+// THIRD CORRECTION (B.5 bring-up, step 8, 2026-08-27). -225.000 got the
+// NIBBLE right (the SECOND CORRECTION above stands unchanged) but sat too
+// close to the fine-trim edge: sustained bidirectional load found rx_bad
+// advancing at roughly 1 frame in 1,300-5,000 depending on the day and the
+// achieved frame rate (0.02%-0.08% across several 100k+-frame measurements,
+// non-zero every time) -- B.5-RX-2. A CLKOUT0_PHASE sweep, run the same way
+// as B.5-TX-1's (phase as a measuring instrument, 100k+ frames per point,
+// board counters read directly, not the echo tool's own drop count):
+//
+//   -220.000   step 4 itself fails -- rx_bad+10 on 100 sent frames, +4 more
+//              in a 4s idle control window. A real cliff, one 5-degree step
+//              from the committed value, same shape as B.5-TX-1's.
+//   -225.000   marginal: 20/100,187 and 22/102,891 one session, 72-77 per
+//              100,000 a later session at a higher achieved frame rate --
+//              non-zero and rate-unstable every time it was measured.
+//   -230.000   clean: 0 bad frames across 400,487 (100k then a 300k
+//              confirmation run), reconfirmed 0/100,162 on the exact build
+//              that was committed.
+//   -235.000   also clean: 0/100,161 -- margin exists on the far side too,
+//              so -230 is not itself sitting on another edge.
+//
+// Throughput varied 237-567 frames/s across these runs with no rate
+// dependence at a fixed phase (ruled out directly: throttling -225's traffic
+// from ~400 to ~237 frames/s left the error rate unchanged), so this is a
+// static timing margin problem, not a load problem -- the same defect class
+// as B.5-TX-1, just on the capture side. CLKOUT0_PHASE moved to -230.000:
+// -1250 ps trim rather than -1000, still one whole UI back from the -45.000
+// nibble-correct baseline, still on the 5-degree grid.
+//
 // DO NOT "FIX" A REPEAT OF THIS BY SWAPPING THE NIBBLE ORDER IN
 // gem_rgmii_rx.v. Commit da81e24 tried exactly that. No ordering can repair a
 // pair that straddles an octet boundary -- both {Q1,Q2} and {Q2,Q1} are then
@@ -166,7 +195,7 @@ module gem_rx_mmcm (
     // one would model nothing. Detection latency here is up to 80 ns against
     // the silicon's 8 ns (one PFD cycle, UG472 p.83); LOCK_CYCLES gives ~1 us
     // against MMCM_TLOCKMAX's 100 us; jitter, the static phase offset, the
-    // CLKOUT0_PHASE = -225 degree (-1000 ps trim, one UI back) capture
+    // CLKOUT0_PHASE = -230 degree (-1250 ps trim, one UI back) capture
     // placement and the
     // real deskew are absent entirely.
     //
@@ -244,8 +273,8 @@ module gem_rx_mmcm (
         .DIVCLK_DIVIDE      (1),
         .CLKFBOUT_MULT_F    (9.000),     // VCO = 1125 MHz
         .CLKFBOUT_PHASE     (0.000),
-        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -225 deg: see the header
-        .CLKOUT0_PHASE      (-225.000),
+        .CLKOUT0_DIVIDE_F   (9.000),     // 125 MHz; phase -230 deg: see the header
+        .CLKOUT0_PHASE      (-230.000),
         .CLKOUT0_DUTY_CYCLE (0.500),
         .REF_JITTER1        (0.010),     // default, UNVERIFIED: criterion A runs 0.125 too
         .STARTUP_WAIT       ("FALSE")    // load-bearing: TRUE bricks a linkless board

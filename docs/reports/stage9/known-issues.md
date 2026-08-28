@@ -421,6 +421,48 @@ conflating them is what hid this.
 **Do not re-run step 8 until this is settled.** It fails in minutes, and the
 soak harness itself works correctly — it caught this exactly as designed.
 
+**B.5-RX-2 IS FIXED — the RX phase was mis-centred, 2026-08-27 (step 8 attempt
+continued).** The coupling hypothesis above was refuted (see the entry right
+before this one); `CLKOUT0_PHASE` had never been swept on hardware and was the
+next suspect, following exactly the method that found and fixed B.5-TX-1:
+phase as a measuring instrument, 100k+ frames per point, board counters read
+directly (not the echo tool's own drop count).
+
+Before sweeping, the committed `-225.000` baseline was re-measured and did
+**not** reproduce at its originally-recorded rate: 72/100,165 and 77/100,171
+(0.072%/0.077%) against the earlier 20/100,187 and 22/102,891 (0.020%/0.021%)
+— roughly 3.5x higher, at a higher achieved frame rate (389-403 vs ~285
+frames/s). Rate-dependence was tested directly and ruled out: throttling the
+same `-225` configuration to 237 frames/s gave 69/100,314 (0.069%) — no
+better than the unthrottled runs. The cause of that day-to-day drift at a
+fixed phase is still unknown (thermal drift over a long bring-up day is the
+leading guess, untested) and is separate from the phase question; it is
+recorded here rather than chased further because the phase sweep answered
+the actual blocking question regardless.
+
+The sweep itself:
+
+| `CLKOUT0_PHASE` | frames | `rx_bad` | step 4 |
+|---|---|---|---|
+| -220.000 | 100 | 10 (+4 in a 4s idle window) | **FAIL** |
+| -225.000 (committed) | 100k x2 + 100k throttled | 72, 77, 69 per ~100k | PASS |
+| -230.000 | 400,487 (100k + 300k confirm) | **0** | PASS |
+| -235.000 | 100,161 | **0** | PASS |
+
+`-220` is a real cliff one 5-degree step from the committed value — it fails
+step 4 outright, a different and more severe failure than B.5-RX-2's FCS
+rate. `-230` and `-235` are both clean, giving margin evidence on both sides
+of the chosen point. `CLKOUT0_PHASE` is now `-230.000` in
+`rtl/gem_rx_mmcm.v` (see that file's THIRD CORRECTION for the full account);
+reconfirmed 0/100,162 on the exact rebuilt/reprogrammed bitstream that was
+committed, for 500,809 total error-free frames at `-230` across every run.
+`pins.xdc` and everything else in the committed configuration is untouched.
+
+Gate re-run after the RTL change: `check_vectors.py` up to date, `lint.py`
+clean (8/8), 84/84 host unit tests, 29/29 simulation scenarios — all pass.
+
+Step 8 (the 4-hour soak) can now be attempted again.
+
 ### B.5-TX-1 IS FIXED — the TX clock phase was wrong, 2026-08-27
 
 **`CLKOUT1_PHASE` 70 -> 60. Step 6 passes. 0 payload errors in 12000 frames,
