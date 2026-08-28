@@ -22,6 +22,7 @@ def _record(**overrides) -> gr.Record:
     values = {
         "tx_ok": 0, "tx_rej": 0, "tx_urun": 0,
         "rx_ok": 0, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0,
+        "rx_drop": 0,
         "link": 1, "speed": 2, "phyid": 0x00221622, "phyok": 1, "rxlock": 1,
     }
     values.update(overrides)
@@ -363,7 +364,7 @@ class TestReadRecordFromLines(unittest.TestCase):
 
     LINE = ("gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 "
             "rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 "
-            "link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001")
+            "link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001 rx_drop=00000000")
 
     def test_first_line_valid_is_returned(self):
         record = gh._read_record_from_lines(iter([self.LINE]), tries=4)

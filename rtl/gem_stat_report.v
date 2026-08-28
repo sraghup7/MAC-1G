@@ -14,7 +14,7 @@
 //   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000000 rx_ok=000001f4 \
 //       rx_bad=00000002 rx_runt=00000000 rx_over=00000000 rx_rxer=00000000 \
 //       link=00000001 speed=00000002 phyid=00221622 phyok=00000001 \
-//       rxlock=00000001\n
+//       rxlock=00000001 rx_drop=00000000\n
 //
 // (one line, no wrapping; broken here only to fit in a comment.)
 //
@@ -44,7 +44,7 @@
 // so a line could show more frames received than the same line's transmit
 // count when both were captured from the same steady stream, and a soak whose
 // whole purpose is finding divergence would have manufactured some. The cost
-// is 12 x 32 flip-flops, stated here rather than discovered in a utilisation
+// is 14 x 32 flip-flops, stated here rather than discovered in a utilisation
 // report, and it buys the property that every line is a true instantaneous
 // state of the MAC.
 //
@@ -74,6 +74,10 @@ module gem_stat_report #(
     input  wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_runt,
     input  wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize,
     input  wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_rxer,
+    // Receive frames that lost at least one octet to a full RX FIFO --
+    // frames, not octets. gem_mac collapses the FIFO's per-octet drop into
+    // one event per frame before it crosses into this clock domain.
+    input  wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_fifo_drop,
 
     // ... and what the MDIO sequencer found (R16).
     input  wire        link_up,
@@ -94,8 +98,8 @@ module gem_stat_report #(
     input  wire        uart_ready
 );
 
-    localparam integer N_FIELDS   = 13;
-    localparam [3:0]   LAST_FIELD = 4'd12;
+    localparam integer N_FIELDS   = 14;
+    localparam [3:0]   LAST_FIELD = 4'd13;
 
     localparam [2:0] ST_IDLE = 3'd0,
                      ST_TAG  = 3'd1,
@@ -154,6 +158,7 @@ module gem_stat_report #(
             snap[10] <= phy_id;
             snap[11] <= {31'd0, phy_id_valid};
             snap[12] <= {31'd0, rx_mmcm_locked};
+            snap[13] <= stat_rx_fifo_drop;
         end
     end
 
@@ -181,6 +186,12 @@ module gem_stat_report #(
             4'd10:   name_of = {16'd0, "phyid"};
             4'd11:   name_of = {16'd0, "phyok"};
             4'd12:   name_of = {8'd0,  "rxlock"};
+            // Appended rather than filed with the other receive counters:
+            // the names make position irrelevant to a parser, and keeping
+            // every existing field at its old offset means a soak log from
+            // before this field and one from after still line up to a human
+            // reading them side by side.
+            4'd13:   name_of =         "rx_drop";
             default: name_of = {48'd0, "?"};
         endcase
     endfunction

@@ -205,4 +205,9 @@ add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_badfcs]
 add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_runt]
 add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_oversize]
 add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_rxer]
-add_cells_to_pblock pblock_rx_domain [get_cells u_ev_fifo_drop]
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_ev_rx_fifo_drop]
+# The episode collapser is on rx_clk like the rest of this list. It moved into
+# gem_mac with its synchroniser when the FIFO drop gained a counter; the path
+# above used to be a top-level u_ev_fifo_drop, and a stale path here is a
+# CRITICAL WARNING at gate 0 rather than a silent miss, which is the point.
+add_cells_to_pblock pblock_rx_domain [get_cells u_mac/u_rx_drop_episode]

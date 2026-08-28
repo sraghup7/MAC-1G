@@ -34,9 +34,11 @@
 //   led[1]  link up              "did the PHY negotiate?"         (step 3)
 //   led[2]  heartbeat, ~1.9 Hz   "is anything running at all?"    (step 1)
 //   led[3]  sticky RX error      "has any bad frame been seen?"   (step 7)
-//                              -- includes an RX FIFO drop, the one receive
-//                              failure B.3a says cannot happen and so has no
-//                              counter of its own
+//                              -- includes an RX FIFO drop, the receive
+//                              failure B.3a says cannot happen. It is now
+//                              counted as well, on the record's rx_drop
+//                              field; the LED stays because a sticky light
+//                              needs no host attached to be read
 //
 // They are active low: the manual is explicit that a user LED lights when its
 // pin is driven low, so the assignment at the bottom inverts once, in one place.
@@ -136,6 +138,7 @@ module gem_top #(
     wire [`GEM_COUNTER_WIDTH-1:0] stat_tx_ok, stat_tx_rejected, stat_tx_underrun;
     wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_ok, stat_rx_badfcs, stat_rx_runt;
     wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize, stat_rx_rxer;
+    wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_fifo_drop;
     wire         rx_fifo_drop;
     wire [31:0]  phy_id;
     wire         phy_id_valid, link_up;
@@ -192,20 +195,21 @@ module gem_top #(
         .rx_axis_tlast    (rx_tlast),
         .rx_axis_tuser    (rx_tuser),
 
-        .stat_tx_ok       (stat_tx_ok),
-        .stat_tx_rejected (stat_tx_rejected),
-        .stat_tx_underrun (stat_tx_underrun),
-        .stat_rx_ok       (stat_rx_ok),
-        .stat_rx_badfcs   (stat_rx_badfcs),
-        .stat_rx_runt     (stat_rx_runt),
-        .stat_rx_oversize (stat_rx_oversize),
-        .stat_rx_rxer     (stat_rx_rxer),
-        .rx_fifo_drop     (rx_fifo_drop),
-        .stat_clear       (stat_clear),
-        .phy_id           (phy_id),
-        .phy_id_valid     (phy_id_valid),
-        .link_up          (link_up),
-        .link_speed       (link_speed)
+        .stat_tx_ok        (stat_tx_ok),
+        .stat_tx_rejected  (stat_tx_rejected),
+        .stat_tx_underrun  (stat_tx_underrun),
+        .stat_rx_ok        (stat_rx_ok),
+        .stat_rx_badfcs    (stat_rx_badfcs),
+        .stat_rx_runt      (stat_rx_runt),
+        .stat_rx_oversize  (stat_rx_oversize),
+        .stat_rx_rxer      (stat_rx_rxer),
+        .stat_rx_fifo_drop (stat_rx_fifo_drop),
+        .rx_fifo_drop      (rx_fifo_drop),
+        .stat_clear        (stat_clear),
+        .phy_id            (phy_id),
+        .phy_id_valid      (phy_id_valid),
+        .link_up           (link_up),
+        .link_speed        (link_speed)
     );
 
     //======================================================================
@@ -238,26 +242,27 @@ module gem_top #(
     gem_stat_report #(
         .CLKS_PER_REPORT (STAT_CLKS_PER_REPORT)
     ) u_report (
-        .clk              (tx_clk),
-        .rst_n            (tx_rst_n),
-        .stat_tx_ok       (stat_tx_ok),
-        .stat_tx_rejected (stat_tx_rejected),
-        .stat_tx_underrun (stat_tx_underrun),
-        .stat_rx_ok       (stat_rx_ok),
-        .stat_rx_badfcs   (stat_rx_badfcs),
-        .stat_rx_runt     (stat_rx_runt),
-        .stat_rx_oversize (stat_rx_oversize),
-        .stat_rx_rxer     (stat_rx_rxer),
-        .link_up          (link_up),
-        .link_speed       (link_speed),
-        .phy_id           (phy_id),
-        .phy_id_valid     (phy_id_valid),
+        .clk               (tx_clk),
+        .rst_n             (tx_rst_n),
+        .stat_tx_ok        (stat_tx_ok),
+        .stat_tx_rejected  (stat_tx_rejected),
+        .stat_tx_underrun  (stat_tx_underrun),
+        .stat_rx_ok        (stat_rx_ok),
+        .stat_rx_badfcs    (stat_rx_badfcs),
+        .stat_rx_runt      (stat_rx_runt),
+        .stat_rx_oversize  (stat_rx_oversize),
+        .stat_rx_rxer      (stat_rx_rxer),
+        .stat_rx_fifo_drop (stat_rx_fifo_drop),
+        .link_up           (link_up),
+        .link_speed        (link_speed),
+        .phy_id            (phy_id),
+        .phy_id_valid      (phy_id_valid),
         // The deskew MMCM's lock, on the record: the one field that says why
         // a link exists while nothing is being received. Design doc Step 3f.
-        .rx_mmcm_locked   (rx_mmcm_locked),
-        .uart_data        (uart_data),
-        .uart_valid       (uart_valid),
-        .uart_ready       (uart_ready)
+        .rx_mmcm_locked    (rx_mmcm_locked),
+        .uart_data         (uart_data),
+        .uart_valid        (uart_valid),
+        .uart_ready        (uart_ready)
     );
 
     gem_uart_tx #(
@@ -313,31 +318,16 @@ module gem_top #(
     // thing a soak needs to have noticed. Cleared with the counters it
     // reflects, by the same key.
     //
-    // The FIFO-drop pulse joins it through a toggle synchroniser, same as the
-    // counter events inside gem_mac cross: the pulse lives in the RX domain
-    // and this latch in tx_clk. A dropped beat is not one of R17's counted
-    // error classes -- B.3a derives that it cannot happen -- so its only
-    // witness is this LED. If it ever lights, B.3a's premise (no-stall user
-    // logic, R18) was wrong somewhere, which is precisely what a soak exists
-    // to learn.
+    // rx_fifo_drop arrives already in tx_clk and already one pulse per frame:
+    // gem_mac collapses the FIFO's per-octet drop and synchronises it beside
+    // the five counter events, which is where that crossing belongs. This
+    // module used to own the synchroniser, from when a dropped beat had no
+    // counter and this LED was its only witness. It has one now -- the
+    // record's rx_drop field -- and the LED is kept because a sticky light
+    // needs no host attached to be read at three in the morning.
     //
-    // Both halves take the deskew design's resets (Step 3b): the source on
-    // rx_rst_n, the destination on rx_path_rst_n. This is a crossing out of
-    // the RX domain like any other -- the design document enumerated the six
-    // inside gem_mac and missed this seventh; leaving it on tx_rst_n would
-    // have manufactured one phantom FIFO-drop event per link flap and lit
-    // err_seen for nothing.
-    wire rx_fifo_drop_tx;
-
-    gem_pulse_sync u_ev_fifo_drop (
-        .src_clk   (rx_clk_deskew),
-        .src_rst_n (rx_rst_n),
-        .src_pulse (rx_fifo_drop),
-        .dst_clk   (tx_clk),
-        .dst_rst_n (rx_path_rst_n),
-        .dst_pulse (rx_fifo_drop_tx)
-    );
-
+    // If it ever lights, B.3a's premise (no-stall user logic, R18) was wrong
+    // somewhere, which is precisely what a soak exists to learn.
     reg err_seen;
 
     always @(posedge tx_clk or negedge tx_rst_n) begin
@@ -347,7 +337,7 @@ module gem_top #(
             err_seen <= 1'b0;
         end else if ((|stat_rx_badfcs) || (|stat_rx_runt) ||
                      (|stat_rx_oversize) || (|stat_rx_rxer) ||
-                     rx_fifo_drop_tx) begin
+                     rx_fifo_drop) begin
             err_seen <= 1'b1;
         end
     end

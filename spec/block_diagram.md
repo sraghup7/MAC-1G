@@ -29,7 +29,7 @@ flowchart TB
     subgraph SYSDOM["sys_clk domain (= tx_clk, B.7 item 3)"]
         MAC["gem_mac\nthe MAC — second diagram"]
         ECHO["gem_echo — B.5 step 6\nstore and forward, good frames only\nDA/SA exchanged, one frame buffered\n1x BRAM18"]
-        REPORT["gem_stat_report\n13 fields snapshotted in one cycle\none named-field record per second"]
+        REPORT["gem_stat_report\n14 fields snapshotted in one cycle\none named-field record per second"]
         UART["gem_uart_tx\n8N1, 115200 (divisor 1085)"]
     end
 
@@ -38,7 +38,7 @@ flowchart TB
 
     MAC -->|rx_axis: DA..pad + verdict| ECHO
     ECHO -->|tx_axis: payload,\ntuser = swapped header| MAC
-    MAC -->|13-field record: 8 counters,\nlink, speed, phy_id, phyok, rxlock| REPORT
+    MAC -->|14-field record: 9 counters,\nlink, speed, phy_id, phyok, rxlock, rx_drop| REPORT
     REPORT -->|characters| UART --> UARTPIN(["uart_tx\nG16"])
 
     MAC <-->|RGMII, 4-bit DDR| RGMIIPINS(["RGMII pins, bank 15\nTXD/TX_CTL/GTX_CLK\nRXD/RX_CTL/RX_CLK"])
@@ -79,7 +79,7 @@ flowchart LR
         ASM["Frame assembler / padder\n(preamble+SFD, DA/SA/EtherType,\npad < 46B, reject > 1500B)"]
         CRCTX["Parallel CRC-32 gen\n(byte-parallel, B.7 item 2)\nFCS, or inverted FCS on abort"]
         ARB["TX arbiter / IFG counter\n(96-bit IFG, no CSMA/CD)\nowns the abort: TX_ER, drop TX_EN,\ndiscard the rest — B.4b"]
-        REG["Register / status block\n(8 counters incl. tx_underrun,\nlink state, sticky flags — R17)"]
+        REG["Register / status block\n(9 counters incl. tx_underrun,\nlink state, sticky flags — R17)"]
         MDIO["MDIO master\n(<= 2.5 MHz MDC — R16)"]
         TXIN --> ASM --> CRCTX --> ARB
     end

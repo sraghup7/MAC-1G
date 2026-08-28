@@ -7,7 +7,7 @@ which prints one line per second like:
     gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 \
     rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 \
     link=00000001 speed=00000002 phyid=00221622 phyok=00000001 \
-    rxlock=00000001
+    rxlock=00000001 rx_drop=00000000
 
 (one line on the wire; wrapped here to fit). Spec B.7 item 5 chose a UART over a
 JTAG probe precisely so that a four-hour soak produces a file that can be
@@ -53,6 +53,10 @@ COUNTER_FIELDS = (
     "rx_runt",
     "rx_over",
     "rx_rxer",
+    # Frames in which at least one octet was lost to a full RX FIFO. Frames,
+    # not octets: the RTL collapses a burst of dropped beats into one event
+    # per frame, so the count is per-frame rather than per-octet.
+    "rx_drop",
 )
 
 STATUS_FIELDS = (

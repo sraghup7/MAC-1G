@@ -48,11 +48,11 @@ V-20: the counters have been correct since Stage 4 and had no way out of the
 chip. They now leave it as one named-field line a second —
 
 ```
-gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=00221622 phyok=00000001 rxlock=00000001
+gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 ... phyid=00221622 phyok=00000001 rxlock=00000001 rx_drop=00000000
 ```
 
 — every field of which is captured in the same cycle, because a record takes 17 ms
-to clock out at 115200 baud and a soak that reads fields from thirteen different
+to clock out at 115200 baud and a soak that reads fields from fourteen different
 instants finds divergence it caused itself.
 
 And now **the board itself** (`rtl/gem_top.v`): the MAC, the clocking, the
@@ -235,7 +235,7 @@ been made to fail on purpose, by planting the defect it exists to catch:
 | MDIO preamble length | a frame started mid-MDC-period, which drives 31 preamble ones instead of 32 |
 | Clock/reset properties | three defects planted one at a time: an rx reset gated on MMCM lock (then forbidden — the deskew architecture has since reversed this, with the testbench rewritten around the new semantics), a tx reset that is *not* gated on it, and a synchroniser chain made synchronous-only — which cannot assert at all once the MMCM's reset has stopped the clock |
 | UART framing and baud | a divisor 3.2% off, and a transmitter reversed to send MSB first. The first of those **passed** until the test was fixed: it had been measuring its own receiver's delay loop rather than the design's edges, and framing alone cannot catch a wrong baud because a receiver resynchronises on every start bit |
-| Status record | the snapshot removed, so the fields come from thirteen different instants, and the value nibbles reversed |
+| Status record | the snapshot removed, so the fields come from fourteen different instants, and the value nibbles reversed |
 | Recovery from a mid-operation reset | a `pending` flag moved out of the echo path's reset, so it survives a reset that clears the length and header underneath it. It powers up correct, so a cold start works and every other test stays green — the same defect passes the previous testbench at 31 checks and fails this one |
 | Echo path | the header taken from the live capture register instead of the one latched at commit — the defect this module actually had, which corrupts a reply's destination only when a second frame arrives mid-transmission — and a bad frame echoed as though it were good |
 | Memory inference | the defect that motivated it: a FIFO array that dissolved into 648 flip-flops |

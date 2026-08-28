@@ -51,6 +51,9 @@ RTL_SOURCES = [
     "rtl/gem_tx_engine.v",
     "rtl/gem_rx_deframe.v",
     "rtl/gem_rx_fifo.v",
+    # Collapses the FIFO's per-octet drop into one event per frame, so the
+    # rx_drop counter survives the crossing into tx_clk.
+    "rtl/gem_rx_drop_episode.v",
     "rtl/gem_rx_egress.v",
     # V-25: closes a frame the link took away in band. Downstream of
     # gem_rx_egress; must be listed after it for anyone reading top-down.

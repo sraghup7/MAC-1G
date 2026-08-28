@@ -44,6 +44,7 @@ def _record(**overrides) -> gr.Record:
     values = {
         "tx_ok": 0, "tx_rej": 0, "tx_urun": 0,
         "rx_ok": 0, "rx_bad": 0, "rx_runt": 0, "rx_over": 0, "rx_rxer": 0,
+        "rx_drop": 0,
         "link": 1, "speed": 2, "phyid": 0x00221622, "phyok": 1, "rxlock": 1,
     }
     values.update(overrides)

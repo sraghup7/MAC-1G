@@ -72,6 +72,9 @@ architecture):**
 * The UART record gained a field: `rxlock=` (the deskew MMCM's lock),
   closing design-doc Step 3f. `sw/host` parses it; fixtures regenerated from
   simulation output.
+* The UART record gained a field: `rx_drop=` (frames, not octets, in which at
+  least one octet was lost to a full RX FIFO). `sw/host` parses it; fixtures
+  regenerated from simulation output.
 * **B.1b's "no IDELAY needed for v1" claim is retracted** — it reasoned about
   the PHY's delay at the pins and omitted the FPGA's own clock-network
   insertion delay, which task-4a measured as the entire problem.
@@ -1199,10 +1202,10 @@ deferred to RTL time):**
    itself:
 
    ```
-   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001
+   gem tx_ok=0000002a tx_rej=00000000 tx_urun=00000003 rx_ok=000001f4 rx_bad=00000002 rx_runt=00000000 rx_over=0000000b rx_rxer=00000000 link=00000001 speed=00000002 phyid=00221622 phyok=00000001 rxlock=00000001 rx_drop=00000000
    ```
 
-   208 characters and a newline, once a second. Every field is named on every line and
+   225 characters and a newline, once a second. Every field is named on every line and
    every value is eight hex nibbles including the one-bit ones, so a parser has one rule
    rather than a width per field. **Every field in a line is captured in the same cycle**
    — a record takes ~17 ms to clock out at 115200 baud, and without that snapshot its
@@ -1211,7 +1214,7 @@ deferred to RTL time):**
 
    **Measured cost: 249 LUTs and 373 flip-flops** (`gem_stat_report` 209 + 40 for
    `gem_uart_tx`), against the 150–250 LUTs estimated below. The estimate held, at its
-   top end; the flip-flops are mostly the 13×32-bit snapshot, which the estimate did not
+   top end; the flip-flops are mostly the 14×32-bit snapshot, which the estimate did not
    name because the coherence problem it solves had not been thought about yet.
 
    **What this obliges Stage 5 to build**, stated here so the decision is actionable and

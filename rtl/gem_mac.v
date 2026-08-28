@@ -147,11 +147,15 @@ module gem_mac (
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_runt,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_oversize,
     output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_rxer,
+    output wire [`GEM_COUNTER_WIDTH-1:0] stat_rx_fifo_drop,
     input  wire         stat_clear,
-    // One rx_clk cycle per receive octet refused because the async FIFO was
-    // full (B.3a says this cannot happen; R2's whole point is that a premise
-    // nobody can observe is a premise nobody checks). Additive port -- every
-    // existing testbench leaves it unconnected.
+    // One tx_clk pulse per receive frame that lost at least one octet to a
+    // full async FIFO. It is the per-frame collapse of gem_rx_fifo's
+    // per-octet `drop`, synchronised in this module: the raw per-octet pulse
+    // is too dense for a toggle synchroniser to carry without an unknown,
+    // load-dependent undercount. B.3a says this cannot happen, which is why
+    // the premise must be observable (and now countable) if it does. Additive
+    // port -- existing testbenches leave it unconnected.
     output wire         rx_fifo_drop,
     // What the MDIO sequencer found, live on pins so an ILA or VIO can read the
     // link state with no software attached -- which is the situation B.5's
@@ -308,6 +312,27 @@ module gem_mac (
         .empty    (fifo_empty)
     );
 
+    // The FIFO's per-octet drop, collapsed to one event per frame that lost
+    // anything, so that it survives the crossing below. gem_rx_drop_episode's
+    // header explains why the raw pulse cannot: a toggle synchroniser cannot
+    // carry a burst of consecutive cycles, and an undercount nobody can
+    // measure would be worse than no counter at all.
+    //
+    // It is a module rather than two flops here so that constrs/pins.xdc can
+    // confine it to the RX clock region by hierarchy, the way it confines
+    // every other cell the deskewed clock touches.
+    wire ev_rx_frame_end = ev_rx_ok_r | ev_rx_badfcs_r | ev_rx_runt_r |
+                           ev_rx_oversize_r | ev_rx_rxer_r;
+    wire fifo_drop_frame;
+
+    gem_rx_drop_episode u_rx_drop_episode (
+        .clk       (rx_clk),
+        .rst_n     (rx_rst_n),
+        .drop      (fifo_drop),
+        .frame_end (ev_rx_frame_end),
+        .episode   (fifo_drop_frame)
+    );
+
     // Takes rx_path_rst_n rather than tx_rst_n. Leaving it out of the RX
     // reset was traced worse than resetting it: egress would stall mid-frame
     // on fifo_empty and then resume the old frame with the new frame's
@@ -357,11 +382,12 @@ module gem_mac (
     //======================================================================
     wire ev_rx_ok_s, ev_rx_badfcs_s, ev_rx_runt_s;
     wire ev_rx_oversize_s, ev_rx_rxer_s;
+    wire ev_rx_fifo_drop_s;
 
     // Destination halves take rx_path_rst_n so a link drop cannot manufacture
     // phantom counter events: if the source toggle resets while the
     // destination chain keeps its old value, the edge detector fires once and
-    // five counters lie about a link that delivered nothing.
+    // the counters lie about a link that delivered nothing.
     gem_pulse_sync u_ev_rx_ok (
         .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_ok_r),
         .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_ok_s));
@@ -382,6 +408,15 @@ module gem_mac (
         .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (ev_rx_rxer_r),
         .dst_clk (tx_clk),       .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_rxer_s));
 
+    // The FIFO-drop event crosses with the five above, and for the same
+    // reason the destination takes rx_path_rst_n: leaving it on tx_rst_n
+    // would manufacture one phantom drop per link flap. The source is the
+    // per-frame R1 pulse (fifo_drop_frame), not gem_rx_fifo's per-octet
+    // drop, which is far too dense for a toggle synchroniser to carry.
+    gem_pulse_sync u_ev_rx_fifo_drop (
+        .src_clk (rx_clk), .src_rst_n (rx_rst_n), .src_pulse (fifo_drop_frame),
+        .dst_clk (tx_clk), .dst_rst_n (rx_path_rst_n), .dst_pulse (ev_rx_fifo_drop_s));
+
     // Deliberately tx_rst_n, NOT rx_path_rst_n. The counters must survive a
     // link flap -- a statistics block that zeroed itself whenever the cable
     // moved would destroy the evidence at exactly the moment it is wanted.
@@ -401,6 +436,7 @@ module gem_mac (
         .ev_rx_runt       (ev_rx_runt_s),
         .ev_rx_oversize   (ev_rx_oversize_s),
         .ev_rx_rxer       (ev_rx_rxer_s),
+        .ev_rx_fifo_drop  (ev_rx_fifo_drop_s),
         .stat_tx_ok       (stat_tx_ok),
         .stat_tx_rejected (stat_tx_rejected),
         .stat_tx_underrun (stat_tx_underrun),
@@ -408,7 +444,8 @@ module gem_mac (
         .stat_rx_badfcs   (stat_rx_badfcs),
         .stat_rx_runt     (stat_rx_runt),
         .stat_rx_oversize (stat_rx_oversize),
-        .stat_rx_rxer     (stat_rx_rxer)
+        .stat_rx_rxer     (stat_rx_rxer),
+        .stat_rx_fifo_drop(stat_rx_fifo_drop)
     );
 
     //======================================================================
@@ -449,8 +486,10 @@ module gem_mac (
     wire _unused_ok = &{1'b0, fifo_full, tx_residue_unused, rx_crc_unused};
     /* verilator lint_on UNUSED */
 
-    // The FIFO's drop pulse leaves as a port rather than dying here: B.3a
-    // says it can never fire, which is why it must be observable if it does.
-    assign rx_fifo_drop = fifo_drop;
+    // The FIFO's drop leaves as a port, but as the synchronised per-frame
+    // pulse in tx_clk -- the same event the rx_drop counter counts -- not the
+    // raw per-octet pulse. B.3a says it can never fire, which is why it must
+    // be observable (and now countable) if it does.
+    assign rx_fifo_drop = ev_rx_fifo_drop_s;
 
 endmodule
