@@ -75,3 +75,10 @@ __pycache__/
 
 # Interview/portfolio one-pager (generated deliverable, not project source)
 gem_mac_project_overview.pdf
+
+# Bench run artifacts. soak.log is covered by *.log above; the soak tool's
+# stdout is not, and it got committed once before this line existed. These
+# are one-run transcripts -- the durable record of a soak belongs in
+# docs/reports/stage9/, not in a stray file at the repo root.
+*.stdout
+echo_soak.log
