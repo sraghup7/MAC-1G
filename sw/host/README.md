@@ -50,6 +50,8 @@ it reads as a board defect. See `bringup_checklist.md` step 7 for the command.
 | `gem_host.py` | The bring-up commands, one per B.5 step. |
 | `test_gem_host.py` | Tests for the pass/fail decisions inside `gem_host.py` (`evaluate_rx`, `ambient_allowance`, `check_echo_frame`, `evaluate_corrupt`, `detect_anomalies`, ...), isolated from Scapy, the serial port and each command's I/O. |
 | `test_gem_host_commands.py` | Tests for the commands themselves (`cmd_rx`, `cmd_echo`, `cmd_corrupt`, `cmd_soak`, `cmd_rate`) against fakes standing in for `StatusPort` and Scapy — including a fake board that misbehaves, on the same "plant the defect and watch the check catch it" principle the RTL gates in the top-level README use. |
+| `flood.py` | The load generator: raw Ethertype frames at the board's MAC. `--mode queue` (default) batches frames into one `pcap_sendqueue_transmit` call per queue-full; `--mode simple` is the old per-call path. |
+| `test_flood.py` | Tests for `flood.py`'s pure frame/rate logic, with no adapter, no board and no packet driver — importing `flood.py` must stay driver-free. |
 | `requirements.txt` | Scapy and pyserial, both imported lazily so `monitor` works without Scapy. |
 
 Run the tests with:
@@ -212,25 +214,65 @@ failure.
 Raw Ethertype frames straight at the board's MAC, built once and pushed
 through one persistent layer-2 socket.
 
+**Two transmit paths, chosen with `--mode`.** `--mode queue` (the default)
+builds one `pcap_send_queue`, fills it with as many copies of the frame as
+fit, and hands the whole queue to the kernel with one `pcap_sendqueue_transmit`
+call — `--queue-mb` sets the buffer size (default 8 MB). `--mode simple` is
+the old per-call path, one kernel-mode send per frame. If the queue path
+cannot be set up — wpcap.dll missing, a symbol absent, `pcap_open_live` or
+`pcap_sendqueue_alloc` failing — it prints why and falls back to `simple`
+rather than refusing to run. The output always says which path actually ran,
+because a frames-per-second figure from the two paths is not comparable.
+
+Measured 2026-08-28, same board and adapter:
+
+| case | `--mode simple` | `--mode queue` |
+|---|---|---|
+| 1518 octets, 1 process | 18,050 fps (22.2% of line rate) | **79,257 fps (97.5%)** |
+| 64 octets, 1 process | 19,242 fps (1.29%) | 118,107 fps (7.9%) |
+| 64 octets, 4 processes | — | 217,893 fps (14.6%) |
+| 64 octets, 8 processes | — | 190,452 fps (12.8%), *worse than 4* |
+
+One send-queue process beats ten per-packet processes.
+
 **iperf3 cannot be used here.** It opens a TCP control connection to an
 iperf3 server before sending anything, UDP mode included, and the board has
 no ARP, no IP and no TCP for it to talk to. Any generator that expects an IP
 peer fails the same way.
 
-**Run several at once.** One sender is frame-rate limited rather than
-bandwidth limited -- about 18,000 frames/s whatever the frame size -- and the
-limit is per process, so it parallelises. One sender reaches 21% of line
-rate; ten reach 96%.
+**Parallel senders still help, up to a point.** The old path's limit is
+per-call overhead in the Python/Npcap send path, it is per process, and it
+parallelises — one `--mode simple` sender reaches about 18,000 frames/s
+whatever the frame size, and ten reached 96% of line rate. With `--mode
+queue` a single process is now enough at maximum frame size. At minimum
+frame size the ceiling is the Realtek adapter and the WinPcap driver rather
+than this code: four processes reach 217,893 fps, eight are slower than
+four, and nothing here will try to tune that.
+
+```
+for i in 1 2 3 4; do
+  python sw/host/flood.py --iface Ethernet --seconds 50 --size 46 &
+done
+python sw/host/gem_host.py rate --port COM5 --window 30 --frame-bytes 64
+```
+
+The ten-sender pattern that used to be the way to line rate is now the
+`--mode simple` fallback's only point:
 
 ```
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  python sw/host/flood.py --iface Ethernet --seconds 50 --size 1500 &
+  python sw/host/flood.py --iface Ethernet --mode simple --seconds 50 --size 1500 &
 done
 python sw/host/gem_host.py rate --port COM5 --window 30 --frame-bytes 1518
 ```
 
-Measured 2026-08-28: 78,063 frames/s received, 96.05% of line rate, 2,419,981
-frames, every error counter flat. See `docs/reports/stage9/known-issues.md`.
+Measured 2026-08-28: ten `--mode simple` senders, 78,063 frames/s received,
+96.05% of line rate, 2,419,981 frames, every error counter flat. See
+`docs/reports/stage9/known-issues.md`.
+
+The pure logic — frame building, the MAC-string conversion, and the
+line-rate/rate arithmetic — lives in module-level functions covered by
+`test_flood.py`, which runs with no adapter, no board and no packet driver.
 
 ## Measuring against line rate (`rate`)
 
