@@ -3,9 +3,9 @@
 
 test_gem_host.py checks the extracted decision functions (evaluate_rx,
 check_echo_frame, ...) in isolation. This file checks the commands that call
-them -- cmd_rx, cmd_echo, cmd_corrupt -- end to end: argument parsing into a
-verdict and an exit code, with StatusPort and Scapy replaced by fakes so
-nothing here needs a board, a serial port, Npcap or root.
+them -- cmd_rx, cmd_echo, cmd_corrupt, cmd_soak, cmd_rate -- end to end:
+argument parsing into a verdict and an exit code, with StatusPort and Scapy
+replaced by fakes so nothing here needs a board, a serial port, Npcap or root.
 
 Until this file existed, cmd_rx/cmd_echo/cmd_corrupt had never executed even
 once. Following this repo's own rule that a check that cannot fail is not a
@@ -31,11 +31,12 @@ import gem_records as gr
 
 
 def _args(**kwargs) -> types.SimpleNamespace:
-    # control/window are cmd_rx's two window lengths, in status records. One
-    # each here keeps the scripted record sequences below short; the real
-    # defaults are 4 and 3, and nothing in cmd_rx cares which.
+    # control/window are cmd_rx's two window lengths, in status records; the
+    # frame size is what cmd_rate assumes the external generator is sending.
+    # One each here keeps the scripted record sequences below short; the real
+    # defaults are 4, 3 and 1518, and nothing in the commands cares which.
     defaults = dict(port="COM_FAKE", iface="fake0", src="02:00:00:00:00:02",
-                    control=1, window=1)
+                    control=1, window=1, frame_bytes=1518)
     defaults.update(kwargs)
     return types.SimpleNamespace(**defaults)
 
@@ -431,6 +432,87 @@ def tempfile_path():
         yield path
     finally:
         _os.remove(path)
+
+
+# --------------------------------------------------------------------------
+# cmd_rate
+# --------------------------------------------------------------------------
+class TestCmdRate(unittest.TestCase):
+    """cmd_rate reads one baseline record then --window more, and turns the
+    deltas across the whole span into rates using the elapsed wall clock,
+    which the tests script with mock.patch on gh.time.time -- the fake board
+    answers instantly, so the real clock would report a ~0 s window. The
+    verdict is R4's: only a receive error counter may fail the run.
+    """
+
+    def _run(self, records, elapsed_seconds=2.0, **kwargs):
+        port = FakeStatusPort(records)
+        out = io.StringIO()
+        with _patch_port(port), \
+             mock.patch.object(gh.time, "time",
+                               side_effect=[_BASE, _BASE + elapsed_seconds]):
+            with contextlib.redirect_stdout(out):
+                rc = gh.cmd_rate(_args(window=2, **kwargs))
+        return rc, out.getvalue(), port
+
+    def test_clean_run_reports_the_rate_the_deltas_imply(self):
+        # Baseline rx_ok=0, then --window 2 records ending at 10: a delta of
+        # 10 over a scripted 2 s wall clock is 5 frames/s.
+        rc, out, port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=5), _record(rx_ok=10)])
+        self.assertEqual(rc, 0)
+        self.assertIn("rx_ok: 5.0 frames/s", out)
+        self.assertTrue(port.closed)
+
+    def test_it_says_traffic_is_not_generated_here(self):
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=5), _record(rx_ok=10)])
+        self.assertEqual(rc, 0)
+        self.assertIn("traffic is not generated here", out)
+
+    def test_rx_bad_advancing_fails(self):
+        rc, out, _port = self._run(
+            [_record(rx_ok=0, rx_bad=0),
+             _record(rx_ok=0, rx_bad=0),
+             _record(rx_ok=10, rx_bad=3)])
+        self.assertEqual(rc, 1)
+        self.assertIn("rx_bad advanced by 3", out)
+
+    def test_rx_drop_advancing_alone_still_passes_but_is_reported(self):
+        # R4's pin: at line rate the echo path overflows the RX FIFO by design,
+        # so a run in which only rx_drop moved must exit 0 -- while still
+        # printing the drop count, because it is a number the reader needs.
+        rc, out, _port = self._run(
+            [_record(rx_drop=0), _record(rx_drop=0), _record(rx_drop=7)])
+        self.assertEqual(rc, 0)
+        self.assertIn("rx_drop", out)
+        self.assertIn("(7 frame(s))", out)
+
+    def test_the_elapsed_time_comes_from_the_clock_and_is_said_so(self):
+        # The board prints one record a second, so a 2-record window is roughly
+        # two seconds -- but the command must measure, not assume, and must say
+        # which it used. Scripting 4 s of wall clock halves the implied rate.
+        rc, out, _port = self._run(
+            [_record(rx_ok=0), _record(rx_ok=5), _record(rx_ok=10)],
+            elapsed_seconds=4.0)
+        self.assertEqual(rc, 0)
+        self.assertIn("4.0 s of host wall clock", out)
+        self.assertIn("measured, not assumed from the record count", out)
+        self.assertIn("rx_ok: 2.5 frames/s", out)
+
+    def test_the_verdict_wiring_itself_can_fail(self):
+        # Proof this class can catch a regression in R4's decision: a
+        # rate_failed that treats rx_drop as an error would make the
+        # rx_drop-only run above exit 1 instead of 0.
+        port = FakeStatusPort([_record(rx_drop=0), _record(rx_drop=0),
+                               _record(rx_drop=7)])
+        broken_rate_failed = lambda d: True  # noqa: E731
+        with _patch_port(port), \
+             mock.patch.object(gh, "rate_failed", broken_rate_failed), \
+             mock.patch.object(gh.time, "time", side_effect=[_BASE, _BASE + 2.0]):
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = gh.cmd_rate(_args(window=2))
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

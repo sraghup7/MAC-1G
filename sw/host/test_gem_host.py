@@ -395,5 +395,75 @@ class TestReadRecordFromLines(unittest.TestCase):
             gh._read_record_from_lines(lines, tries=3)
 
 
+# --------------------------------------------------------------------------
+# line rate -- the pure arithmetic behind `rate`
+# --------------------------------------------------------------------------
+class TestLineRateFps(unittest.TestCase):
+
+    def test_maximum_frame_size_matches_the_standard_figure(self):
+        # 1e9 / ((1518 + 20) * 8) = 1e9 / 12304. The commonly published gigabit
+        # figure is 81,274 frames/s, and this agrees with it.
+        #
+        # The task contract that asked for this function stated 81275.2, which
+        # is simply wrong; it went unnoticed only because that contract also
+        # allowed a one-frame tolerance. Asserted tightly here so the error
+        # cannot be inherited by whatever reads this next.
+        self.assertAlmostEqual(gh.line_rate_fps(1518), 81274.3823, delta=0.001)
+
+    def test_minimum_frame_size_matches_the_standard_figure(self):
+        # 1e9 / ((64 + 20) * 8) = 1e9 / 672.
+        self.assertAlmostEqual(gh.line_rate_fps(64), 1488095.2381, delta=0.001)
+
+    def test_below_the_minimum_is_rejected(self):
+        with self.assertRaises(ValueError):
+            gh.line_rate_fps(63)
+
+    def test_above_the_maximum_is_rejected(self):
+        # A 9000-octet jumbo frame is a question the gigabit formula does not
+        # answer; refusing beats returning a number that has no meaning.
+        with self.assertRaises(ValueError):
+            gh.line_rate_fps(9000)
+
+
+class TestRateReport(unittest.TestCase):
+    """The R2 pure function: deltas over a timed window become rates, and the
+    percentage is against the frame size's own line rate. No I/O here -- the
+    printing is cmd_rate's job.
+    """
+
+    def _rates(self, after, seconds=2.0, frame_bytes=1518):
+        before = _record()
+        return gh.rate_report(gr.deltas(before, after), seconds, frame_bytes)
+
+    def test_deltas_over_a_window_become_rates(self):
+        r = self._rates(_record(rx_ok=50, rx_drop=5, tx_ok=10))
+        self.assertEqual(r["rx_ok_per_s"], 25.0)
+        self.assertEqual(r["rx_bad_per_s"], 0.0)
+        self.assertEqual(r["rx_drop_per_s"], 2.5)
+        self.assertEqual(r["tx_ok_per_s"], 5.0)
+
+    def test_a_one_second_window_makes_each_delta_its_own_rate(self):
+        # The sanity check the arithmetic stands on: 100 frames in 1 s is 100/s.
+        r = self._rates(_record(rx_ok=100), seconds=1.0)
+        self.assertEqual(r["rx_ok_per_s"], 100.0)
+
+    def test_the_percentage_is_of_the_frame_sizes_own_line_rate(self):
+        # Same count, twice the window: half the rate, half the percentage.
+        r = self._rates(_record(rx_ok=50), seconds=2.0)
+        self.assertAlmostEqual(
+            r["rx_ok_pct_line_rate"],
+            100.0 * 25.0 / gh.line_rate_fps(1518))
+        r2 = self._rates(_record(rx_ok=50), seconds=4.0)
+        self.assertAlmostEqual(r2["rx_ok_pct_line_rate"], r["rx_ok_pct_line_rate"] / 2)
+
+    def test_a_non_positive_window_is_rejected(self):
+        # A zero or negative window cannot produce a rate; refusing beats
+        # dividing by it.
+        with self.assertRaises(ValueError):
+            gh.rate_report(gr.deltas(_record(), _record(rx_ok=5)), 0.0, 1518)
+        with self.assertRaises(ValueError):
+            gh.rate_report(gr.deltas(_record(), _record(rx_ok=5)), -1.0, 1518)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ python gem_host.py rx      --port COM4 --iface Ethernet --count 100   # B.5 step
 python gem_host.py echo    --port COM4 --iface Ethernet --count 100   # B.5 step 6
 python gem_host.py corrupt --port COM4 --iface Ethernet               # B.5 step 7
 python gem_host.py soak    --port COM4 --hours 4                      # B.5 step 8
+python gem_host.py rate    --port COM4 --window 30 --frame-bytes 1518  # line-rate measurement
 ```
 
 `--iface` is the host's network interface (`Ethernet` on Windows, `eth0` or
@@ -48,7 +49,7 @@ it reads as a board defect. See `bringup_checklist.md` step 7 for the command.
 | `test_gem_records.py` | Its tests, which run with no board, no serial port and nothing installed. |
 | `gem_host.py` | The bring-up commands, one per B.5 step. |
 | `test_gem_host.py` | Tests for the pass/fail decisions inside `gem_host.py` (`evaluate_rx`, `ambient_allowance`, `check_echo_frame`, `evaluate_corrupt`, `detect_anomalies`, ...), isolated from Scapy, the serial port and each command's I/O. |
-| `test_gem_host_commands.py` | Tests for the commands themselves (`cmd_rx`, `cmd_echo`, `cmd_corrupt`, `cmd_soak`) against fakes standing in for `StatusPort` and Scapy — including a fake board that misbehaves, on the same "plant the defect and watch the check catch it" principle the RTL gates in the top-level README use. |
+| `test_gem_host_commands.py` | Tests for the commands themselves (`cmd_rx`, `cmd_echo`, `cmd_corrupt`, `cmd_soak`, `cmd_rate`) against fakes standing in for `StatusPort` and Scapy — including a fake board that misbehaves, on the same "plant the defect and watch the check catch it" principle the RTL gates in the top-level README use. |
 | `requirements.txt` | Scapy and pyserial, both imported lazily so `monitor` works without Scapy. |
 
 Run the tests with:
@@ -202,3 +203,45 @@ inter-frame gap behind: a host that expects every frame back at line rate is
 asking for something arithmetically impossible. `echo` sends and waits, which is
 why it gets everything back; a blast will not, and only a *mismatch* is a
 failure.
+
+---
+
+## Measuring against line rate (`rate`)
+
+Every command above that sends traffic runs at roughly 440 frames/s — about
+0.5% of gigabit line rate at 1500-byte frames. `rate` is for scoring a *flood*:
+it reads the board's own counters over a fixed window and reports what was
+received as frames per second and as a percentage of the line rate for that
+frame size, so an external generator can be measured against the design's own
+numbers.
+
+**The traffic comes from an external generator, not from this host.** `rate`
+generates nothing and needs no `--iface`. Point `iperf3` (UDP mode, e.g.
+`iperf3 -u -c <host> -b 1G -l 1472`) or `pktgen` on Linux at the board, and run:
+
+```bash
+python gem_host.py rate --port COM5 --window 30 --frame-bytes 1518
+```
+
+`rate` reads one baseline status record, then `--window` more (default 30). The
+board prints one record a second, so the window in records is roughly the window
+in seconds — but the elapsed time is taken from the host wall clock, not assumed
+from the count, and the output says which was used. `--frame-bytes` is the wire
+frame size (including FCS) the generator is sending, and **must match what it
+actually sends**: the percentage is computed against that size's line rate
+(81274.4 frames/s for 1518-octet frames, 1488095.2 for 64).
+
+`rx_ok` is the right counter to read because it is incremented **before** the RX
+FIFO (`gem_rx_deframe`), so it counts every frame the receive path decoded
+whether or not anything downstream kept up — which is what makes a flood
+measurable at all. Two things to know about the verdict:
+
+- **The percentage is a measurement, not a pass/fail.** This host cannot know
+  how many frames the generator sent, so "achieved 62% of line rate" could just
+  as well mean the generator was slow. `rate` exits 0 as long as no receive
+  error counter (`rx_bad`, `rx_runt`, `rx_over`, `rx_rxer`) advanced.
+- **`rx_drop` is reported on its own line and does not fail the run.** It counts
+  frames in which at least one octet was lost to a full RX FIFO — the receive
+  path worked and something downstream could not keep up. At line rate the echo
+  path overflows the FIFO constantly and by design, so a flood run where `rx_drop`
+  moves while nothing else does is a success, not a failure.

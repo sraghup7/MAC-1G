@@ -6,6 +6,7 @@
     python gem_host.py echo     --port COM4 --iface Ethernet --count 100
     python gem_host.py corrupt  --port COM4 --iface Ethernet
     python gem_host.py soak     --port COM4 --iface Ethernet --hours 4
+    python gem_host.py rate     --port COM4 --window 30 --frame-bytes 1518
 
 Each subcommand is one step of B.5, and each prints what it observed rather than
 only whether it was happy, because at bring-up the interesting output is the
@@ -77,6 +78,14 @@ BOARD_MAC = "02:00:00:00:00:01"
 # added, because B.4a's delivery contract does not strip pad -- there is no
 # length field to strip against when Length/Type is a Type.
 MIN_PAYLOAD_ON_WIRE = 46
+
+# The wire frame sizes the line-rate formula below is defined over, in octets
+# including the FCS. Gigabit Ethernet's per-size line rate is a statement about
+# 64..1518-octet frames (GEM_MAX_FRAME_BYTES); asking about a 9000-octet jumbo
+# frame is a different question and is refused rather than answered with a
+# number that has no meaning.
+MIN_FRAME_BYTES = 64
+MAX_FRAME_BYTES = 1518
 
 
 # --------------------------------------------------------------------------
@@ -595,11 +604,142 @@ def cmd_monitor(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# Sustained line rate -- the board's counters against an external flood
+# --------------------------------------------------------------------------
+def line_rate_fps(frame_bytes: int) -> float:
+    """The theoretical gigabit line rate, in frames per second, for a frame size.
+
+    Gigabit Ethernet puts 20 octets of overhead on every frame -- 7 preamble,
+    1 start-of-frame delimiter, 12 interframe gap -- so a frame of `F` octets
+    on the wire occupies `(F + 20) * 8` bits and the rate is
+    `1_000_000_000 / ((F + 20) * 8)`. The standard figures check out: 1518
+    gives 81274.4 and 64 gives 1488095.2, each within a frame per second of
+    the published 81275.2 / 1488095.2.
+
+    Anything outside 64..1518 is refused: this formula is about frames this
+    MAC can carry, and answering a jumbo-frame question with a number from it
+    would be worse than refusing to.
+    """
+    if not (MIN_FRAME_BYTES <= frame_bytes <= MAX_FRAME_BYTES):
+        raise ValueError(
+            f"the gigabit line rate is defined for frames of {MIN_FRAME_BYTES}.."
+            f"{MAX_FRAME_BYTES} octets on the wire, not {frame_bytes}. A 9000-octet "
+            f"jumbo frame is a question this formula does not answer.")
+    return 1_000_000_000 / ((frame_bytes + 20) * 8)
+
+
+def rate_report(deltas: dict[str, int], seconds: float,
+                frame_bytes: int) -> dict[str, float]:
+    """Turn counter deltas over a timed window into the rates a reader wants.
+
+    `deltas` is exactly what `gem_records.deltas` returns; `seconds` is the
+    elapsed time the window spanned, taken from a clock (see `cmd_rate`);
+    `frame_bytes` is the frame size whose line rate the percentage is against.
+
+    Pure: computes and returns, never prints. Returns rx_ok/s, rx_bad/s,
+    rx_drop/s, tx_ok/s, and rx_ok as a percentage of `line_rate_fps(frame_bytes)`.
+    """
+    if seconds <= 0:
+        raise ValueError(
+            f"a window of {seconds} s cannot produce a rate -- it must be positive")
+    rx_ok_per_s = deltas["rx_ok"] / seconds
+    return {
+        "rx_ok_per_s": rx_ok_per_s,
+        "rx_bad_per_s": deltas["rx_bad"] / seconds,
+        "rx_drop_per_s": deltas["rx_drop"] / seconds,
+        "tx_ok_per_s": deltas["tx_ok"] / seconds,
+        "rx_ok_pct_line_rate": 100.0 * rx_ok_per_s / line_rate_fps(frame_bytes),
+    }
+
+
+def rate_failed(deltas: dict[str, int]) -> bool:
+    """R4's verdict: only a receive error counter advances the exit code.
+
+    `rx_drop` is deliberately not one of them. It counts frames the receive
+    path decoded and then lost to a full RX FIFO -- the receiver worked and
+    something downstream could not keep up. At line rate the echo path
+    overflows the FIFO constantly and by design, so gating on it would fail
+    every successful run; distinguishing that from a genuine receive failure
+    is the entire reason the counter exists. The achieved percentage is a
+    measurement of what the board saw, never a verdict -- this host cannot
+    know how many frames the external generator sent.
+    """
+    return any(deltas[n] for n in ("rx_bad", "rx_runt", "rx_over", "rx_rxer"))
+
+
+def cmd_rate(args) -> int:
+    """Measure sustained receive rate against gigabit line rate.
+
+    Generates no traffic. The flood has to come from an external generator
+    (`iperf3 -u -b 1G`, `pktgen` on Linux, ...); this reads a baseline status
+    record, then `--window` more, and turns the deltas across the whole span
+    into rates and a percentage of line rate. The board prints one record a
+    second, so the window in records is roughly the window in seconds -- but
+    the elapsed time is taken from the wall clock, not assumed, and the output
+    says which was used.
+    """
+    port = StatusPort(args.port)
+    print("rate: traffic is not generated here. Point an external generator at the")
+    print("      board (iperf3 -u -b 1G, pktgen on Linux, ...) and read the board's")
+    print("      own counters. The percentage below is a measurement of what the board")
+    print("      saw, not a pass/fail -- this host cannot know how many frames the")
+    print("      generator sent.")
+
+    start_wall = time.time()
+    first = port.read_record()
+    last = _advance(port, args.window)
+    elapsed = time.time() - start_wall
+    port.close()
+
+    print(f"before: {first}")
+    print(f"after:  {last}")
+
+    d = gr.deltas(first, last)
+    print(f"delta:  {gr.format_deltas(d)}")
+
+    print(f"window: {args.window} status record(s) between the two readings, "
+          f"{elapsed:.1f} s of host wall clock -- the elapsed time is measured, "
+          f"not assumed from the record count")
+    r = rate_report(d, elapsed, args.frame_bytes)
+    theoretical = line_rate_fps(args.frame_bytes)
+    print(f"rx_ok: {r['rx_ok_per_s']:.1f} frames/s -- {r['rx_ok_pct_line_rate']:.2f}% "
+          f"of the {theoretical:.1f} frames/s a gigabit link can carry at "
+          f"{args.frame_bytes} octets/frame")
+    print(f"tx_ok: {r['tx_ok_per_s']:.1f} frames/s")
+    print(f"rx_bad: {r['rx_bad_per_s']:.1f} frames/s")
+    print(f"rx_drop: {r['rx_drop_per_s']:.1f} frames/s ({d['rx_drop']} frame(s)) -- "
+          f"frames the receive path decoded and then lost to a full RX FIFO. "
+          f"Expected under load: at line rate the echo path cannot keep up, and "
+          f"dropping is by design. It is a receive-path success, not an error, "
+          f"and does not fail this run")
+
+    if rate_failed(d):
+        for name in ("rx_bad", "rx_runt", "rx_over", "rx_rxer"):
+            if d[name]:
+                print(f"FAIL: {name} advanced by {d[name]} -- the receive path "
+                      f"decoded frames as bad")
+        return 1
+    print("no receive error counters advanced")
+    return 0
+
+
 def _records(text: str) -> int:
     """A window length in status records, which the board prints one a second."""
     value = int(text)
     if value < 1:
         raise argparse.ArgumentTypeError("a window has to be at least one record long")
+    return value
+
+
+def _frame_bytes(text: str) -> int:
+    """A wire frame size the line-rate formula can answer for."""
+    value = int(text)
+    if not (MIN_FRAME_BYTES <= value <= MAX_FRAME_BYTES):
+        raise argparse.ArgumentTypeError(
+            f"frame size must be {MIN_FRAME_BYTES}..{MAX_FRAME_BYTES} octets on the "
+            f"wire -- the gigabit line rate is not defined for {value} (jumbo frames "
+            f"are a question this tool does not answer)")
     return value
 
 
@@ -651,6 +791,18 @@ def main() -> int:
     sp.add_argument("--hours", type=float, default=4.0)
     sp.add_argument("--log", default="soak.log")
     sp.set_defaults(func=cmd_soak)
+
+    sp = sub.add_parser("rate", help="measure sustained receive rate against line rate")
+    common(sp, needs_iface=False)
+    sp.add_argument("--window", type=_records, default=30,
+                    help="status records to watch after the baseline (one a second); "
+                         "the elapsed time is measured from the clock, not taken from "
+                         "this count")
+    sp.add_argument("--frame-bytes", type=_frame_bytes, default=1518,
+                    help="wire frame size in octets, which must match what the "
+                         "external generator sends; the line-rate percentage is "
+                         "computed for this size")
+    sp.set_defaults(func=cmd_rate)
 
     args = p.parse_args()
     return args.func(args)
