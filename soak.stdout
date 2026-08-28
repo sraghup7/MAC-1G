@@ -1,0 +1,4 @@
+logging to soak.log until 00:15:09
+(traffic is not generated here -- run `echo` from another terminal, or
+ point a generator at the board; this watches and records)
+20:49:21 link went down

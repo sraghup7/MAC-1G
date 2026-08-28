@@ -209,6 +209,48 @@ staged [llength $RTL_SOURCES] total under $DEBUG_RTL_DIR"
 
 # ---- 1. Read sources --------------------------------------------------------
 
+# GATE 0 IS ONLY MEANINGFUL IN A FRESH VIVADO PROCESS, AND THIS REFUSES TO
+# PRETEND OTHERWISE.
+#
+# get_msg_config -count is cumulative for the life of the PROCESS, not for one
+# build. That is fine for `vivado -mode batch`, which is one process per build,
+# and wrong for an interactive session that sources this script after doing
+# other work. A session open all day refused a perfectly clean build at gate 0
+# with "24 CRITICAL WARNING(s)" that belonged to none of it.
+#
+# Subtracting a baseline looks like the fix and is not. Measured on this
+# repository: the counter is NOT MONOTONIC across a build -- it read 25 before
+# a build, 25 at gate 0, and 0 by gate 0b in the same run -- and re-sourcing
+# this script in the same process brought the 25 back while the identical
+# sources emitted 0 criticals headless. A delta can therefore go negative,
+# which passes a `> 0` test and converts a spurious refusal into a SILENT
+# FALSE PASS. That is strictly worse than the bug it replaces.
+#
+# So the honest thing is to detect the condition and say so. A reused process
+# cannot answer this question; a fresh one can.
+if {[catch {set CRIT_BASE [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
+    puts "FATAL: cannot query the critical-warning baseline: $err"
+    puts "Build refused: gate 0 cannot be evaluated without it, and a gate that"
+    puts "cannot run must not report success."
+    exit 1
+}
+if {$CRIT_BASE != 0} {
+    puts "FATAL: this Vivado process already carries $CRIT_BASE CRITICAL WARNING(s)"
+    puts "from earlier work in the same session."
+    puts ""
+    puts "Gates 0 and 0b count critical warnings for the life of the PROCESS, not"
+    puts "for one build, and the counter is not monotonic across a build -- so no"
+    puts "arithmetic can separate this build's criticals from the session's history."
+    puts "Refusing is the only answer that is not a guess."
+    puts ""
+    puts "Run the build in a FRESH process:"
+    puts "    make bitstream          (or: python scripts/build.py bitstream gem_top)"
+    puts "    vivado -mode batch -source scripts/build.tcl -tclargs bitstream gem_top"
+    puts ""
+    puts "Build refused: gate 0 cannot be trusted in a reused session."
+    exit 1
+}
+
 puts "==> Reading RTL sources: $RTL_SOURCES"
 read_verilog $RTL_SOURCES
 
@@ -238,10 +280,13 @@ write_checkpoint -force "$BUILD_DIR/post_synth.dcp"
 # this script still built skeleton_top. That is the defect this gate was
 # written against; it did not need planting.
 #
-# This count is taken after synthesis only. The bitstream stage re-queries it
-# (gate 0b), because implementation can emit criticals of its own and this
-# query never sees them.
-if {[catch {set crit [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
+# This count is taken after synthesis only, and is trustworthy because the
+# guard above refused if the process carried any criticals before this build
+# began. The bitstream stage re-queries it (gate 0b), because implementation
+# can emit criticals of its own and this query never sees them.
+if {[catch {
+    set crit [get_msg_config -severity {CRITICAL WARNING} -count]
+} err]} {
     puts "FATAL: cannot query critical-warning count: $err"
     puts "Build refused: gate 0 could not run, and a gate that cannot run must"
     puts "not report success."
@@ -969,10 +1014,13 @@ if {$TARGET eq "impl"} {
 # Gate 0b: zero CRITICAL WARNINGs at the end of the run. Gate 0 counts them
 # after synthesis only, and opt_design / place_design / route_design can emit
 # their own -- an unconstrained set_property, an unroutable placement rule --
-# which landed after the count was taken and never refused anything. The
-# counter is cumulative for this session, so by here it covers read, synthesis
-# and implementation together; the same refusal as gate 0 applies.
-if {[catch {set crit_impl [get_msg_config -severity {CRITICAL WARNING} -count]} err]} {
+# which landed after the count was taken and never refused anything. The guard
+# before the read stage established that this process started clean, so by here
+# the count covers read, synthesis and implementation of THIS build; the same
+# refusal as gate 0 applies.
+if {[catch {
+    set crit_impl [get_msg_config -severity {CRITICAL WARNING} -count]
+} err]} {
     puts "FATAL: cannot query critical-warning count after implementation: $err"
     puts "Build refused: gate 0b could not run, and a gate that cannot run must"
     puts "not report success."
