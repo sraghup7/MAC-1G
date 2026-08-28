@@ -599,6 +599,48 @@ characterised the way the original 13-of-13 nibble analysis was. Whoever picks
 this up should fix that print first — it is a few lines — rather than
 speculating about a signature nobody can currently see.
 
+## Step 8 soak, attempt 3 (2026-08-28 00:27 → 04:27): **PASS**
+
+```
+14400 records over 4.0 h
+totals: tx_ok+6268150 rx_ok+6268355
+anomalies: 0
+PASS step 8: no divergence
+```
+
+**Bring-up is complete.** `bringup_checklist.md`: "Passing step 8 is the
+definition of *fully functional* (B.5). At that point Stage 8 is complete and
+what remains is Stage 9: release and handoff."
+
+| | |
+|---|---|
+| duration | 4.0 h, 14,400 records, **0 anomalies** |
+| frames received | **6,268,355** |
+| `rx_bad` / `rx_runt` / `rx_over` / `rx_rxer` | **0** — never left zero |
+| `tx_rej` / `tx_urun` | **0** — never left zero |
+| link / rxlock down samples | **0** |
+| echo traffic | 3,171 iterations, **6,342,000 frames sent** |
+| echo payload mismatches | **0** |
+| echo shortfall | 74 frames, 0.0012% — `gem_echo`'s by-design one-at-a-time buffering |
+
+Run on the committed configuration: `CLKOUT0_PHASE = -280.000`,
+`CLKOUT1_PHASE = 60.000`, `SLEW FAST`, uniform `DRIVE 16`, NIC at stock
+MTU 1500 with jumbo disabled. Nobody touched the bench.
+
+**Against attempt 2, the difference is exactly the one predicted.** That run
+was clean across 5.9M frames and failed on a single 4-second link drop caused
+by the operator moving the hardware. Left alone, the same design ran 6.3M
+frames with zero anomalies of any kind. The fail was recorded honestly rather
+than argued down, and this run is what a release should point at.
+
+**What it does NOT establish**, unchanged by this result: the soak runs at
+about 0.5% of line rate, because the host tooling does a Python round trip per
+frame. **R7 and R18 — both mandatory, both about line rate — remain
+simulation-only.** So does V-6, the golden CRC against a real capture. Passing
+step 8 means the datapath is stable and correct under sustained real traffic
+for four hours; it does not mean the line-rate requirements are proven. See
+§ A1-A4 of the blockers list.
+
 ## Step 8 soak, attempt 2 (2026-08-27 20:15 → 2026-08-28 00:15): FAIL on one event
 
 **The tool's own verdict, verbatim:**
