@@ -599,6 +599,59 @@ characterised the way the original 13-of-13 nibble analysis was. Whoever picks
 this up should fix that print first — it is a few lines — rather than
 speculating about a signature nobody can currently see.
 
+## Step 8 soak, attempt 2 (2026-08-27 20:15 → 2026-08-28 00:15): FAIL on one event
+
+**The tool's own verdict, verbatim:**
+
+```
+14401 records over 4.0 h
+totals: tx_ok+5915740 rx_ok+5915977
+anomalies: 1
+FAIL step 8: see the log
+```
+
+**The single anomaly is a 4-second link drop at 20:49:21-24, and its cause is
+known and external: the operator moved the hardware.** `phyok` stayed 1
+throughout, so the board's PHY kept answering MDIO the whole time — it was
+alive, it lost its partner. Nothing else in 14,401 one-second records.
+
+**Everything else was clean, and the margin is not small.**
+
+| | |
+|---|---|
+| duration | 4.0 h, 14,401 records |
+| frames received | **5,915,977** |
+| `rx_bad` / `rx_runt` / `rx_over` / `rx_rxer` | **0**, never left zero |
+| `tx_rej` / `tx_urun` | **0**, never left zero |
+| echo traffic | 2,977 iterations, **5,954,000 frames sent** |
+| echo payload mismatches | **0** |
+| echo shortfall | 70 frames, 0.0012% |
+
+Those 70 missing frames are `gem_echo`'s by-design one-at-a-time dropping plus
+the five in flight when the link went down. Not corruption — `rx_bad` stayed
+at zero, and the shortfall-equals-`rx_bad` relationship established earlier
+holds: with `rx_bad` at 0 the shortfall collapsed from ~0.02% to 0.0012%.
+
+**What the run demonstrated, even though it failed:** both RGMII directions
+were broken at the start of the day — receive failing every frame, transmit
+corrupting about a quarter of them. The same datapath then carried 5.9 million
+frames through IDDR capture, SFD hunt, deframe, CRC check, the FIFO clock
+crossing, egress, echo, ingress, assembly, CRC generation and ODDR with **zero
+errors of any class**.
+
+**And the MAC handled the link loss correctly**, which is the one thing this
+run tested that no one planned: traffic stopped, five in-flight frames were
+lost, the link recovered, and **not one error counter moved**. That is the
+link-event behaviour `tb_gem_top` checks in simulation (V-25), now confirmed on
+hardware by accident.
+
+**Status: step 8 is NOT passed.** The criterion is "no link drop" and there was
+one. It is recorded as a fail rather than argued down, because a soak that gets
+its result rounded up is not an acceptance test. A clean re-run — four hours,
+nobody touching the bench — is what should be pointed at when tagging a
+release. On this evidence it is expected to pass, but expectation is not a
+result.
+
 ## Bring-up status after B.5-RX-1 (2026-08-27)
 
 | step | state |
