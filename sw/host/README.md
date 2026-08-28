@@ -206,6 +206,32 @@ failure.
 
 ---
 
+## Generating the load (`flood.py`)
+
+`rate` reads what the board saw; `flood.py` is what makes it see anything.
+Raw Ethertype frames straight at the board's MAC, built once and pushed
+through one persistent layer-2 socket.
+
+**iperf3 cannot be used here.** It opens a TCP control connection to an
+iperf3 server before sending anything, UDP mode included, and the board has
+no ARP, no IP and no TCP for it to talk to. Any generator that expects an IP
+peer fails the same way.
+
+**Run several at once.** One sender is frame-rate limited rather than
+bandwidth limited -- about 18,000 frames/s whatever the frame size -- and the
+limit is per process, so it parallelises. One sender reaches 21% of line
+rate; ten reach 96%.
+
+```
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  python sw/host/flood.py --iface Ethernet --seconds 50 --size 1500 &
+done
+python sw/host/gem_host.py rate --port COM5 --window 30 --frame-bytes 1518
+```
+
+Measured 2026-08-28: 78,063 frames/s received, 96.05% of line rate, 2,419,981
+frames, every error counter flat. See `docs/reports/stage9/known-issues.md`.
+
 ## Measuring against line rate (`rate`)
 
 Every command above that sends traffic runs at roughly 440 frames/s — about

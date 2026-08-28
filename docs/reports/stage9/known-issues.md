@@ -599,6 +599,101 @@ characterised the way the original 13-of-13 nibble analysis was. Whoever picks
 this up should fix that print first — it is a few lines — rather than
 speculating about a signature nobody can currently see.
 
+## Line-rate measurement, 2026-08-28: **96.05% of line rate at 1518 octets**
+
+The first measurement this project has ever taken near the rate it was designed
+for. Every previous bench number ran at about 440 frames/s, roughly 0.5% of
+gigabit line rate.
+
+| offered | board `rx_ok` | % of line rate | frames | errors |
+|---|---|---|---|---|
+| 18,050 fps (1 sender) | 17,424 fps | 21.4% | 453,000 | **0** |
+| 78,374 fps (6 senders) | 75,367 fps | 92.7% | 1,959,563 | **0** |
+| **80,742 fps (10 senders)** | **78,063 fps** | **96.05%** | **2,419,981** | **0** |
+| 19,242 fps, 64-octet frames | 18,187 fps | 1.22% | 472,868 | **0** |
+
+`rx_bad`, `rx_runt`, `rx_over` and `rx_rxer` never left zero in any run.
+Across the whole session the board received **9,336,376 frames** with no error
+counter moving, on the committed configuration (`CLKOUT0_PHASE = -280.000`,
+`CLKOUT1_PHASE = 60.000`, `SLEW FAST`, uniform `DRIVE 16`).
+
+**R18's receive half is no longer simulation-only at maximum frame size.** What
+is still unproven is R18 at *minimum* frame size and R7 in either direction —
+see "What this does not establish" below.
+
+### `rx_drop` stayed at zero, which falsifies the reason it was added
+
+`rx_drop` was added earlier the same day (commit `c79f185`) on the stated
+expectation that "at line rate the echo path will overflow the FIFO constantly
+and by design". **That expectation was wrong**, and this measurement is what
+showed it. At 96% of line rate `rx_drop` is still zero.
+
+The reason is in `gem_echo`'s own header: frames are "dropped rather than
+queued". It refuses a frame at its input while busy rather than back-pressuring
+the path behind it, so the RX FIFO never fills and its `drop` output never
+fires. In the 10-sender run `tx_ok` came back at **almost exactly half** of
+`rx_ok` — 1,211,158 returned out of 2,419,981 received — and every one of those
+~1.21M missing frames was refused by `gem_echo`, not lost by the FIFO.
+
+So the counter does not measure what it was advertised as measuring. It is still
+worth its 65 flip-flops, for a different reason than the one given at the time:
+**B.3a derives that the RX FIFO cannot fill under R18's no-stall contract, and
+that derivation is now a measured zero at 96% of line rate instead of an
+assumption.** That property was previously unobservable.
+
+### The real observability gap is `echo_dropped`, not the FIFO
+
+`gem_echo`'s `dropped` output is deliberately discarded in `gem_top`'s
+`_unused_ok` list, with a comment arguing it "reports a condition the echo
+path's own header explains is expected under load and is not an R17 counter".
+That reasoning was sound when nothing ran fast enough for it to fire. Under
+load it is now **the number that actually moves**, and it is recoverable only by
+subtracting `tx_ok` from `rx_ok`. If any further line-rate work is done, count
+it.
+
+### iperf3 cannot be used here, and installing it will not help
+
+Recorded because it is the obvious first idea and it is a dead end. `iperf3`
+opens a **TCP control connection to an iperf3 server** before sending anything,
+including in UDP mode. `gem_top` is a MAC and an echo path: no ARP, no IP, no
+TCP, nothing to connect to. The same objection applies to any generator that
+expects an IP peer.
+
+What works is raw Ethertype frames sent straight at `02:00:00:00:00:01`, which
+is what `sw/host/flood.py` does.
+
+### Parallel senders are the whole trick
+
+A single Scapy sender is **frame-rate limited, not bandwidth limited**: it
+managed 18,050 fps at 1518 octets and 19,242 fps at 64 octets — near-identical
+frame rates, 219 Mbit/s versus 9.9 Mbit/s. The bottleneck is per-call overhead
+in the Python/Npcap send path, and it is per *process*, so it parallelises
+almost linearly. Ten concurrent senders reached 99.3% of line rate offered.
+
+To reproduce:
+
+```
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  python sw/host/flood.py --iface Ethernet --seconds 50 --size 1500 &
+done
+python sw/host/gem_host.py rate --port COM5 --window 30 --frame-bytes 1518
+```
+
+### What this does not establish
+
+- **R18 at minimum frame size.** The 64-octet case reached only **1.22%**.
+  Because the send path is frame-rate limited per process, 1,488,095 fps would
+  need roughly 77 parallel senders, which this host cannot sustain. Minimum-IFG
+  line rate still needs Linux `pktgen` or DPDK, on hardware this bench does not
+  have.
+- **R7, in either direction.** Nothing here makes the board *transmit* at line
+  rate. `gem_echo` is the only thing driving the transmit path and it is
+  store-and-forward, one frame at a time — the 50% return rate above is that
+  limit being measured, not a defect. Sourcing line-rate transmit needs a small
+  RTL generator feeding `gem_mac`'s AXI-Stream ingress; no external tool can do
+  it.
+- **V-6**, the golden CRC against a real capture, is untouched by this.
+
 ## Step 8 soak, attempt 3 (2026-08-28 00:27 → 04:27): **PASS**
 
 ```
@@ -635,8 +730,11 @@ than argued down, and this run is what a release should point at.
 
 **What it does NOT establish**, unchanged by this result: the soak runs at
 about 0.5% of line rate, because the host tooling does a Python round trip per
-frame. **R7 and R18 — both mandatory, both about line rate — remain
-simulation-only.** So does V-6, the golden CRC against a real capture. Passing
+frame. **R7 remains simulation-only, and so does R18 at minimum frame size.** So
+does V-6, the golden CRC against a real capture. R18's receive half at
+*maximum* frame size was subsequently measured at 96.05% of line rate with
+zero errors — see § "Line-rate measurement, 2026-08-28" above, which
+supersedes this paragraph on that one point. Passing
 step 8 means the datapath is stable and correct under sustained real traffic
 for four hours; it does not mean the line-rate requirements are proven. See
 § A1-A4 of the blockers list.
