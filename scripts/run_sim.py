@@ -45,6 +45,8 @@ RTL_SOURCES = [
     "rtl/gem_iddr.v",
     "rtl/gem_crc32.v",
     "rtl/gem_pulse_sync.v",
+    # 004a's generator; not yet in gem_top, compiled so its own unit tb runs.
+    "rtl/gem_traffic_gen.v",
     "rtl/gem_rgmii_tx.v",
     "rtl/gem_rgmii_rx.v",
     "rtl/gem_tx_ingress.v",
@@ -96,6 +98,7 @@ TB_SOURCES = [
     "tb/tb_gem_uart_tx.sv",
     "tb/tb_gem_stat_report.sv",
     "tb/tb_gem_echo.sv",
+    "tb/tb_gem_traffic_gen.sv",
     "tb/tb_gem_top.sv",
     "tb/tb_rgmii_bfm.sv",
     "tb/tb_axis_tx_driver.sv",
@@ -158,11 +161,14 @@ PRIM_SNAPSHOT = "ddr_prim_selftest"
 #                  the record R17's readout prints, compared against the whole
 #                  line it should have printed, with every input changed the
 #                  moment transmission starts so the snapshot has to hold.
+#   tb_gem_traffic_gen
+#                  the no-idle AXI-stream frames its level enable produces, a
+#                  property the integrated regression can never reach.
 #
 # They run first, because a failure here explains a failure everywhere else.
 UNIT_TBS = ["tb_gem_crc32", "tb_gem_rx_fifo", "tb_gem_mdio", "tb_gem_clk_rst",
             "tb_gem_uart_tx", "tb_gem_stat_report",
-            "tb_gem_echo", "tb_gem_top"]
+            "tb_gem_echo", "tb_gem_top", "tb_gem_traffic_gen"]
 
 # The loopback runs the design against itself, so it takes a TX scenario's
 # stimulus and needs no expected-output file of its own.
