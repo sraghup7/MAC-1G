@@ -38,6 +38,13 @@ set_false_path -to [get_ports {led[*]}]
 
 set_false_path -from [get_ports rst_key_n]
 set_false_path -from [get_ports key_clear_n]
+# traffic_gen_key_n (KEY2, task 005a): the same class of port as key_clear_n
+# above -- an async board button, synchronised in gem_top by the same
+# three-flop ASYNC_REG chain -- so the same exception applies for the same
+# reason. Missed when 005a added the pin; caught by gate 3 (check_timing)
+# refusing the build rather than silently synthesising an unconstrained
+# input.
+set_false_path -from [get_ports traffic_gen_key_n]
 set_false_path -from [get_ports mdio]
 set_false_path -to   [get_ports mdio]
 set_false_path -to   [get_ports mdc]
