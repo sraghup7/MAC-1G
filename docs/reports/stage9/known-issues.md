@@ -599,6 +599,56 @@ characterised the way the original 13-of-13 nibble analysis was. Whoever picks
 this up should fix that print first — it is a few lines — rather than
 speculating about a signature nobody can currently see.
 
+## Flood mode: R7 and R18's minimum-frame-size half close, 2026-09-01
+
+**R7 (board transmit at line rate) and R18's still-open minimum-frame-size
+half are both CLOSED ON HARDWARE.** `gem_traffic_gen` (task 004a: an
+AXI-Stream source offering one payload octet per cycle, 1 Gbit/s by
+construction at any frame size) is wired into `gem_top` behind a new board
+key, KEY2, through a mux gated to switch only at a frame boundary (task
+005a — a naive combinational mux would let a mid-frame key press drop
+`tx_tvalid` before `tlast`, which reads as an underrun nobody actually
+caused; simulation proved the gate closes that hole, task 005b, before this
+ever reached the board). Procedure: `docs/reports/stage9/flood-mode-checklist.md`.
+
+| | frame size | measured | `tx_urun` | `tx_rej` | sample |
+|---|---|---|---|---|---|
+| **R7** | 1518 octets wire (1500 payload) | **96.78%** of 81,274.4 fps line rate (78,656.0 fps) | **0** | **0** | 2,438,231 frames, 31.0 s |
+| **R18-min** | 64 octets wire (46 payload) | **96.77%** of 1,488,095.2 fps line rate (1,440,086.9 fps) | **0** | **0** | 44,642,857 frames, 31.0 s |
+
+Both measured with `gem_host.py rate`, reading the board's own UART counters
+— the same instrument the 2026-08-28 RX-direction measurement below used, not
+a second independent one (see that entry's own caveat about V-6). After each
+run, KEY2 pressed again and `gem_host.py echo` confirmed `gem_echo` actually
+resumed (50/50 frames, 0 mismatches both times) — proving the mux reverts on
+real hardware, not just in `tb_gem_top`.
+
+**R18-min is the more striking number.** The RX-direction attempt at this
+frame size (below) topped out at 1.22% because it was limited by *host
+software* — a Scapy sender is frame-rate limited, not bandwidth limited, and
+parallelising ran out of process budget. `gem_traffic_gen` has no such
+ceiling: sourced from the fabric, minimum-size frames reach the same ~96.8%
+maximum-size frames do, exactly as the module's own header claimed ("1 Gbit/s
+of payload by construction, at any frame size").
+
+**One real bug found by the board, not by review or simulation.** The first
+hardware build of 005a's wiring refused outright: gate 3 (`check_timing`)
+reported one input port with no input delay specified. 005a's task contract
+added `traffic_gen_key_n`'s pin constraint (`constrs/pins.xdc`) but missed
+the matching `set_false_path` every other async board key already carries in
+`constrs/exceptions.xdc` — same class of port, same three-flop `ASYNC_REG`
+synchroniser, same justification, just an entry nobody wrote. Fixed same
+session, commit `4d91a61`. Worth remembering: 005b's simulation passing
+30-of-30 said nothing about this, because `tb_gem_top` never runs
+`check_timing` — a reminder that "simulated" and "will synthesise" are
+different claims, made explicit rather than assumed here.
+
+Configuration: committed RGMII config unchanged (`CLKOUT0_PHASE=-280.000`,
+`CLKOUT1_PHASE=60.000`, `SLEW FAST`, `DRIVE 16`) — flood mode is a TX-side
+AXI-Stream source change inside `gem_mac`'s existing datapath, not a new I/O
+timing path, so nothing here touches the RGMII derivation V-2/R14/R20 track
+in the table above.
+
 ## Line-rate measurement, 2026-08-28: **96.05% of line rate at 1518 octets**
 
 The first measurement this project has ever taken near the rate it was designed
@@ -685,13 +735,15 @@ python sw/host/gem_host.py rate --port COM5 --window 30 --frame-bytes 1518
   Because the send path is frame-rate limited per process, 1,488,095 fps would
   need roughly 77 parallel senders, which this host cannot sustain. Minimum-IFG
   line rate still needs Linux `pktgen` or DPDK, on hardware this bench does not
-  have.
+  have. **CLOSED 2026-09-01 at 96.77%** — see § "Flood mode" above; this
+  paragraph's limit was the host's send path, not the board, and an RTL
+  generator has no such ceiling.
 - **R7, in either direction.** Nothing here makes the board *transmit* at line
   rate. `gem_echo` is the only thing driving the transmit path and it is
   store-and-forward, one frame at a time — the 50% return rate above is that
   limit being measured, not a defect. Sourcing line-rate transmit needs a small
   RTL generator feeding `gem_mac`'s AXI-Stream ingress; no external tool can do
-  it.
+  it. **CLOSED 2026-09-01 at 96.78%** — see § "Flood mode" above.
 - **V-6**, the golden CRC against a real capture, is untouched by this.
 
 ## Step 8 soak, attempt 3 (2026-08-28 00:27 → 04:27): **PASS**
@@ -730,11 +782,12 @@ than argued down, and this run is what a release should point at.
 
 **What it does NOT establish**, unchanged by this result: the soak runs at
 about 0.5% of line rate, because the host tooling does a Python round trip per
-frame. **R7 remains simulation-only, and so does R18 at minimum frame size.** So
-does V-6, the golden CRC against a real capture. R18's receive half at
-*maximum* frame size was subsequently measured at 96.05% of line rate with
-zero errors — see § "Line-rate measurement, 2026-08-28" above, which
-supersedes this paragraph on that one point. Passing
+frame. **R7 and R18 at minimum frame size were both simulation-only when this
+was written; both are now closed on hardware, 2026-09-01 — see § "Flood
+mode" above.** V-6, the golden CRC against a real capture, is still open.
+R18's receive half at *maximum* frame size was subsequently measured at
+96.05% of line rate with zero errors — see § "Line-rate measurement,
+2026-08-28" above, which supersedes this paragraph on that one point. Passing
 step 8 means the datapath is stable and correct under sustained real traffic
 for four hours; it does not mean the line-rate requirements are proven. See
 § A1-A4 of the blockers list.
@@ -835,3 +888,10 @@ referred to is re-derived and confirmed by a real post-route build in
 `docs/reports/stage9/rgmii-jl2121-retiming-report.md` — folded into the R14 /
 R20 / V-2 row above rather than kept separate, since what's left (the bench
 measurement itself) is exactly that row's own open question.
+
+**R7 and R18's minimum-frame-size half closed 2026-09-01** — see § "Flood
+mode" above. Neither was ever a row in the five-item table (they were never
+assigned a `verification_plan.md` letter of their own the way the table's
+rows are), which is why they don't disappear from a table above; they were
+tracked in this page's own narrative instead, and that narrative now says
+they're closed rather than open.
