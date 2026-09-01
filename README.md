@@ -5,21 +5,40 @@ an ALINX AX7035B (Artix-7 XC7A35T) and talking RGMII to the board's JLSemi
 JL2121(D) PHY. No vendor MAC IP — the point is to build the thing, not to
 configure someone else's.
 
-**Status: Stages 1–7 complete; Stage 9's reproducibility check has passed and its
-known issues are consolidated (`docs/reports/stage9/`); Stage 8 bring-up is under
-way on real hardware — steps 1–4 and 7 pass, step 6 fails on a transmit-side
-defect (`docs/reports/stage9/known-issues.md` § B.5-TX-1).** The MAC is
-written, constrained, placed, routed and gated: `make bitstream` produces
-`build/gem_top.bit` behind nine refusing gates, and `make check` runs 29 of 29
-scenarios green against a reference model that was finished before the first
-line of the RTL existed — including 600-frame random sweeps in both directions
-and a loopback that feeds the design's own transmit pins back to its receive
-pins across an independent clock.
+**Status: bring-up complete, on hardware.** Every B.5 bring-up step passes,
+including the four-hour soak that is this project's own definition of "fully
+functional" (`bringup_checklist.md`; step 8 attempt 3, 2026-08-28: 6.27M
+frames over 4.0 hours, zero anomalies). Two real hardware defects were found
+and fixed along the way, neither visible to simulation: **B.5-TX-1** (the TX
+clock phase) and **B.5-RX-2** (the RX capture phase mis-centred by one whole
+unit interval — the correction below). Stage 9 (release/handoff) is under
+way: known issues are consolidated and kept current
+(`docs/reports/stage9/known-issues.md`), and the two items that remained
+simulation-only after bring-up — **R7** (board transmit at line rate) and
+**R18's minimum-frame-size half** — closed on real hardware 2026-09-01 at
+~96.8% of line rate in both directions, zero transmit underruns, on
+multi-million-frame samples. See "Sourcing line-rate traffic" below.
 
-**Post-route timing now closes outright: WNS +0.336 ns, WHS +0.033 ns, zero
-violating paths, and the task-4e RX waiver is not exercised at all.** That is a
-correction to what this page used to say, and the correction is the interesting
-part.
+`make bitstream` produces `build/gem_top.bit` behind nine refusing gates, and
+`make check` runs **30 of 30** scenarios green (29 at Stage 7 close; task
+004b-iii added `gem_traffic_gen`'s own unit testbench, 26,103 checks) against
+a reference model that was finished before the first line of RTL existed —
+including 600-frame random sweeps in both directions and a loopback that
+feeds the design's own transmit pins back to its receive pins across an
+independent clock.
+
+**Post-route timing on the committed configuration (2026-09-01, with
+`gem_traffic_gen` wired in): WNS −0.331 ns, WHS +0.046 ns — the RX I/O waiver
+is exercised again** (5 paths, worst −0.331 ns, comfortably inside the
+−3.500 ns envelope task 4e derived). That is worth stating plainly rather
+than quietly: this page previously reported the waiver fully retired after
+the fix below, and integrating the traffic generator's mux nudged routing
+enough to bring those same five endpoints back under it. Nothing about the
+*fix* below stopped being true — the mechanism this paragraph corrects is
+unrelated to it — but "closes outright" was a claim about one specific
+build, not a permanent property, and a later build changed it back. Treat
+any future change that touches `gem_top`'s routing footprint as something
+that can move these five numbers again; re-measure rather than assume.
 
 This section previously reported **WNS −3.109 ns** and explained it as a
 *deliberate, fenced* state — five waived RGMII receive input checks that task 4e
@@ -33,10 +52,11 @@ along, and the waiver was masking it.
 
 The fences in `scripts/build.tcl` gate 2 are kept, because they cost nothing
 while nothing violates — but a violation on those five endpoints should now be
-read as a genuine defect, not re-waived. Full account:
+read as a genuine defect, not re-waived without checking why. Full account:
 `docs/reports/stage9/known-issues.md` § B.5-RX-1. **R20's receive half is now
 confirmed on the bench** (step 4 passes, `rx_ok` advancing with every error
-counter at zero); what remains open is R14's transmit half, § B.5-TX-1.
+counter at zero); what remains open is R14's transmit half, § B.5-TX-1's own
+resolution plus a scope check that has not yet happened (see known issues).
 
 Stage 5 is integration, and two of its blocks are in. The **clock and reset
 module** (`rtl/gem_clk_rst.v`), which the specification had described as
@@ -73,6 +93,44 @@ terminal — frames in, round trips, corruption, and a four-hour soak that write
 file you can diff — while [`bringup_checklist.md`](bringup_checklist.md) is the
 order to do it all in, with what each failure would mean.
 
+## Sourcing line-rate traffic (R7, R18)
+
+`gem_echo` is the only thing bring-up gave the transmit path to send, and it
+is store-and-forward, one frame at a time — enough to prove the datapath
+(step 8's soak) but not enough to ever put the board *at* line rate on its
+own transmit side. `gem_traffic_gen` (`rtl/gem_traffic_gen.v`) closes that
+gap: an AXI-Stream source that offers one payload octet every cycle, which
+is 1 Gbit/s by construction at any frame size, with no host software in the
+loop to become the bottleneck the way `sw/host/flood.py` eventually did on
+the receive side (18k–79k frames/s per process, a Realtek/WinPcap ceiling,
+not a design one).
+
+It is muxed onto the shared transmit port alongside `gem_echo`, switched by
+a new board key — **KEY2**, pin K14, unused until now — through a register
+(`mux_sel`) that only follows the key's toggle when the bus is idle. That
+gate is load-bearing, not decoration: a plain combinational mux would let a
+mid-frame key press drop `tx_tvalid` before `tlast`, which `gem_mac` counts
+as an underrun neither source actually caused. Proven safe in simulation
+first (`tb_gem_top` section 10: KEY2 pressed twice, flood frames verified
+against the generator's known header and payload pattern, `gem_echo`
+confirmed to resume — 107 checks, 0 failures), then measured on the board:
+
+| | frame size | measured | `tx_urun` | `tx_rej` | sample |
+|---|---|---|---|---|---|
+| **R7** | 1518 octets wire | **96.78%** of line rate (78,656.0 fps) | 0 | 0 | 2,438,231 frames |
+| **R18-min** | 64 octets wire | **96.77%** of line rate (1,440,086.9 fps) | 0 | 0 | 44,642,857 frames |
+
+The minimum-frame-size number is the more interesting one: the host-software
+attempt at the same frame size (below, "Line-rate measurement") reached only
+1.22%, limited by the sender being frame-rate limited rather than bandwidth
+limited. `gem_traffic_gen` has no such ceiling, which is exactly what "1
+Gbit/s by construction, at any frame size" was supposed to mean and is now
+measured rather than asserted. Full write-up, including the one real bug the
+board found that neither review nor simulation did (a missing timing
+exception on the new key — commit `4d91a61`), and the procedure to reproduce
+either measurement: `docs/reports/stage9/known-issues.md` § "Flood mode" and
+`docs/reports/stage9/flood-mode-checklist.md`.
+
 **Stage 6 built the board.** `make synth`/`impl`/`bitstream` build `gem_top`
 against `constrs/` by default (`TOP=skeleton_top` still builds the Stage 2
 blinker, for B.5 step 1). A gate refuses the build outright on any
@@ -84,7 +142,9 @@ five waived RX input checks described above and nothing else. Re-measured
 after V-25 added `gem_rx_abort`: WNS is unchanged to the last digit (it is
 the same routing-independent ZHOLD constant task-4e derived, not a
 coincidence), and WHS moved from +0.049 ns, a genuine shift from the extra
-logic rather than noise.
+logic rather than noise. (This is a Stage 6 snapshot, superseded twice since
+— see the status block at the top of this page for the current, post-bring-up
+number.)
 
 **RGMII RX timing: signed off by derivation, bench check pending.** The RGMII
 I/O delay constraints (V-2) are written, corrected, and wired into the real
@@ -134,6 +194,7 @@ pipeline sum predicted, stage for stage.
 | Coding standard | [`coding_standard.md`](coding_standard.md) — the RTL conventions and what enforces each |
 | Transmit datapath | [`Documents/Golden Model Transmit Path.html`](Documents/Golden%20Model%20Transmit%20Path.html) |
 | Known issues | [`docs/reports/stage9/known-issues.md`](docs/reports/stage9/known-issues.md) — everything still blocked on hardware, in one place |
+| Flood-mode procedure | [`docs/reports/stage9/flood-mode-checklist.md`](docs/reports/stage9/flood-mode-checklist.md) — how R7/R18-min were measured, reproducible |
 
 ---
 
@@ -174,7 +235,9 @@ rtl/          the design: 13 MAC modules, one per file, plus the shared
               parameters — and, from Stage 5, 3 that clock and reset it, 2
               that read its counters out over a serial pin, an echo path and
               the board top level; from Stage 6 part 2 an RX deskew MMCM,
-              and from V-25's close an in-band RX abort (gem_rx_abort)
+              from V-25's close an in-band RX abort (gem_rx_abort), and from
+              Stage 9's flood-mode work a line-rate traffic source muxed
+              onto the transmit port behind KEY2 (gem_traffic_gen)
 tb/           testbenches, bus functional models, bound assertions
 constrs/      clocks / pins / exceptions, split so each is reviewable alone
 scripts/      build, simulation, lint, vector-staleness and clean drivers
