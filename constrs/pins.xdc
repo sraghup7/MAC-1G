@@ -38,6 +38,10 @@ set_property IOSTANDARD   LVCMOS33 [get_ports rst_key_n]
 set_property PACKAGE_PIN  M13 [get_ports key_clear_n]
 set_property IOSTANDARD   LVCMOS33 [get_ports key_clear_n]
 
+# KEY2, flood-mode toggle (R7) — bank 15, active low
+set_property PACKAGE_PIN  K14 [get_ports traffic_gen_key_n]
+set_property IOSTANDARD   LVCMOS33 [get_ports traffic_gen_key_n]
+
 #############################################################################
 # RGMII to the JL2121(D) — all bank 15
 #############################################################################

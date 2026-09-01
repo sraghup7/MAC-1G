@@ -64,6 +64,7 @@ module tb_gem_top;
     logic rx_clk = 1'b0;
     logic rst_key_n = 1'b0;
     logic key_clear_n = 1'b1;
+    logic traffic_gen_key_n = 1'b1;   // idle: no scenario here presses KEY2
 
     wire [3:0] rgmii_txd;
     wire       rgmii_tx_ctl, rgmii_gtx_clk;
@@ -94,6 +95,7 @@ module tb_gem_top;
         .phy_rst_n     (phy_rst_n),
         .uart_tx       (uart_tx),
         .key_clear_n   (key_clear_n),
+        .traffic_gen_key_n (traffic_gen_key_n),
         .led           (led)
     );
 
@@ -393,6 +395,106 @@ module tb_gem_top;
     endtask
 
     //----------------------------------------------------------------------
+    // What flood mode actually put on the wire (R7's mux, not the module --
+    // gem_traffic_gen's own AXI-Stream behavior is already proven by its
+    // own unit testbench (004b-iii, 26,103 checks). This only checks the
+    // muxed *path*: right addresses, right ethertype, right payload
+    // pattern, right length, a real CRC, coming off the MAC's real TX pins
+    // once KEY2 selects it.
+    //----------------------------------------------------------------------
+    int tg_frames_seen = 0;
+    int tg_frames_ok   = 0;
+
+    task automatic check_traffic_gen_transmitted(input int from_word = 0);
+        int b, i, len, pay_len;
+        logic [7:0] octets [$];
+        logic [7:0] body   [$];
+        logic [47:0] da, sa;
+        logic [15:0] et;
+        logic [31:0] want_fcs, got_fcs;
+        logic [7:0] exp_oct;
+        bit data_ok;
+
+        captured = new [u_mon.n_words];
+        for (i = 0; i < u_mon.n_words; i++) captured[i] = u_mon.words[i];
+        n_bursts = split_bursts(captured, u_mon.n_words, bursts);
+
+        for (b = 0; b < n_bursts; b++) begin
+            if (bursts[b].startIdx < from_word) continue;
+            octets = {};
+            for (i = 0; i < bursts[b].len; i++) begin
+                octets.push_back(u_mon.words[bursts[b].startIdx + i][7:0]);
+            end
+            len = octets.size();
+            tg_frames_seen++;
+
+            note_check();
+            if (len < 8 + 14 + 4) begin
+                report_fail("gem_top", $sformatf(
+                    "flood burst %0d is only %0d octets -- too short to be a frame", b, len));
+                continue;
+            end
+
+            note_check();
+            if (octets[7] !== 8'hD5) begin
+                report_fail("gem_top", $sformatf(
+                    "flood burst %0d has 0x%02h where the SFD should be", b, octets[7]));
+            end
+
+            body = {};
+            for (i = 8; i < len - 4; i++) body.push_back(octets[i]);
+
+            got_fcs = {octets[len-1], octets[len-2], octets[len-3], octets[len-4]};
+            want_fcs = crc32(body, body.size());
+
+            note_check();
+            if (got_fcs !== want_fcs) begin
+                report_fail("gem_top", $sformatf(
+                    "flood frame %0d came off the wire with FCS %08h, computed %08h",
+                    b, got_fcs, want_fcs));
+            end
+
+            da = {body[0], body[1], body[2], body[3], body[4], body[5]};
+            sa = {body[6], body[7], body[8], body[9], body[10], body[11]};
+            et = {body[12], body[13]};
+            pay_len = body.size() - 14;
+
+            note_check();
+            if (da !== 48'h02_00_00_00_00_02 || sa !== 48'h02_00_00_00_00_01 ||
+                et !== 16'h88B5) begin
+                report_fail("gem_top", $sformatf(
+                    "flood frame %0d has DA %012h SA %012h ET %04h -- does not match gem_traffic_gen's header",
+                    b, da, sa, et));
+            end
+
+            note_check();
+            if (pay_len != u_dut.TRAFFIC_GEN_PAYLOAD_LEN) begin
+                report_fail("gem_top", $sformatf(
+                    "flood frame %0d has %0d payload octets, expected %0d",
+                    b, pay_len, u_dut.TRAFFIC_GEN_PAYLOAD_LEN));
+            end
+
+            data_ok = 1'b1;
+            for (i = 0; i < pay_len; i++) begin
+                // i is an int; comparing against i[7:0] directly is mis-evaluated
+                // by xsim 2024.2 (measured: fails even when both sides print
+                // equal). Route the expected octet through an explicit 8-bit
+                // variable -- the truncating assignment is exact and the
+                // comparison is then logic[7:0] vs logic[7:0].
+                exp_oct = i;
+                if (body[14 + i] !== exp_oct) data_ok = 1'b0;
+            end
+            note_check();
+            if (!data_ok) begin
+                report_fail("gem_top", $sformatf(
+                    "flood frame %0d's payload does not match the i[7:0] counter pattern", b));
+            end else begin
+                tg_frames_ok++;
+            end
+        end
+    endtask
+
+    //----------------------------------------------------------------------
     // Criterion D6's instrument: beats accepted on the RX AXI-S port
     //
     // Counted on u_dut.tx_clk, and that is not an arbitrary choice. The RX
@@ -465,6 +567,12 @@ module tb_gem_top;
     // Criterion D9's fixture (V-25): built once, reused for both halves.
     logic [11:0] d9_words[$];
     frame_t      d9_frame_a, d9_frame_b;
+
+    // Section 10's fixture: a fresh frame, proving echo works again after
+    // flood mode -- not reusing d9_frame_a/b, so there is no chance of this
+    // section accidentally passing on stale D9 state.
+    logic [11:0] pf_words[$];
+    frame_t      post_flood_frame;
 
     initial begin
         begin_scenario("gem_top");
@@ -1133,6 +1241,111 @@ module tb_gem_top;
         end
 
         $display("[gem_tb] gem_top: frame after a link event echoed clean, %0d matched (criterion D9)", matched);
+
+        //--------------------------------------------------------------
+        // 10. Flood mode (R7): KEY2 switches the transmit source
+        //
+        //    005a wired gem_traffic_gen into the mux but pressed KEY2
+        //    nowhere in simulation. This presses it: once to select flood
+        //    mode, confirming real frames come off the RGMII TX pins
+        //    matching gem_traffic_gen's known header and payload pattern;
+        //    then again to deselect it, confirming gem_echo resumes --
+        //    proving the mux reverts, not just that it can leave.
+        //--------------------------------------------------------------
+        mark_words = u_mon.n_words;
+
+        traffic_gen_key_n = 1'b0;
+        repeat (4) @(posedge u_dut.tx_clk);
+        traffic_gen_key_n = 1'b1;
+
+        wait (u_dut.mux_sel === 1'b1);
+        $display("[gem_tb] gem_top: KEY2 pressed, mux_sel switched to flood mode");
+
+        // Two full 1518-octet frames' worth of tx_clk cycles, generously --
+        // enough to capture more than one frame back to back.
+        repeat (4000) @(posedge u_dut.tx_clk);
+
+        // STOP THE FLOOD BEFORE JUDGING IT. A continuous flood is always
+        // mid-frame at any fixed instant, so however long the wait above
+        // ran, the trailing burst in the capture would be a partial frame
+        // (measured: 894 octets of the third). gem_traffic_gen finishes
+        // its in-flight frame on its own terms when enable drops (its own
+        // check 6), the bus then goes idle and mux_sel falls at that frame
+        // boundary -- which is the reversion this section exists to prove
+        // anyway. Judging after that point gives only complete frames, and
+        // every one of them must verify.
+        traffic_gen_key_n = 1'b0;
+        repeat (4) @(posedge u_dut.tx_clk);
+        traffic_gen_key_n = 1'b1;
+
+        wait (u_dut.mux_sel === 1'b0);
+        $display("[gem_tb] gem_top: KEY2 pressed again, mux_sel reverted to echo");
+
+        // Let the capture drain before judging it. mux_sel falls the cycle
+        // the AXI bus goes idle, but the monitor watches the RGMII pins,
+        // which lag the bus by the MAC's TX pipeline (FCS append, ODDR, the
+        // monitor's own register) -- measured: six words. A generous settle
+        // wait, same style as every other capture in this file.
+        repeat (2000) @(posedge u_dut.tx_clk);
+
+        check_traffic_gen_transmitted(mark_words);
+
+        note_check();
+        if (tg_frames_seen == 0) begin
+            report_fail("gem_top",
+                "flood mode was enabled and nothing was transmitted -- the mux did not actually switch the bus");
+        end
+
+        note_check();
+        if (tg_frames_ok != tg_frames_seen) begin
+            report_fail("gem_top", $sformatf(
+                "%0d of %0d flood frames failed verification",
+                tg_frames_seen - tg_frames_ok, tg_frames_seen));
+        end
+
+        $display("[gem_tb] gem_top: flood mode, %0d frame(s) captured, %0d matched the expected pattern (criterion R7-sim)",
+                  tg_frames_seen, tg_frames_ok);
+
+        // Prove echo actually works again, not just that the mux bit
+        // flipped: one small frame in, and it must come back exchanged --
+        // same check_transmitted() used everywhere else in this file, same
+        // manual-drive pattern criterion D9 uses just above.
+        post_flood_frame.da      = 48'hCCCC_CCCC_CCCC;
+        post_flood_frame.sa      = 48'hC3C3_C3C3_C3C3;
+        post_flood_frame.etype   = 16'h88B5;
+        post_flood_frame.good    = 1'b1;
+        post_flood_frame.payload = {};
+        for (i = 0; i < 60; i++) post_flood_frame.payload.push_back(8'hC0 + (i % 16));
+
+        pf_words = {};
+        build_frame_words(post_flood_frame.da, post_flood_frame.sa, post_flood_frame.etype,
+                           post_flood_frame.payload, pf_words);
+
+        mark_words  = u_mon.n_words;
+        echoes_seen = 0;
+        matched     = 0;
+        in_frames.push_back(post_flood_frame);
+
+        drv_rst_n = 1'b0;
+        repeat (4) @(posedge rx_clk);
+        drv_rst_n = 1'b1;
+        @(posedge rx_clk);
+        u_drv.words = new [pf_words.size()];
+        foreach (pf_words[k]) u_drv.words[k] = pf_words[k];
+        u_drv.n_words = pf_words.size();
+        drv_start = 1'b1;
+        wait (drv_done === 1'b1);
+        repeat (2000) @(posedge rx_clk);
+
+        check_transmitted(mark_words);
+
+        note_check();
+        if (echoes_seen == 0) begin
+            report_fail("gem_top",
+                "nothing was echoed after flood mode was switched off -- gem_echo did not resume (mux did not revert cleanly)");
+        end
+
+        $display("[gem_tb] gem_top: flood mode off, echo resumed, %0d matched", matched);
 
         $display("[gem_tb] gem_top: %0d good frames in, %0d frames echoed back, %0d matched",
                  n_good_in, echoes_seen, matched);

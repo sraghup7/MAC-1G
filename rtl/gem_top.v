@@ -61,7 +61,15 @@ module gem_top #(
     // per second (gem_stat_report).
     parameter integer PHY_RST_CYCLES       = (`GEM_CLK50_HZ / 1000000) * `GEM_PHY_RESET_HOLD_US,
     parameter integer UART_CLKS_PER_BIT    = `GEM_SYS_CLK_HZ / `GEM_UART_BAUD,
-    parameter integer STAT_CLKS_PER_REPORT = (`GEM_SYS_CLK_HZ / 1000) * `GEM_STAT_REPORT_MS
+    parameter integer STAT_CLKS_PER_REPORT = (`GEM_SYS_CLK_HZ / 1000) * `GEM_STAT_REPORT_MS,
+
+    // Unrelated to the three above: not shortened for simulation. Picks
+    // which frame size gem_traffic_gen floods at when flood mode (KEY2) is
+    // on. 1500 by default, extending the existing 96.05%-of-line-rate RX
+    // measurement's frame size to the TX side (R7). A second hardware run,
+    // rebuilt with this at 46, closes the still-open minimum-frame-size
+    // half of R18 -- same RTL, same mux, no new logic.
+    parameter integer TRAFFIC_GEN_PAYLOAD_LEN = 1500
 ) (
     input  wire       clk50,          // 50 MHz board oscillator (Y18)
     input  wire       rst_key_n,      // reset key, active low (F20)
@@ -84,6 +92,7 @@ module gem_top #(
 
     // Board furniture
     input  wire       key_clear_n,    // KEY1, active low: clear the counters
+    input  wire       traffic_gen_key_n, // KEY2, active low: toggle flood mode (R7)
     output wire [3:0] led             // active low
 );
 
@@ -215,6 +224,12 @@ module gem_top #(
     //======================================================================
     // Echo (B.5 step 6)
     //======================================================================
+    wire [7:0]   echo_tdata,  tg_tdata;
+    wire         echo_tvalid, tg_tvalid;
+    wire         echo_tready, tg_tready;
+    wire         echo_tlast,  tg_tlast;
+    wire [111:0] echo_tuser,  tg_tuser;
+
     wire echo_dropped;
 
     gem_echo u_echo (
@@ -225,12 +240,51 @@ module gem_top #(
         .rx_tlast  (rx_tlast),
         .rx_tuser  (rx_tuser),
         .rx_tready (rx_tready),
-        .tx_tdata  (tx_tdata),
-        .tx_tvalid (tx_tvalid),
-        .tx_tready (tx_tready),
-        .tx_tlast  (tx_tlast),
-        .tx_tuser  (tx_tuser),
+        .tx_tdata  (echo_tdata),
+        .tx_tvalid (echo_tvalid),
+        .tx_tready (echo_tready),
+        .tx_tlast  (echo_tlast),
+        .tx_tuser  (echo_tuser),
         .dropped   (echo_dropped)
+    );
+
+    //======================================================================
+    // Traffic generator, muxed onto the shared transmit port (R7)
+    //======================================================================
+    // mux_sel only follows traffic_gen_enable when the bus is idle -- see
+    // "Background" above for why a plain combinational select is wrong.
+    reg traffic_gen_enable;   // declared here, toggled by KEY2 in the key section below
+    reg mux_sel;   // 0 = echo drives the bus, 1 = traffic_gen drives it
+
+    always @(posedge tx_clk or negedge tx_rst_n) begin
+        if (!tx_rst_n) begin
+            mux_sel <= 1'b0;
+        end else if (!tx_tvalid) begin
+            // Idle: safe to switch, nothing is mid-frame on the shared bus.
+            mux_sel <= traffic_gen_enable;
+        end
+    end
+
+    assign tx_tdata    = mux_sel ? tg_tdata    : echo_tdata;
+    assign tx_tvalid   = mux_sel ? tg_tvalid   : echo_tvalid;
+    assign tx_tlast    = mux_sel ? tg_tlast    : echo_tlast;
+    assign tx_tuser    = mux_sel ? tg_tuser    : echo_tuser;
+    assign echo_tready = mux_sel ? 1'b0        : tx_tready;
+    assign tg_tready   = mux_sel ? tx_tready   : 1'b0;
+
+    gem_traffic_gen #(
+        // DA/SA/ETHERTYPE left at their defaults -- the board transmitting
+        // from its own address to the host, per the module's own header.
+    ) u_traffic_gen (
+        .clk         (tx_clk),
+        .rst_n       (tx_rst_n),
+        .enable      (traffic_gen_enable),
+        .payload_len (TRAFFIC_GEN_PAYLOAD_LEN[10:0]),
+        .m_tdata     (tg_tdata),
+        .m_tvalid    (tg_tvalid),
+        .m_tready    (tg_tready),
+        .m_tlast     (tg_tlast),
+        .m_tuser     (tg_tuser)
     );
 
     //======================================================================
@@ -302,6 +356,35 @@ module gem_top #(
 
     // Pressed is low, so the clear is the falling edge.
     assign stat_clear = key_sync3 && !key_sync2;
+
+    // Flood mode (R7): the same synchroniser-then-edge-detect pattern as
+    // key_clear_n above, but latched into a persistent enable rather than a
+    // one-cycle pulse -- a soak needs this to stay on for hours, not just
+    // the instant the key is pressed. This is the raw intent; mux_sel above
+    // is what actually switches the bus, gated to a frame boundary.
+    (* ASYNC_REG = "TRUE" *) reg  tg_key_sync1, tg_key_sync2, tg_key_sync3;
+
+    always @(posedge tx_clk or negedge tx_rst_n) begin
+        if (!tx_rst_n) begin
+            tg_key_sync1 <= 1'b1;
+            tg_key_sync2 <= 1'b1;
+            tg_key_sync3 <= 1'b1;
+        end else begin
+            tg_key_sync1 <= traffic_gen_key_n;
+            tg_key_sync2 <= tg_key_sync1;
+            tg_key_sync3 <= tg_key_sync2;
+        end
+    end
+
+    wire tg_key_pressed = tg_key_sync3 && !tg_key_sync2;   // falling edge
+
+    always @(posedge tx_clk or negedge tx_rst_n) begin
+        if (!tx_rst_n) begin
+            traffic_gen_enable <= 1'b0;
+        end else if (tg_key_pressed) begin
+            traffic_gen_enable <= ~traffic_gen_enable;
+        end
+    end
 
     // ~1.9 Hz at 125 MHz: 2^25 cycles is 0.268 s per half period.
     reg [24:0] heartbeat_cnt;
